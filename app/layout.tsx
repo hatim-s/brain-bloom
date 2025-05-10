@@ -1,8 +1,10 @@
-import { ThemeSwitcher } from "@/components/theme-switcher";
+// import { ThemeSwitcher } from "@/components/theme-switcher";
 import { Geist } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
 import clsx from "clsx";
+import SupabaseProvider from "@/providers/SupabaseProvider";
+import { SidebarProvider } from "@/components/ui/sidebar";
 
 const defaultUrl = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
@@ -30,18 +32,20 @@ export default function RootLayout({
       className={clsx(geistSans.className, "scrollbar-styles")}
       suppressHydrationWarning
     >
-      <body className="bg-background text-foreground overflow-scroll h-screen w-screen">
+      <body className="bg-background text-foreground h-screen w-screen">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
           enableSystem
           disableTransitionOnChange
         >
-          <main>
-            {children}
-            {/* todo: add this again */}
-            {/* <ThemeSwitcher /> */}
-          </main>
+          <SupabaseProvider>
+            <SidebarProvider>
+              {children}
+              {/* todo: add this again */}
+              {/* <ThemeSwitcher /> */}
+            </SidebarProvider>
+          </SupabaseProvider>
         </ThemeProvider>
       </body>
     </html>
