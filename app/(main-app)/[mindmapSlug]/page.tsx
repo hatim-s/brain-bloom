@@ -3,10 +3,9 @@ import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { Stack } from "@/components/ui/stack";
 import { Typography } from "@/components/ui/typography";
 import { fetchMindmapById } from "@/data/fetch-mindmap-by-id";
-import { useParams } from "next/navigation";
 
 export default async function MindmapPage(props: {
-  params: { mindmapSlug: string };
+  params: Promise<{ mindmapSlug: string }>;
 }) {
   const params = await props.params;
   const { mindmapSlug } = params;
