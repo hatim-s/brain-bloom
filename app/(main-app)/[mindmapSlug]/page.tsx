@@ -1,3 +1,4 @@
+import Flow from "@/components/Flow/Flow";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { Stack } from "@/components/ui/stack";
@@ -27,7 +28,8 @@ export default async function MindmapPage(props: {
         </Typography>
       </header>
       <Stack className="flex-1 p-4">
-        <pre>{JSON.stringify({}, null, 2)}</pre>
+        {/* <pre>{JSON.stringify(mindmap, null, 2)}</pre> */}
+        <Flow />
       </Stack>
     </SidebarInset>
   );
