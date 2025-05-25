@@ -12,13 +12,12 @@ import {
   Position,
   ReactFlow,
   ReactFlowProps,
-  // useEdgesState,
-  // useNodesState,
+  ReactFlowProvider,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Stack } from "../ui/stack";
 import { LeftNode, RootNode, RightNode } from "./nodes";
-import { layout, graphlib } from "@dagrejs/dagre";
+import { initLayout } from "./layout/init";
 
 const nodeTypes: NodeTypes = {
   root: RootNode,
@@ -142,74 +141,11 @@ const initialEdges: Edge[] = [
   },
 ];
 
-// Initialize the graph with rank settings
-const leftGraph = new graphlib.Graph({
-  directed: true,
-  compound: true, // Optional: for nested nodes
-  multigraph: false,
-});
-
-const rightGraph = new graphlib.Graph({
-  directed: true,
-  compound: true, // Optional: for nested nodes
-  multigraph: false,
-});
-
-// Set rank direction and spacing
-leftGraph.setGraph({
-  rankdir: "RL", // Left-to-right layout
-  ranksep: 100, // 100px between ranks
-  nodesep: 30, // 30px between nodes in the same rank
-});
-
-rightGraph.setGraph({
-  rankdir: "LR", // Left-to-right layout
-  ranksep: 100, // 100px between ranks
-  nodesep: 30, // 30px between nodes in the same rank
-});
-
-// Default to assigning a new object as a label for each new edge.
-leftGraph.setDefaultEdgeLabel(function () {
-  return {};
-});
-
-rightGraph.setDefaultEdgeLabel(function () {
-  return {};
-});
-
-// Add nodes to the graph. The first argument is the node id. The second is
-// metadata about the node. In this case we're going to add labels to each of
-// our nodes.
-initialNodes.forEach((node) => {
-  if (node.type === "left") {
-    leftGraph.setNode(node.id, { ...node.data, height: 30, width: 300 });
-  } else {
-    rightGraph.setNode(node.id, { ...node.data, height: 30, width: 300 });
-  }
-});
-
-// Add edges to the graph.
-initialEdges.forEach((edge) => {
-  if (edge.source === "root") {
-    leftGraph.setEdge(edge.source, edge.target);
-  } else {
-    rightGraph.setEdge(edge.source, edge.target);
-  }
-});
-
-layout(leftGraph); // Assigns ranks and positions
-layout(rightGraph); // Assigns ranks and positions
-
-const initialNodesWithPositions = initialNodes.map((node) => {
-  const nodeWithPosition =
-    node.type === "left" ? leftGraph.node(node.id) : rightGraph.node(node.id);
-  return {
-    ...node,
-    position: { x: nodeWithPosition.x, y: nodeWithPosition.y },
-  };
-});
-
 export default function Flow() {
+  const initialNodesWithPositions = useMemo(() => {
+    return initLayout(initialNodes, initialEdges);
+  }, []);
+
   const [nodes, setNodes] = useState(initialNodesWithPositions);
   const [edges, setEdges] = useState(initialEdges);
 
@@ -228,20 +164,22 @@ export default function Flow() {
 
   return (
     <Stack className="h-full w-full flex-1">
-      <ReactFlow
-        nodesDraggable={false}
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        panOnDrag={false}
-        panOnScroll
-        fitView
-        nodeTypes={nodeTypes}
-      >
-        <Background />
-      </ReactFlow>
+      <ReactFlowProvider>
+        <ReactFlow
+          nodesDraggable={false}
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          panOnDrag={false}
+          panOnScroll
+          fitView
+          nodeTypes={nodeTypes}
+        >
+          <Background />
+        </ReactFlow>
+      </ReactFlowProvider>
     </Stack>
   );
 }
