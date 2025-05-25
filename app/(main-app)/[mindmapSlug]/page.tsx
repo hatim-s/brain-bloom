@@ -7,14 +7,14 @@ import { fetchMindmapById } from "@/data/fetch-mindmap-by-id";
 export default async function MindmapPage(props: {
   params: Promise<{ mindmapSlug: string }>;
 }) {
-  const params = await props.params;
-  const { mindmapSlug } = params;
+  // const params = await props.params;
+  // const { mindmapSlug } = params;
 
-  const mindmap = await fetchMindmapById(mindmapSlug as string);
+  // const mindmap = await fetchMindmapById(mindmapSlug as string);
 
-  if (!mindmap) {
-    return <div>Mindmap not found</div>;
-  }
+  // if (!mindmap) {
+  //   return <div>Mindmap not found</div>;
+  // }
 
   return (
     <SidebarInset>
@@ -22,11 +22,12 @@ export default async function MindmapPage(props: {
         <SidebarTrigger className="-ml-1" />
         <Separator orientation="vertical" className="mr-2 h-4" />
         <Typography className="text-gray-300 font-light text-sm" variant="p">
-          {mindmap.name}
+          {/* {mindmap.name} */}
+          // todo: Mindmap Name
         </Typography>
       </header>
       <Stack className="flex-1 p-4">
-        <pre>{JSON.stringify(mindmap, null, 2)}</pre>
+        <pre>{JSON.stringify({}, null, 2)}</pre>
       </Stack>
     </SidebarInset>
   );
