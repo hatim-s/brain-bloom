@@ -1,10 +1,33 @@
 import { Node, Position } from "@xyflow/react";
+import { NodeTypes } from "../types";
+import { ROOT_NODE_ID } from "../const";
 
-const getNewNodeID = (type: "left" | "right") => {
-  return [type, Math.random().toString(36).substring(2, 15)].join("-");
+const NODE_ID_SEPARATOR = "-";
+const LEFT_NODE_ID_PREFIX = "l";
+const RIGHT_NODE_ID_PREFIX = "r";
+
+export const getNewNodeID = (type: NodeTypes) => {
+  return [
+    type === NodeTypes.LEFT ? LEFT_NODE_ID_PREFIX : RIGHT_NODE_ID_PREFIX,
+    Math.random().toString(36).substring(2, 7),
+  ].join(NODE_ID_SEPARATOR); // need 5 characters for node id
 };
 
-export function createNode(type: "left" | "right", title: string) {
+export function getNodeTypeFromId(id: string) {
+  if (id === ROOT_NODE_ID) {
+    return NodeTypes.ROOT;
+  } else if (id.startsWith(LEFT_NODE_ID_PREFIX)) {
+    return NodeTypes.LEFT;
+  } else if (id.startsWith(RIGHT_NODE_ID_PREFIX)) {
+    return NodeTypes.RIGHT;
+  }
+  return null;
+}
+
+export function createNode(
+  type: NodeTypes.LEFT | NodeTypes.RIGHT,
+  title: string
+) {
   return {
     id: getNewNodeID(type),
     type: type,
