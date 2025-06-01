@@ -1,4 +1,4 @@
-import Flow from "@/components/Flow/Flow";
+import Flow from "@/components/flow/Flow";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { Stack } from "@/components/ui/stack";
