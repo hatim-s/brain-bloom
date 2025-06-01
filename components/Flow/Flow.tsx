@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import {
   Background,
   Edge,
@@ -144,13 +144,17 @@ export function MindmapFlow() {
     actions: { onAddNode },
   } = useMindmapFlow();
 
+  const [leftCount, setLeftCount] = useState(0);
+  const [rightCount, setRightCount] = useState(0);
+
   return (
     <Stack className="h-full w-full flex-1">
       <Button
         className="absolute top-20 left-10 z-10"
         onClick={() => {
           console.log("add node");
-          onAddNode("left");
+          setLeftCount((prev) => prev + 1);
+          onAddNode("left", `left-${Math.floor(leftCount / 3) + 1}`);
         }}
       >
         add left node
@@ -159,6 +163,8 @@ export function MindmapFlow() {
         className="absolute top-20 left-52 z-10"
         onClick={() => {
           console.log("add node");
+          setRightCount((prev) => prev + 1);
+          onAddNode("right", `right-${Math.floor(rightCount / 3) + 1}`);
         }}
       >
         add right node

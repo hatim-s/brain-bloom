@@ -17,7 +17,6 @@ import { useCreateXYFlowActions } from "./useCreateXYFlowActions";
 import { createNode } from "../mindmap/createNode";
 import { createEdge } from "../mindmap/createEdge";
 import { BaseFlowNode, FlowNode } from "../types";
-import omit from "lodash/omit";
 
 export type MindmapFlowContext = {
   layout: {
@@ -30,7 +29,7 @@ export type MindmapFlowContext = {
     onNodesChange: NonNullable<ReactFlowProps["onNodesChange"]>;
     onEdgesChange: NonNullable<ReactFlowProps["onEdgesChange"]>;
     onConnect: NonNullable<ReactFlowProps["onConnect"]>;
-    onAddNode: (type: "left" | "right") => void;
+    onAddNode: (type: "left" | "right", parentNodeId: string) => void;
   };
 };
 
@@ -84,23 +83,18 @@ export const MindmapFlowProvider = ({
   });
 
   const onAddNode = useCallback(
-    (type: "left" | "right") => {
+    (type: "left" | "right", parentNodeId: string) => {
+      if (!nodesMap[parentNodeId]) {
+        console.error(
+          `[MindmapFlowProvider] onAddNode: parent node ${parentNodeId} not found`
+        );
+        return;
+      }
+
       const newNode = createNode(type, "new node");
-      const newEdge = createEdge("left-1", newNode.id);
+      const newEdge = createEdge(parentNodeId, newNode.id);
 
       const newGraph = type === "left" ? leftGraph : rightGraph;
-
-      // nodes.forEach((node) => {
-      //   if (node.type === "root" || node.type === type) {
-      //     newGraph.setNode(node.id, omit(node, ["position"]));
-      //   }
-      // });
-
-      // edges.forEach((edge) => {
-      //   if (edge.target.startsWith(type)) {
-      //     newGraph.setEdge(edge.source, edge.target);
-      //   }
-      // });
 
       addNodeToGraph(newGraph, newNode, newEdge);
 
