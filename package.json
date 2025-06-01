@@ -45,6 +45,7 @@
     "date-fns": "^4.1.0",
     "embla-carousel-react": "^8.5.2",
     "input-otp": "^1.4.2",
+    "lodash": "^4.17.21",
     "lucide-react": "^0.468.0",
     "next": "latest",
     "next-themes": "^0.4.6",
@@ -60,6 +61,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@types/lodash": "^4.17.17",
     "@types/node": "22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "19.0.2",

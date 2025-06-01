@@ -1,23 +1,23 @@
 "use client";
 
-import React, { useCallback, useMemo, useState } from "react";
+import React from "react";
 import {
-  addEdge,
-  applyEdgeChanges,
-  applyNodeChanges,
   Background,
   Edge,
-  Node,
   NodeTypes,
   Position,
   ReactFlow,
-  ReactFlowProps,
   ReactFlowProvider,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Stack } from "../ui/stack";
 import { LeftNode, RootNode, RightNode } from "./nodes";
-import { initLayout } from "./layout/init";
+import {
+  MindmapFlowProvider,
+  useMindmapFlow,
+} from "./providers/MindmapFlowProvider";
+import { Button } from "../ui/button";
+import { BaseFlowNode } from "./types";
 
 const nodeTypes: NodeTypes = {
   root: RootNode,
@@ -25,12 +25,11 @@ const nodeTypes: NodeTypes = {
   right: RightNode,
 };
 
-const initialNodes: Node[] = [
+const initialNodes: BaseFlowNode[] = [
   {
     id: "root",
     type: "root",
     data: { title: "Root Node" },
-    position: { x: 0, y: 0 },
     handles: [
       {
         position: Position.Left,
@@ -52,7 +51,6 @@ const initialNodes: Node[] = [
     id: "left-1",
     type: "left",
     data: { title: "Left Node - 1" },
-    position: { x: -500, y: 100 },
     handles: [
       {
         position: Position.Left,
@@ -68,7 +66,6 @@ const initialNodes: Node[] = [
     id: "left-2",
     type: "left",
     data: { title: "Left Node - 2" },
-    position: { x: -500, y: -100 },
     handles: [
       {
         position: Position.Left,
@@ -84,7 +81,6 @@ const initialNodes: Node[] = [
     id: "right-1",
     type: "right",
     data: { title: "Right Node - 1" },
-    position: { x: 500, y: 100 },
     handles: [
       {
         position: Position.Right,
@@ -100,7 +96,6 @@ const initialNodes: Node[] = [
     id: "right-2",
     type: "right",
     data: { title: "Right Node - 2" },
-    position: { x: 500, y: -100 },
     handles: [
       {
         position: Position.Right,
@@ -141,45 +136,60 @@ const initialEdges: Edge[] = [
   },
 ];
 
-export default function Flow() {
-  const initialNodesWithPositions = useMemo(() => {
-    return initLayout(initialNodes, initialEdges);
-  }, []);
-
-  const [nodes, setNodes] = useState(initialNodesWithPositions);
-  const [edges, setEdges] = useState(initialEdges);
-
-  const onNodesChange = useCallback<
-    NonNullable<ReactFlowProps["onNodesChange"]>
-  >((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), [setNodes]);
-
-  const onEdgesChange = useCallback<
-    NonNullable<ReactFlowProps["onEdgesChange"]>
-  >((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), [setEdges]);
-
-  const onConnect = useCallback<NonNullable<ReactFlowProps["onConnect"]>>(
-    (connection) => setEdges((eds) => addEdge(connection, eds)),
-    [setEdges]
-  );
+export function MindmapFlow() {
+  const {
+    nodes,
+    edges,
+    // actions: { onNodesChange, onEdgesChange, onConnect },
+    actions: { onAddNode },
+  } = useMindmapFlow();
 
   return (
     <Stack className="h-full w-full flex-1">
-      <ReactFlowProvider>
-        <ReactFlow
-          nodesDraggable={false}
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          panOnDrag={false}
-          panOnScroll
-          fitView
-          nodeTypes={nodeTypes}
-        >
-          <Background />
-        </ReactFlow>
-      </ReactFlowProvider>
+      <Button
+        className="absolute top-20 left-10 z-10"
+        onClick={() => {
+          console.log("add node");
+          onAddNode("left");
+        }}
+      >
+        add left node
+      </Button>
+      <Button
+        className="absolute top-20 left-52 z-10"
+        onClick={() => {
+          console.log("add node");
+        }}
+      >
+        add right node
+      </Button>
+      <ReactFlow
+        nodesDraggable={false}
+        nodes={nodes}
+        edges={edges}
+        // onNodesChange={onNodesChange}
+        // onEdgesChange={onEdgesChange}
+        // onConnect={onConnect}
+        panOnDrag={false}
+        panOnScroll
+        fitView
+        nodeTypes={nodeTypes}
+      >
+        <Background />
+      </ReactFlow>
     </Stack>
+  );
+}
+
+export default function Flow() {
+  return (
+    <ReactFlowProvider>
+      <MindmapFlowProvider
+        initialNodes={initialNodes}
+        initialEdges={initialEdges}
+      >
+        <MindmapFlow />
+      </MindmapFlowProvider>
+    </ReactFlowProvider>
   );
 }
