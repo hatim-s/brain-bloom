@@ -21,6 +21,7 @@ export const INITIAL_NODES: BaseFlowNode[] = [
     id: ROOT_NODE_ID,
     type: NodeTypes.ROOT,
     data: { title: "Root Node" },
+    selectable: true,
     handles: [
       {
         position: Position.Left,
@@ -42,6 +43,7 @@ export const INITIAL_NODES: BaseFlowNode[] = [
     id: LEFT_NODE_1,
     type: NodeTypes.LEFT,
     data: { title: "Left Node - 1" },
+    selectable: true,
     handles: [
       {
         position: Position.Left,
@@ -57,6 +59,7 @@ export const INITIAL_NODES: BaseFlowNode[] = [
     id: LEFT_NODE_2,
     type: NodeTypes.LEFT,
     data: { title: "Left Node - 2" },
+    selectable: true,
     handles: [
       {
         position: Position.Left,
@@ -72,6 +75,7 @@ export const INITIAL_NODES: BaseFlowNode[] = [
     id: RIGHT_NODE_1,
     type: NodeTypes.RIGHT,
     data: { title: "Right Node - 1" },
+    selectable: true,
     handles: [
       {
         position: Position.Right,
@@ -87,6 +91,7 @@ export const INITIAL_NODES: BaseFlowNode[] = [
     id: RIGHT_NODE_2,
     type: NodeTypes.RIGHT,
     data: { title: "Right Node - 2" },
+    selectable: true,
     handles: [
       {
         position: Position.Right,

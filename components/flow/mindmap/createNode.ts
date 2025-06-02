@@ -32,6 +32,7 @@ export function createNode(
     id: getNewNodeID(type),
     type: type,
     data: { title: title },
+    selectable: true,
     handles: [
       {
         position: Position.Left,

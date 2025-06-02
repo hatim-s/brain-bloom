@@ -12,11 +12,12 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Edge, Node } from "@xyflow/react";
+import { Edge, Node, ReactFlowProps } from "@xyflow/react";
 import { createNode } from "../mindmap/createNode";
 import { createEdge } from "../mindmap/createEdge";
 import { BaseFlowNode, FlowNode, NodeTypes } from "../types";
 import { ROOT_NODE_ID } from "../const";
+import { useCreateXYFlowActions } from "./useCreateXYFlowActions";
 
 export type MindmapFlowContext = {
   layout: {
@@ -25,8 +26,9 @@ export type MindmapFlowContext = {
   };
   nodes: Node[];
   edges: Edge[];
+  nodesMap: Record<string, FlowNode>;
   actions: {
-    // onNodesChange: NonNullable<ReactFlowProps["onNodesChange"]>;
+    onNodesChange: NonNullable<ReactFlowProps["onNodesChange"]>;
     // onEdgesChange: NonNullable<ReactFlowProps["onEdgesChange"]>;
     // onConnect: NonNullable<ReactFlowProps["onConnect"]>;
     onAddNode: (
@@ -59,10 +61,9 @@ export const MindmapFlowProvider = ({
 }: MindmapFlowProviderProps) => {
   const { leftGraph, rightGraph } = useMemo(() => initGraphs(), []);
 
-  const nodeWithPositions = initLayout(
-    { leftGraph, rightGraph },
-    initialNodes,
-    initialEdges
+  const nodeWithPositions = useMemo(
+    () => initLayout({ leftGraph, rightGraph }, initialNodes, initialEdges),
+    [leftGraph, rightGraph, initialNodes, initialEdges]
   );
 
   const [nodes, setNodes] = useState(nodeWithPositions);
@@ -80,10 +81,13 @@ export const MindmapFlowProvider = ({
     [nodes]
   );
 
-  // const { onNodesChange, onEdgesChange, onConnect } = useCreateXYFlowActions({
-  //   setNodes,
-  //   setEdges,
-  // });
+  const {
+    onNodesChange,
+    //  onEdgesChange, onConnect
+  } = useCreateXYFlowActions({
+    setNodes,
+    setEdges,
+  });
 
   const onAddNode = useCallback<
     NonNullable<MindmapFlowContext["actions"]["onAddNode"]>
@@ -141,8 +145,9 @@ export const MindmapFlowProvider = ({
       },
       nodes: nodes,
       edges: edges,
+      nodesMap: nodesMap,
       actions: {
-        // onNodesChange,
+        onNodesChange,
         // onEdgesChange,
         // onConnect,
         onAddNode,
@@ -156,6 +161,7 @@ export const MindmapFlowProvider = ({
     // onConnect,
     nodes,
     edges,
+    nodesMap,
     onAddNode,
   ]);
 

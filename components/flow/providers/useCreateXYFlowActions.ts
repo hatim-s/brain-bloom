@@ -1,21 +1,27 @@
-import { Dispatch, SetStateAction } from "react";
-import { Edge, Node } from "@xyflow/react";
+import { Dispatch, SetStateAction, useCallback } from "react";
+import { applyNodeChanges, Edge, Node, ReactFlowProps } from "@xyflow/react";
+import { MindmapFlowContext } from "./MindmapFlowProvider";
+import { FlowNode } from "../types";
 
-// type UseCreateXYFlowActionsReturnType = Pick<
-// MindmapFlowContext["actions"],
-// "onNodesChange" | "onEdgesChange" | "onConnect"
-// >;
+type UseCreateXYFlowActionsReturnType = Pick<
+  MindmapFlowContext["actions"],
+  "onNodesChange" // | "onEdgesChange" | "onConnect"
+>;
 
 export function useCreateXYFlowActions({
-  setNodes: _setNodes,
+  setNodes,
   setEdges: _setEdges,
 }: {
-  setNodes: Dispatch<SetStateAction<Node[]>>;
+  setNodes: Dispatch<SetStateAction<FlowNode[]>>;
   setEdges: Dispatch<SetStateAction<Edge[]>>;
-}): null {
-  // const onNodesChange = useCallback<
-  //   NonNullable<ReactFlowProps["onNodesChange"]>
-  // >((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), [setNodes]);
+}): UseCreateXYFlowActionsReturnType {
+  const onNodesChange = useCallback<
+    NonNullable<ReactFlowProps["onNodesChange"]>
+  >(
+    (changes) =>
+      setNodes((nds) => applyNodeChanges(changes, nds) as FlowNode[]),
+    [setNodes]
+  );
 
   // const onEdgesChange = useCallback<
   //   NonNullable<ReactFlowProps["onEdgesChange"]>
@@ -26,7 +32,9 @@ export function useCreateXYFlowActions({
   //   [setEdges]
   // );
 
-  return null;
+  return {
+    onNodesChange,
+  };
   // return {
   //   onNodesChange,
   //   onEdgesChange,

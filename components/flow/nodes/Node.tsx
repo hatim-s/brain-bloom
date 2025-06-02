@@ -6,30 +6,24 @@ import clsx from "clsx";
 import { LinkIcon } from "lucide-react";
 import Link from "next/link";
 
-export default function BaseNode(
-  props: NodeProps & { direction: "left" | "right" }
-) {
-  const title = props.data.title as string | undefined;
-  const description = props.data.description as string | undefined;
-  const link = props.data.link as string | undefined;
-
-  const isSelected = props.selected;
-
-  const sourcePosition =
-    props.direction === "left" ? Position.Left : Position.Right;
-  const targetPosition =
-    props.direction === "left" ? Position.Right : Position.Left;
+export function BaseNodeContent(props: {
+  title: string;
+  description?: string | undefined;
+  link?: string | undefined;
+  isSelected: boolean;
+}) {
+  const { title, description, link, isSelected } = props;
 
   return (
     <Stack
       className={clsx(
         "border border-secondary-foreground rounded-sm py-3 px-5 w-[300px] bg-background",
-        { outline: isSelected }
+        { "outline outline-primary !border-primary": isSelected }
       )}
       direction="column"
     >
       <Typography className=" flex-1  font-semibold !text-2xl" variant="h4">
-        {title ?? "Root Node"}
+        {title}
       </Typography>
       {description ? (
         <Typography
@@ -50,6 +44,32 @@ export default function BaseNode(
           </Button>
         </Link>
       ) : null}
+    </Stack>
+  );
+}
+
+export default function BaseNode(
+  props: NodeProps & { direction: "left" | "right" }
+) {
+  const title = props.data.title as string | undefined;
+  const description = props.data.description as string | undefined;
+  const link = props.data.link as string | undefined;
+
+  const isSelected = props.selected;
+
+  const sourcePosition =
+    props.direction === "left" ? Position.Left : Position.Right;
+  const targetPosition =
+    props.direction === "left" ? Position.Right : Position.Left;
+
+  return (
+    <>
+      <BaseNodeContent
+        title={title ?? "Node"}
+        description={description}
+        link={link}
+        isSelected={isSelected}
+      />
       <Handle
         type="source"
         position={sourcePosition}
@@ -60,6 +80,6 @@ export default function BaseNode(
         position={targetPosition}
         className="!size-3 !bg-primary !border-primary"
       />
-    </Stack>
+    </>
   );
 }
