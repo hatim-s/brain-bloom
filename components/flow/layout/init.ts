@@ -151,7 +151,7 @@ export function initLayout(
     };
   });
 
-  return initialNodesWithPositions;
+  return initialNodesWithPositions as FlowNode[];
 }
 
 export function addNodeToGraph(
