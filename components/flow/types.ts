@@ -12,4 +12,4 @@ export enum NodeTypes {
 }
 
 export type BaseFlowNode = Omit<Node, "position">;
-export type FlowNode = Node;
+export type FlowNode = Node<Record<string, unknown>, NodeTypes>;
