@@ -38,7 +38,6 @@ export function MindmapFlow() {
   } = useMindmapFlow();
 
   const [activeNode, setActiveNode] = useState<string | null>(null);
-  console.log("activeNode", activeNode);
 
   const onNodesChange = useCallback<typeof originalOnNodesChange>(
     (changes) => {

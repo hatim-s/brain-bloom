@@ -1,3 +1,5 @@
+"use server";
+
 import { Mindmap } from "@/types/Mindmap";
 import { createClient } from "@/utils/supabase/server";
 
