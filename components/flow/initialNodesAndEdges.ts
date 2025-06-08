@@ -5,17 +5,17 @@ import { getNewEdgeID } from "./mindmap/createEdge";
 import { getNewNodeID } from "./mindmap/createNode";
 import { BaseFlowNode, NodeTypes } from "./types";
 
-// const LEFT_NODE_1 = getNewNodeID(NodeTypes.LEFT);
-// const LEFT_NODE_2 = getNewNodeID(NodeTypes.LEFT);
-// const RIGHT_NODE_1 = getNewNodeID(NodeTypes.RIGHT);
-// const RIGHT_NODE_2 = getNewNodeID(NodeTypes.RIGHT);
+const LEFT_NODE_1 = getNewNodeID(NodeTypes.LEFT);
+const LEFT_NODE_2 = getNewNodeID(NodeTypes.LEFT);
+const RIGHT_NODE_1 = getNewNodeID(NodeTypes.RIGHT);
+const RIGHT_NODE_2 = getNewNodeID(NodeTypes.RIGHT);
 
-// temp for testing, will need to generate randomly again
-// once we add active node id support
-const LEFT_NODE_1 = "left-1";
-const LEFT_NODE_2 = "left-2";
-const RIGHT_NODE_1 = "right-1";
-const RIGHT_NODE_2 = "right-2";
+// // temp for testing, will need to generate randomly again
+// // once we add active node id support
+// const LEFT_NODE_1 = "left-1";
+// const LEFT_NODE_2 = "left-2";
+// const RIGHT_NODE_1 = "right-1";
+// const RIGHT_NODE_2 = "right-2";
 
 export const INITIAL_NODES: BaseFlowNode[] = [
   {
@@ -23,6 +23,7 @@ export const INITIAL_NODES: BaseFlowNode[] = [
     type: NodeTypes.ROOT,
     data: { title: "Root Node" },
     selectable: true,
+    // root node has no parent
     handles: [
       {
         position: Position.Left,

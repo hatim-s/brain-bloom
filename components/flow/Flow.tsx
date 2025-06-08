@@ -1,18 +1,20 @@
 "use client";
 
+// eslint-disable-next-line simple-import-sort/imports -- prettier and eslint conflict
 import "@xyflow/react/dist/style.css";
 
 import {
   Background,
-  NodeTypes as XYNodeTypes,
   ReactFlow,
   ReactFlowProvider,
+  NodeTypes as XYNodeTypes,
 } from "@xyflow/react";
-import React, { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import { Button } from "../ui/button";
 import { Stack } from "../ui/stack";
 import { ROOT_NODE_ID } from "./const";
+import { useMindmapNavigation } from "./hooks/useMindmapNavigation";
 import { INITIAL_EDGES, INITIAL_NODES } from "./initialNodesAndEdges";
 import { LeftNode, RightNode, RootNode } from "./nodes";
 import {
@@ -32,6 +34,8 @@ export function MindmapFlow() {
     nodes,
     edges,
     nodesMap,
+    mindmapNodesMap,
+    leveledNodes,
     actions: {
       // onEdgesChange, onConnect,
       onNodesChange: originalOnNodesChange,
@@ -39,7 +43,11 @@ export function MindmapFlow() {
     },
   } = useMindmapFlow();
 
-  const [activeNode, setActiveNode] = useState<string | null>(null);
+  const { activeNode, setActiveNode } = useMindmapNavigation(
+    mindmapNodesMap,
+    leveledNodes,
+    onAddNode
+  );
 
   const onNodesChange = useCallback<typeof originalOnNodesChange>(
     (changes) => {
@@ -60,8 +68,36 @@ export function MindmapFlow() {
       // Apply the original changes
       originalOnNodesChange(changes);
     },
-    [originalOnNodesChange]
+    [originalOnNodesChange, setActiveNode]
   );
+
+  const prevActiveNode = useRef<string | null>(null);
+
+  // sync active node with the flow
+  useEffect(() => {
+    if (activeNode) {
+      if (prevActiveNode.current === activeNode) return;
+
+      onNodesChange([
+        {
+          id: activeNode,
+          type: "select",
+          selected: true,
+        },
+        ...(prevActiveNode.current
+          ? [
+              {
+                id: prevActiveNode.current,
+                type: "select" as const,
+                selected: false,
+              },
+            ]
+          : []),
+      ]);
+
+      prevActiveNode.current = activeNode;
+    }
+  }, [activeNode, onNodesChange]);
 
   return (
     <Stack className="h-full w-full flex-1">

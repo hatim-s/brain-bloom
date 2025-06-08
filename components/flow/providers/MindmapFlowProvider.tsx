@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import { ROOT_NODE_ID } from "../const";
+import { bfs } from "../layout/bfs";
 import {
   addNodeToGraph,
   // initGraph,
@@ -16,18 +17,25 @@ import {
   initLayout,
 } from "../layout/init";
 import { createEdge } from "../mindmap/createEdge";
+import {
+  addChildToMindmapNode,
+  createMindmapNodeFromFlowNode,
+  getParentNodeIdFromFLow,
+} from "../mindmap/createMindmapNodeFromFlowNode";
 import { createNode } from "../mindmap/createNode";
-import { BaseFlowNode, FlowNode, NodeTypes } from "../types";
+import { BaseFlowNode, FlowNode, MindmapNode, NodeTypes } from "../types";
 import { useCreateXYFlowActions } from "./useCreateXYFlowActions";
 
 export type MindmapFlowContext = {
   layout: {
-    leftGraph: graphlib.Graph<{}>;
-    rightGraph: graphlib.Graph<{}>;
+    leftGraph: graphlib.Graph<object>;
+    rightGraph: graphlib.Graph<object>;
   };
   nodes: Node[];
   edges: Edge[];
   nodesMap: Record<string, FlowNode>;
+  mindmapNodesMap: Record<string, MindmapNode>;
+  leveledNodes: MindmapNode[][];
   actions: {
     onNodesChange: NonNullable<ReactFlowProps["onNodesChange"]>;
     // onEdgesChange: NonNullable<ReactFlowProps["onEdgesChange"]>;
@@ -70,6 +78,31 @@ export const MindmapFlowProvider = ({
   const [nodes, setNodes] = useState(nodeWithPositions);
   const [edges, setEdges] = useState(initialEdges);
 
+  const [mindmapNodesMap, setMindmapNodesMap] = useState<
+    Record<string, MindmapNode>
+  >(() => {
+    return nodes.reduce<Record<string, MindmapNode>>((acc, node) => {
+      const parentNodeId = getParentNodeIdFromFLow(node, edges);
+      acc[node.id] = createMindmapNodeFromFlowNode(
+        node,
+        parentNodeId,
+        parentNodeId ? acc[parentNodeId].level : 0
+      );
+
+      // if the node has a parent, add it to the parent's children
+      if (parentNodeId) {
+        acc[parentNodeId] = addChildToMindmapNode(
+          acc[parentNodeId],
+          acc[node.id]
+        );
+      }
+      return acc;
+    }, {});
+  });
+
+  // todo: perf optimize this by manually adding/deleting nodes from the leveledNodes
+  const leveledNodes = useMemo(() => bfs(mindmapNodesMap), [mindmapNodesMap]);
+
   const nodesMap = useMemo(
     () =>
       nodes.reduce(
@@ -95,6 +128,7 @@ export const MindmapFlowProvider = ({
   >(
     (type, parentNodeId) => {
       if (!nodesMap[parentNodeId]) {
+        // eslint-disable-next-line no-console -- needed
         console.error(
           `[MindmapFlowProvider] onAddNode: parent node ${parentNodeId} not found`
         );
@@ -108,6 +142,26 @@ export const MindmapFlowProvider = ({
 
       addNodeToGraph(newGraph, newNode, newEdge);
 
+      setMindmapNodesMap((prevMindmapNodesMap) => {
+        const newMindmapNodesMap = {
+          ...prevMindmapNodesMap,
+          [newNode.id]: createMindmapNodeFromFlowNode(
+            newNode,
+            parentNodeId,
+            prevMindmapNodesMap[parentNodeId].level
+          ),
+        };
+
+        if (parentNodeId) {
+          newMindmapNodesMap[parentNodeId] = addChildToMindmapNode(
+            newMindmapNodesMap[parentNodeId],
+            newMindmapNodesMap[newNode.id]
+          );
+        }
+
+        return newMindmapNodesMap;
+      });
+
       const nodesNotInCurrentGraph = nodes.filter(
         (node) => node.type !== type && node.id !== ROOT_NODE_ID
       );
@@ -115,18 +169,29 @@ export const MindmapFlowProvider = ({
       const newRootNode = newGraph.node(ROOT_NODE_ID);
 
       const updatedNodes = [
+        // root node should come in first
+        {
+          ...nodesMap[ROOT_NODE_ID],
+          position: {
+            x: newRootNode.x - newRootNode.x,
+            y: newRootNode.y - newRootNode.y,
+          },
+        },
         ...nodesNotInCurrentGraph,
-        ...newGraph.nodes().map((nodeId) => {
-          const _node = nodesMap[nodeId];
-          const _graphnode = newGraph.node(nodeId);
-          return {
-            ...(_node ?? newNode),
-            position: {
-              x: _graphnode.x - newRootNode.x,
-              y: _graphnode.y - newRootNode.y,
-            },
-          };
-        }),
+        ...newGraph
+          .nodes()
+          .filter((nodeId) => nodeId !== ROOT_NODE_ID) // root node is already added
+          .map((nodeId) => {
+            const _node = nodesMap[nodeId];
+            const _graphnode = newGraph.node(nodeId);
+            return {
+              ...(_node ?? newNode),
+              position: {
+                x: _graphnode.x - newRootNode.x,
+                y: _graphnode.y - newRootNode.y,
+              },
+            };
+          }),
       ] as FlowNode[];
 
       setNodes(updatedNodes);
@@ -147,14 +212,29 @@ export const MindmapFlowProvider = ({
       nodes: nodes,
       edges: edges,
       nodesMap: nodesMap,
+      mindmapNodesMap: mindmapNodesMap,
+      leveledNodes: leveledNodes,
       actions: {
         onNodesChange,
         // onEdgesChange,
         // onConnect,
         onAddNode,
       },
-    };
-  }, [leftGraph, rightGraph, nodes, edges, nodesMap, onAddNode, onNodesChange]);
+    } as MindmapFlowContext;
+  }, [
+    leftGraph,
+    rightGraph,
+    // onNodesChange,
+    // onEdgesChange,
+    // onConnect,
+    mindmapNodesMap,
+    leveledNodes,
+    nodes,
+    edges,
+    nodesMap,
+    onAddNode,
+    onNodesChange,
+  ]);
 
   return (
     <MindmapFlowContext.Provider value={context}>
