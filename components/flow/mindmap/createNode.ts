@@ -1,18 +1,18 @@
-import { Node, Position } from "@xyflow/react";
+import { Position } from "@xyflow/react";
 
 import { ROOT_NODE_ID } from "../const";
-import { NodeTypes } from "../types";
+import { BaseFlowNode, NodeTypes } from "../types";
 
 const NODE_ID_SEPARATOR = "-";
 const LEFT_NODE_ID_PREFIX = "l";
 const RIGHT_NODE_ID_PREFIX = "r";
 
-export const getNewNodeID = (type: NodeTypes) => {
+export function getNewNodeID(type: NodeTypes) {
   return [
     type === NodeTypes.LEFT ? LEFT_NODE_ID_PREFIX : RIGHT_NODE_ID_PREFIX,
     Math.random().toString(36).substring(2, 7),
   ].join(NODE_ID_SEPARATOR); // need 5 characters for node id
-};
+}
 
 export function getNodeTypeFromId(id: string) {
   if (id === ROOT_NODE_ID) {
@@ -27,13 +27,15 @@ export function getNodeTypeFromId(id: string) {
 
 export function createNode(
   type: NodeTypes.LEFT | NodeTypes.RIGHT,
-  title: string
-) {
+  title: string,
+  parentId: string
+): BaseFlowNode {
   return {
     id: getNewNodeID(type),
     type: type,
     data: { title: title },
     selectable: true,
+    parentId: parentId,
     handles: [
       {
         position: Position.Left,
@@ -44,5 +46,5 @@ export function createNode(
     ],
     sourcePosition: Position.Left,
     targetPosition: Position.Right,
-  } as Omit<Node, "position">;
+  };
 }
