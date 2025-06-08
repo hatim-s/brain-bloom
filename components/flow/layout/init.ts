@@ -1,8 +1,9 @@
 import { graphlib, layout } from "@dagrejs/dagre";
 import { Edge } from "@xyflow/react";
-import { BaseFlowNode, FlowNode, NodeTypes } from "../types";
+
 import { ROOT_NODE_ID } from "../const";
 import { getNodeTypeFromId } from "../mindmap/createNode";
+import { BaseFlowNode, FlowNode, NodeTypes } from "../types";
 
 const GRAPHLIB_CONFIG = {
   directed: true,

@@ -1,6 +1,7 @@
 import { Node, Position } from "@xyflow/react";
-import { NodeTypes } from "../types";
+
 import { ROOT_NODE_ID } from "../const";
+import { NodeTypes } from "../types";
 
 const NODE_ID_SEPARATOR = "-";
 const LEFT_NODE_ID_PREFIX = "l";

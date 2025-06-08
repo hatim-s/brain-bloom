@@ -28,5 +28,5 @@ export const Stack = forwardRef<HTMLDivElement, StackProps>(
         {children}
       </div>
     );
-  },
+  }
 );

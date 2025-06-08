@@ -12,5 +12,5 @@ export const Box = forwardRef<HTMLDivElement, BoxProps>(
         {children}
       </div>
     );
-  },
+  }
 );

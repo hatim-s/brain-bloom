@@ -1,7 +1,8 @@
 "use client";
 
-import { createClient } from "@/utils/supabase/client";
 import { createContext, PropsWithChildren, useContext, useState } from "react";
+
+import { createClient } from "@/utils/supabase/client";
 
 const SupabaseContext = createContext<ReturnType<typeof createClient> | null>(
   null

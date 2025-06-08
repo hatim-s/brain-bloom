@@ -1,23 +1,25 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import "@xyflow/react/dist/style.css";
+
 import {
   Background,
   NodeTypes as XYNodeTypes,
   ReactFlow,
   ReactFlowProvider,
 } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
+import React, { useCallback, useState } from "react";
+
+import { Button } from "../ui/button";
 import { Stack } from "../ui/stack";
-import { LeftNode, RootNode, RightNode } from "./nodes";
+import { ROOT_NODE_ID } from "./const";
+import { INITIAL_EDGES, INITIAL_NODES } from "./initialNodesAndEdges";
+import { LeftNode, RightNode, RootNode } from "./nodes";
 import {
   MindmapFlowProvider,
   useMindmapFlow,
 } from "./providers/MindmapFlowProvider";
-import { Button } from "../ui/button";
 import { NodeTypes } from "./types";
-import { INITIAL_EDGES, INITIAL_NODES } from "./initialNodesAndEdges";
-import { ROOT_NODE_ID } from "./const";
 
 const nodeTypes: XYNodeTypes = {
   root: RootNode,

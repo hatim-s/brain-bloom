@@ -6,7 +6,11 @@
     "start": "next start",
     "tsc": "tsc --noEmit --skipLibCheck",
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
-    "lint:fix": "eslint . --ext .ts,.tsx,.js,.jsx --fix"
+    "lint:fix": "eslint . --ext .ts,.tsx,.js,.jsx --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "imports:sort": "eslint . --ext .ts,.tsx,.js,.jsx --fix --quiet",
+    "fix:all": "pnpm lint:fix && pnpm format"
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.4",
@@ -73,9 +77,11 @@
     "@typescript-eslint/parser": "^8.33.1",
     "eslint": "^9.28.0",
     "eslint-config-next": "^15.3.3",
+    "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-simple-import-sort": "^12.1.1",
     "postcss": "8.4.49",
     "tailwind-merge": "^2.5.2",
     "tailwindcss": "3.4.17",

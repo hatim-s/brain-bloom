@@ -1,7 +1,7 @@
 // source: https://github.com/hatim-s/finflow/blob/main/components/ui/typography.tsx
 
-import { PropsWithChildren } from "react";
 import clsx from "clsx";
+import { PropsWithChildren } from "react";
 
 function TypographyH1({
   children,
@@ -11,7 +11,7 @@ function TypographyH1({
     <h1
       className={clsx(
         "scroll-m-20 text-4xl font-extrabold tracking-tight lg:text-5xl",
-        className,
+        className
       )}
     >
       {children}
@@ -27,7 +27,7 @@ function TypographyH2({
     <h2
       className={clsx(
         "scroll-m-20 text-3xl font-semibold tracking-tight first:mt-0",
-        className,
+        className
       )}
     >
       {children}
@@ -43,7 +43,7 @@ function TypographyH3({
     <h3
       className={clsx(
         "scroll-m-20 text-2xl font-semibold tracking-tight",
-        className,
+        className
       )}
     >
       {children}
@@ -59,7 +59,7 @@ function TypographyH4({
     <h4
       className={clsx(
         "scroll-m-20 text-xl font-semibold tracking-tight",
-        className,
+        className
       )}
     >
       {children}

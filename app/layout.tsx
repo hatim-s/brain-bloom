@@ -1,10 +1,12 @@
 // import { ThemeSwitcher } from "@/components/theme-switcher";
+import "./globals.css";
+
+import clsx from "clsx";
 import { Geist } from "next/font/google";
 import { ThemeProvider } from "next-themes";
-import "./globals.css";
-import clsx from "clsx";
-import SupabaseProvider from "@/providers/SupabaseProvider";
+
 import { SidebarProvider } from "@/components/ui/sidebar";
+import SupabaseProvider from "@/providers/SupabaseProvider";
 
 const defaultUrl = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
