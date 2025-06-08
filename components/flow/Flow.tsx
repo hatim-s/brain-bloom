@@ -45,7 +45,8 @@ export function MindmapFlow() {
 
   const { activeNode, setActiveNode } = useMindmapNavigation(
     mindmapNodesMap,
-    leveledNodes
+    leveledNodes,
+    onAddNode
   );
 
   const onNodesChange = useCallback<typeof originalOnNodesChange>(

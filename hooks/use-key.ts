@@ -26,6 +26,10 @@ export function useKey(
         event.shiftKey === isShiftKey &&
         event.altKey === isAltKey
       ) {
+        // we do not want to trigger the default behavior of any key
+        event.preventDefault();
+        event.stopPropagation();
+
         callback();
       }
     };
