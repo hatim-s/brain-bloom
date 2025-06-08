@@ -35,6 +35,7 @@ export function MindmapFlow() {
     edges,
     nodesMap,
     mindmapNodesMap,
+    leveledNodes,
     actions: {
       // onEdgesChange, onConnect,
       onNodesChange: originalOnNodesChange,
@@ -42,7 +43,10 @@ export function MindmapFlow() {
     },
   } = useMindmapFlow();
 
-  const { activeNode, setActiveNode } = useMindmapNavigation(mindmapNodesMap);
+  const { activeNode, setActiveNode } = useMindmapNavigation(
+    mindmapNodesMap,
+    leveledNodes
+  );
 
   const onNodesChange = useCallback<typeof originalOnNodesChange>(
     (changes) => {

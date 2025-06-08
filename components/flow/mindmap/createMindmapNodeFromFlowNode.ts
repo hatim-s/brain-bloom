@@ -8,12 +8,14 @@ import {
 
 export function createMindmapNodeFromFlowNode(
   node: FlowNode | BaseFlowNode, // using BaseFlowNode is okay, since we do not care about the node position
-  parentNodeId: string | null
+  parentNodeId: string | null,
+  parentNodeLevel: number
 ): MindmapNode {
   if (node.type === NodeTypes.ROOT || parentNodeId === null) {
     return {
       id: node.id,
       parentId: null,
+      level: 0,
       type: NodeTypes.ROOT,
       children: new Map(),
     };
@@ -22,6 +24,7 @@ export function createMindmapNodeFromFlowNode(
   return {
     id: node.id,
     parentId: parentNodeId,
+    level: parentNodeLevel + 1,
     type: node.type,
     children: new Map(),
   };

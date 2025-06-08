@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import { ROOT_NODE_ID } from "../const";
+import { bfs } from "../layout/bfs";
 import {
   addNodeToGraph,
   // initGraph,
@@ -34,6 +35,7 @@ export type MindmapFlowContext = {
   edges: Edge[];
   nodesMap: Record<string, FlowNode>;
   mindmapNodesMap: Record<string, MindmapNode>;
+  leveledNodes: MindmapNode[][];
   actions: {
     onNodesChange: NonNullable<ReactFlowProps["onNodesChange"]>;
     // onEdgesChange: NonNullable<ReactFlowProps["onEdgesChange"]>;
@@ -81,7 +83,11 @@ export const MindmapFlowProvider = ({
   >(() => {
     return nodes.reduce<Record<string, MindmapNode>>((acc, node) => {
       const parentNodeId = getParentNodeIdFromFLow(node, edges);
-      acc[node.id] = createMindmapNodeFromFlowNode(node, parentNodeId);
+      acc[node.id] = createMindmapNodeFromFlowNode(
+        node,
+        parentNodeId,
+        parentNodeId ? acc[parentNodeId].level : 0
+      );
 
       // if the node has a parent, add it to the parent's children
       if (parentNodeId) {
@@ -93,6 +99,9 @@ export const MindmapFlowProvider = ({
       return acc;
     }, {});
   });
+
+  // todo: perf optimize this by manually adding/deleting nodes from the leveledNodes
+  const leveledNodes = useMemo(() => bfs(mindmapNodesMap), [mindmapNodesMap]);
 
   const nodesMap = useMemo(
     () =>
@@ -136,7 +145,11 @@ export const MindmapFlowProvider = ({
       setMindmapNodesMap((prevMindmapNodesMap) => {
         const newMindmapNodesMap = {
           ...prevMindmapNodesMap,
-          [newNode.id]: createMindmapNodeFromFlowNode(newNode, parentNodeId),
+          [newNode.id]: createMindmapNodeFromFlowNode(
+            newNode,
+            parentNodeId,
+            prevMindmapNodesMap[parentNodeId].level
+          ),
         };
 
         if (parentNodeId) {
@@ -200,6 +213,7 @@ export const MindmapFlowProvider = ({
       edges: edges,
       nodesMap: nodesMap,
       mindmapNodesMap: mindmapNodesMap,
+      leveledNodes: leveledNodes,
       actions: {
         onNodesChange,
         // onEdgesChange,
@@ -214,6 +228,7 @@ export const MindmapFlowProvider = ({
     // onEdgesChange,
     // onConnect,
     mindmapNodesMap,
+    leveledNodes,
     nodes,
     edges,
     nodesMap,

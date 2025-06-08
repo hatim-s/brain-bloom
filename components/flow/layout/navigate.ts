@@ -8,79 +8,65 @@ export enum Operation {
   RIGHT = "right",
 }
 
-function goToParent(
-  currentNode: MindmapNode,
-  nodesMap: Record<string, MindmapNode>
-) {
-  if (currentNode.parentId) return nodesMap[currentNode.parentId];
-  return currentNode;
+function getFirstChildId(childNode: MindmapNode): string | null {
+  const children = Array.from(childNode.children.keys());
+  return children[0] ?? null;
 }
 
-function goToFirstChild(currentNode: MindmapNode) {
-  const firstChildId = currentNode.children.keys().next().value;
-  if (firstChildId)
-    return currentNode.children.get(firstChildId) ?? currentNode;
-  return currentNode;
-}
-
-function goToFirstRootChild(
+function getFirstRootChildId(
   nodesMap: Record<string, MindmapNode>,
   childType: NodeTypes.LEFT | NodeTypes.RIGHT
-) {
+): string | null {
   const rootChildren = nodesMap[ROOT_NODE_ID].children.keys().toArray();
 
   // filter out the children in the other direction, only keep the ones that are of the same type
   const filteredChildren = rootChildren.filter(
     (childId) => nodesMap[childId].type === childType
   );
-  if (filteredChildren.length === 0) return nodesMap[ROOT_NODE_ID];
 
-  return nodesMap[filteredChildren[0]];
+  if (filteredChildren.length === 0) return null;
+  return nodesMap[filteredChildren[0]].id;
 }
 
-function getPreviousSiblingId(
+function getSiblingId(
   currentNode: MindmapNode,
-  nodesMap: Record<string, MindmapNode>
+  leveledNodes: MindmapNode[][],
+  type: "prev" | "next"
 ) {
-  const parentId = currentNode.parentId;
-  if (!parentId) return null;
+  let childLevelNodes = leveledNodes[currentNode.level] ?? [];
 
-  const parentNode = nodesMap[parentId];
-  if (!parentNode) return null;
+  /**
+   * We need to filter out nodes in level 1 by type, since these include both
+   * left and right nodes.
+   *
+   * This is because a left node cannot be the sibling of a right node, and vice versa.
+   */
+  if (currentNode.level === 1) {
+    childLevelNodes = childLevelNodes.filter(
+      (node) => node.type === currentNode.type
+    );
+  }
 
-  const siblings = parentNode.children.keys().toArray();
-  const currentIndex = siblings.indexOf(currentNode.id);
+  const currentNodeIndex = childLevelNodes.findIndex(
+    (node) => node.id === currentNode.id
+  );
 
-  if (currentIndex === -1 || currentIndex === 0) return null;
-  return siblings[currentIndex - 1];
+  // if the node is missing in the array or the node itself is the last node
+  if (currentNodeIndex === -1) return null;
+
+  return (
+    // return the index of the previous/next sibling node
+    childLevelNodes[currentNodeIndex + (type === "prev" ? -1 : 1)]?.id ?? null
+  );
 }
 
-function getNextSiblingId(
+function goToNode(
   currentNode: MindmapNode,
+  nodeId: string,
   nodesMap: Record<string, MindmapNode>
 ) {
-  const parentId = currentNode.parentId;
-  if (!parentId) return null;
-
-  const parentNode = nodesMap[parentId];
-  if (!parentNode) return null;
-
-  const siblings = parentNode.children.keys().toArray();
-  const currentIndex = siblings.indexOf(currentNode.id);
-
-  if (currentIndex === -1 || currentIndex === siblings.length - 1) return null;
-  return siblings[currentIndex + 1];
-}
-
-function goToSibiling(
-  currentNode: MindmapNode,
-  siblingId: string,
-  nodesMap: Record<string, MindmapNode>
-) {
-  const siblingNode = nodesMap[siblingId];
-  if (!siblingNode) return currentNode;
-
-  return siblingNode;
+  const node = nodesMap[nodeId];
+  return node ?? currentNode;
 }
 
 function moveLeft(
@@ -89,17 +75,21 @@ function moveLeft(
 ) {
   // if the node is a right node, moving left will go to the parent
   if (currentNode.type === NodeTypes.RIGHT) {
-    return goToParent(currentNode, nodesMap);
+    const parentNodeId = currentNode.parentId as string;
+    return goToNode(currentNode, parentNodeId, nodesMap);
   }
 
   // if the node is a left node, moving left will go to the first child
   if (currentNode.type === NodeTypes.LEFT) {
-    return goToFirstChild(currentNode);
+    const firstChildId = getFirstChildId(currentNode);
+    if (firstChildId) return goToNode(currentNode, firstChildId, nodesMap);
   }
 
   // if the node is a root node, moving left will go to the first child of the same type
   if (currentNode.type === NodeTypes.ROOT) {
-    return goToFirstRootChild(nodesMap, NodeTypes.LEFT);
+    const firstRootChildId = getFirstRootChildId(nodesMap, NodeTypes.LEFT);
+    if (firstRootChildId)
+      return goToNode(currentNode, firstRootChildId, nodesMap);
   }
 
   // fallback cases, do nothing
@@ -112,17 +102,21 @@ function moveRight(
 ) {
   // if the node is a left node, moving right will go to the parent
   if (currentNode.type === NodeTypes.LEFT) {
-    return goToParent(currentNode, nodesMap);
+    const parentNodeId = currentNode.parentId as string;
+    return goToNode(currentNode, parentNodeId, nodesMap);
   }
 
   // if the node is a right node, moving right will go to the first child
   if (currentNode.type === NodeTypes.RIGHT) {
-    return goToFirstChild(currentNode);
+    const firstChildId = getFirstChildId(currentNode);
+    if (firstChildId) return goToNode(currentNode, firstChildId, nodesMap);
   }
 
   // if the node is a root node, moving right will go to the first child of the same type
   if (currentNode.type === NodeTypes.ROOT) {
-    return goToFirstRootChild(nodesMap, NodeTypes.RIGHT);
+    const firstRootChildId = getFirstRootChildId(nodesMap, NodeTypes.RIGHT);
+    if (firstRootChildId)
+      return goToNode(currentNode, firstRootChildId, nodesMap);
   }
 
   // fallback cases, do nothing
@@ -131,7 +125,8 @@ function moveRight(
 
 function moveUp(
   currentNode: MindmapNode,
-  nodesMap: Record<string, MindmapNode>
+  nodesMap: Record<string, MindmapNode>,
+  leveledNodes: MindmapNode[][]
 ) {
   // if node is a root node, do nothing for now
   if (currentNode.type === NodeTypes.ROOT) {
@@ -139,14 +134,8 @@ function moveUp(
   }
 
   // for left and right nodes, moving up will go the previous sibling
-  if (
-    currentNode.type === NodeTypes.LEFT ||
-    currentNode.type === NodeTypes.RIGHT
-  ) {
-    const previousSiblingId = getPreviousSiblingId(currentNode, nodesMap);
-    if (previousSiblingId)
-      return goToSibiling(currentNode, previousSiblingId, nodesMap);
-  }
+  const prevSiblingId = getSiblingId(currentNode, leveledNodes, "prev");
+  if (prevSiblingId) return goToNode(currentNode, prevSiblingId, nodesMap);
 
   // fallback cases, do nothing
   return currentNode;
@@ -154,7 +143,8 @@ function moveUp(
 
 function moveDown(
   currentNode: MindmapNode,
-  nodesMap: Record<string, MindmapNode>
+  nodesMap: Record<string, MindmapNode>,
+  leveledNodes: MindmapNode[][]
 ) {
   // if node is a root node, do nothing for now
   if (currentNode.type === NodeTypes.ROOT) {
@@ -162,14 +152,8 @@ function moveDown(
   }
 
   // for left and right nodes, moving down will go the next sibling
-  if (
-    currentNode.type === NodeTypes.LEFT ||
-    currentNode.type === NodeTypes.RIGHT
-  ) {
-    const nextSiblingId = getNextSiblingId(currentNode, nodesMap);
-    if (nextSiblingId)
-      return goToSibiling(currentNode, nextSiblingId, nodesMap);
-  }
+  const nextSiblingId = getSiblingId(currentNode, leveledNodes, "next");
+  if (nextSiblingId) return goToNode(currentNode, nextSiblingId, nodesMap);
 
   // fallback cases, do nothing
   return currentNode;
@@ -178,13 +162,14 @@ function moveDown(
 export function navigate(
   operation: Operation,
   currentNode: MindmapNode,
-  nodesMap: Record<string, MindmapNode>
+  nodesMap: Record<string, MindmapNode>,
+  leveledNodes: MindmapNode[][]
 ) {
   switch (operation) {
     case Operation.UP:
-      return moveUp(currentNode, nodesMap);
+      return moveUp(currentNode, nodesMap, leveledNodes);
     case Operation.DOWN:
-      return moveDown(currentNode, nodesMap);
+      return moveDown(currentNode, nodesMap, leveledNodes);
     case Operation.LEFT:
       return moveLeft(currentNode, nodesMap);
     case Operation.RIGHT:

@@ -27,6 +27,10 @@ export type FlowNode = BaseFlowNode & Pick<Node, "position">; // add the positio
 export type MindmapNode = Required<Pick<FlowNode, "id">> & {
   // creating a map since we want to access children by id, and maintain order of children
   children: Map<string, MindmapNode>;
+  /**
+   * The level of the node in the mindmap. Root is level 0, children are level 1, etc.
+   */
+  level: number;
 } & ( // root node does not have a parentId
     | {
         type: NodeTypes.ROOT;
