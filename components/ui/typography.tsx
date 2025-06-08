@@ -1,7 +1,8 @@
 // source: https://github.com/hatim-s/finflow/blob/main/components/ui/typography.tsx
 
-import clsx from "clsx";
 import { PropsWithChildren } from "react";
+
+import { cn } from "@/lib/utils";
 
 function TypographyH1({
   children,
@@ -9,7 +10,7 @@ function TypographyH1({
 }: PropsWithChildren<Omit<TypographyProps, "variant">>) {
   return (
     <h1
-      className={clsx(
+      className={cn(
         "scroll-m-20 text-4xl font-extrabold tracking-tight lg:text-5xl",
         className
       )}
@@ -25,7 +26,7 @@ function TypographyH2({
 }: PropsWithChildren<Omit<TypographyProps, "variant">>) {
   return (
     <h2
-      className={clsx(
+      className={cn(
         "scroll-m-20 text-3xl font-semibold tracking-tight first:mt-0",
         className
       )}
@@ -41,7 +42,7 @@ function TypographyH3({
 }: PropsWithChildren<Omit<TypographyProps, "variant">>) {
   return (
     <h3
-      className={clsx(
+      className={cn(
         "scroll-m-20 text-2xl font-semibold tracking-tight",
         className
       )}
@@ -57,7 +58,7 @@ function TypographyH4({
 }: PropsWithChildren<Omit<TypographyProps, "variant">>) {
   return (
     <h4
-      className={clsx(
+      className={cn(
         "scroll-m-20 text-xl font-semibold tracking-tight",
         className
       )}
@@ -71,7 +72,7 @@ function TypographyP({
   children,
   className,
 }: PropsWithChildren<Omit<TypographyProps, "variant">>) {
-  return <p className={clsx(className)}>{children}</p>;
+  return <p className={cn(className)}>{children}</p>;
 }
 
 const TypographyVariantsMap = {

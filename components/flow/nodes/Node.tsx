@@ -6,24 +6,39 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Stack } from "@/components/ui/stack";
 import { Typography } from "@/components/ui/typography";
+import { cn } from "@/lib/utils";
 
 export function BaseNodeContent(props: {
   title: string;
   description?: string | undefined;
   link?: string | undefined;
   isSelected: boolean;
+  classNames?: {
+    container?: string;
+    title?: string;
+  };
 }) {
-  const { title, description, link, isSelected } = props;
+  const { title, description, link, isSelected, classNames } = props;
+
+  const { container: containerClassName, title: titleClassName } =
+    classNames ?? {};
 
   return (
     <Stack
-      className={clsx(
+      className={cn(
         "border border-secondary-foreground rounded-sm py-3 px-5 w-[300px] bg-background",
-        { "outline outline-primary !border-primary": isSelected }
+        {
+          "outline outline-2 outline-offset-4 outline-primary !border-primary bg-primary/15":
+            isSelected,
+        },
+        containerClassName
       )}
       direction="column"
     >
-      <Typography className=" flex-1  font-semibold !text-2xl" variant="h4">
+      <Typography
+        className={clsx("flex-1 font-medium !text-2xl", titleClassName)}
+        variant="h4"
+      >
         {title}
       </Typography>
       {description ? (
