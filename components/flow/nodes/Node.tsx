@@ -1,10 +1,11 @@
-import { Button } from "@/components/ui/button";
-import { Stack } from "@/components/ui/stack";
-import { Typography } from "@/components/ui/typography";
 import { Handle, NodeProps, Position } from "@xyflow/react";
 import clsx from "clsx";
 import { LinkIcon } from "lucide-react";
 import Link from "next/link";
+
+import { Button } from "@/components/ui/button";
+import { Stack } from "@/components/ui/stack";
+import { Typography } from "@/components/ui/typography";
 
 export function BaseNodeContent(props: {
   title: string;

@@ -1,4 +1,5 @@
 import { Handle, NodeProps, Position } from "@xyflow/react";
+
 import { BaseNodeContent } from "./Node";
 
 export default function RootNode(props: NodeProps) {

@@ -1,8 +1,9 @@
 import { Edge, Position } from "@xyflow/react";
-import { BaseFlowNode, NodeTypes } from "./types";
-import { getNewNodeID } from "./mindmap/createNode";
+
 import { ROOT_NODE_ID } from "./const";
 import { getNewEdgeID } from "./mindmap/createEdge";
+import { getNewNodeID } from "./mindmap/createNode";
+import { BaseFlowNode, NodeTypes } from "./types";
 
 // const LEFT_NODE_1 = getNewNodeID(NodeTypes.LEFT);
 // const LEFT_NODE_2 = getNewNodeID(NodeTypes.LEFT);

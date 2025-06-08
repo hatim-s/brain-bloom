@@ -1,10 +1,5 @@
 import { graphlib } from "@dagrejs/dagre";
-import {
-  addNodeToGraph,
-  // initGraph,
-  initGraphs,
-  initLayout,
-} from "../layout/init";
+import { Edge, Node, ReactFlowProps } from "@xyflow/react";
 import {
   createContext,
   useCallback,
@@ -12,11 +7,17 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Edge, Node, ReactFlowProps } from "@xyflow/react";
-import { createNode } from "../mindmap/createNode";
-import { createEdge } from "../mindmap/createEdge";
-import { BaseFlowNode, FlowNode, NodeTypes } from "../types";
+
 import { ROOT_NODE_ID } from "../const";
+import {
+  addNodeToGraph,
+  // initGraph,
+  initGraphs,
+  initLayout,
+} from "../layout/init";
+import { createEdge } from "../mindmap/createEdge";
+import { createNode } from "../mindmap/createNode";
+import { BaseFlowNode, FlowNode, NodeTypes } from "../types";
 import { useCreateXYFlowActions } from "./useCreateXYFlowActions";
 
 export type MindmapFlowContext = {
@@ -153,17 +154,7 @@ export const MindmapFlowProvider = ({
         onAddNode,
       },
     };
-  }, [
-    leftGraph,
-    rightGraph,
-    // onNodesChange,
-    // onEdgesChange,
-    // onConnect,
-    nodes,
-    edges,
-    nodesMap,
-    onAddNode,
-  ]);
+  }, [leftGraph, rightGraph, nodes, edges, nodesMap, onAddNode, onNodesChange]);
 
   return (
     <MindmapFlowContext.Provider value={context}>
