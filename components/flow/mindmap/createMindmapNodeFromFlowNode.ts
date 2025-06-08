@@ -1,23 +1,28 @@
-import { BaseFlowNode, FlowNode, MindmapNode, NodeTypes } from "../types";
+import {
+  BaseFlowNode,
+  FlowEdge,
+  FlowNode,
+  MindmapNode,
+  NodeTypes,
+} from "../types";
 
 export function createMindmapNodeFromFlowNode(
-  node: FlowNode | BaseFlowNode // using BaseFlowNode is okay, since we do not care about the node position
+  node: FlowNode | BaseFlowNode, // using BaseFlowNode is okay, since we do not care about the node position
+  parentNodeId: string | null
 ): MindmapNode {
-  if (node.type === NodeTypes.ROOT) {
+  if (node.type === NodeTypes.ROOT || parentNodeId === null) {
     return {
       id: node.id,
       parentId: null,
       type: NodeTypes.ROOT,
-      data: node.data,
       children: new Map(),
     };
   }
 
   return {
     id: node.id,
-    parentId: node.parentId,
+    parentId: parentNodeId,
     type: node.type,
-    data: node.data,
     children: new Map(),
   };
 }
@@ -32,4 +37,9 @@ export function addChildToMindmapNode(
     children: new Map(parent.children).set(child.id, child),
   };
   return newParent;
+}
+
+export function getParentNodeIdFromFLow(node: BaseFlowNode, edges: FlowEdge[]) {
+  const edge = edges.find((e) => e.target === node.id);
+  return edge?.source ?? null;
 }

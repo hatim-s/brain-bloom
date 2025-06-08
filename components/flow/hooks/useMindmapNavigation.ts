@@ -3,13 +3,14 @@ import { useCallback, useState } from "react";
 
 import { useKey } from "@/hooks/use-key";
 
+import { ROOT_NODE_ID } from "../const";
 import { navigate, Operation } from "../layout/navigate";
 import { MindmapNode } from "../types";
 
 export function useMindmapNavigation(
   mindmapNodesMap: Record<string, MindmapNode>
 ) {
-  const [activeNode, setActiveNode] = useState<string | null>(null);
+  const [activeNode, setActiveNode] = useState<string | null>(ROOT_NODE_ID);
 
   const handleNavigate = useCallback(
     (operation: Operation) => {

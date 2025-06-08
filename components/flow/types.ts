@@ -13,30 +13,31 @@ export enum NodeTypes {
   RIGHT = "right",
 }
 
-type NodeTypeParentHelper =
-  | {
-      type: NodeTypes.ROOT;
-      parentId: null;
-    }
-  | {
-      type: NodeTypes.LEFT | NodeTypes.RIGHT;
-      parentId: string;
-    };
-
 export type BaseFlowNode = WithRequired<
   Omit<
     Node<Record<string, unknown>, NodeTypes>,
-    "position" | "parentId" | "type"
+    | "position" // omitting position since we do not create it, and parentId since we do not need it
+    | "parentId" // omitting parentId since it interferes with the computed node positions
   >,
-  "id"
-> &
-  NodeTypeParentHelper;
+  "id" | "type"
+>;
 
 export type FlowNode = BaseFlowNode & Pick<Node, "position">; // add the position to the base node type
 
-export type MindmapNode = Required<Pick<FlowNode, "id" | "data">> & {
+export type MindmapNode = Required<Pick<FlowNode, "id">> & {
   // creating a map since we want to access children by id, and maintain order of children
   children: Map<string, MindmapNode>;
-} & NodeTypeParentHelper;
+} & ( // root node does not have a parentId
+    | {
+        type: NodeTypes.ROOT;
+        parentId: null;
+      }
+    | {
+        type: NodeTypes.LEFT | NodeTypes.RIGHT;
+        parentId: string;
+      }
+  );
+
+export type FlowEdge = Edge;
 
 export type MindmapEdge = Edge;

@@ -27,15 +27,13 @@ export function getNodeTypeFromId(id: string) {
 
 export function createNode(
   type: NodeTypes.LEFT | NodeTypes.RIGHT,
-  title: string,
-  parentId: string
+  title: string
 ): BaseFlowNode {
   return {
     id: getNewNodeID(type),
     type: type,
     data: { title: title },
     selectable: true,
-    parentId: parentId,
     handles: [
       {
         position: Position.Left,

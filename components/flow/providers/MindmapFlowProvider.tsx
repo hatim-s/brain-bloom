@@ -1,6 +1,5 @@
 import { graphlib } from "@dagrejs/dagre";
 import { Edge, Node, ReactFlowProps } from "@xyflow/react";
-import _omit from "lodash/omit";
 import {
   createContext,
   useCallback,
@@ -20,6 +19,7 @@ import { createEdge } from "../mindmap/createEdge";
 import {
   addChildToMindmapNode,
   createMindmapNodeFromFlowNode,
+  getParentNodeIdFromFLow,
 } from "../mindmap/createMindmapNodeFromFlowNode";
 import { createNode } from "../mindmap/createNode";
 import { BaseFlowNode, FlowNode, MindmapNode, NodeTypes } from "../types";
@@ -80,12 +80,13 @@ export const MindmapFlowProvider = ({
     Record<string, MindmapNode>
   >(() => {
     return nodes.reduce<Record<string, MindmapNode>>((acc, node) => {
-      acc[node.id] = createMindmapNodeFromFlowNode(node);
+      const parentNodeId = getParentNodeIdFromFLow(node, edges);
+      acc[node.id] = createMindmapNodeFromFlowNode(node, parentNodeId);
 
       // if the node has a parent, add it to the parent's children
-      if (node.parentId) {
-        acc[node.parentId] = addChildToMindmapNode(
-          acc[node.parentId],
+      if (parentNodeId) {
+        acc[parentNodeId] = addChildToMindmapNode(
+          acc[parentNodeId],
           acc[node.id]
         );
       }
@@ -125,24 +126,22 @@ export const MindmapFlowProvider = ({
         return;
       }
 
-      const newNode = createNode(type, "new node", parentNodeId);
+      const newNode = createNode(type, "new node");
       const newEdge = createEdge(parentNodeId, newNode.id);
 
       const newGraph = type === NodeTypes.LEFT ? leftGraph : rightGraph;
 
-      const nodeWithoutParentId = _omit(newNode, "parentId") as BaseFlowNode;
-
-      addNodeToGraph(newGraph, nodeWithoutParentId, newEdge);
+      addNodeToGraph(newGraph, newNode, newEdge);
 
       setMindmapNodesMap((prevMindmapNodesMap) => {
         const newMindmapNodesMap = {
           ...prevMindmapNodesMap,
-          [newNode.id]: createMindmapNodeFromFlowNode(newNode),
+          [newNode.id]: createMindmapNodeFromFlowNode(newNode, parentNodeId),
         };
 
-        if (newNode.parentId) {
-          newMindmapNodesMap[newNode.parentId] = addChildToMindmapNode(
-            newMindmapNodesMap[newNode.parentId],
+        if (parentNodeId) {
+          newMindmapNodesMap[parentNodeId] = addChildToMindmapNode(
+            newMindmapNodesMap[parentNodeId],
             newMindmapNodesMap[newNode.id]
           );
         }
@@ -168,12 +167,12 @@ export const MindmapFlowProvider = ({
         ...nodesNotInCurrentGraph,
         ...newGraph
           .nodes()
-          .filter((nodeId) => nodeId !== ROOT_NODE_ID)
+          .filter((nodeId) => nodeId !== ROOT_NODE_ID) // root node is already added
           .map((nodeId) => {
             const _node = nodesMap[nodeId];
             const _graphnode = newGraph.node(nodeId);
             return {
-              ...(_node ?? nodeWithoutParentId),
+              ...(_node ?? newNode),
               position: {
                 x: _graphnode.x - newRootNode.x,
                 y: _graphnode.y - newRootNode.y,
