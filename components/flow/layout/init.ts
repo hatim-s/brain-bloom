@@ -83,7 +83,7 @@ export function initGraphs() {
 // }
 
 export function initLayout(
-  graphs: { leftGraph: graphlib.Graph<{}>; rightGraph: graphlib.Graph<{}> },
+  graphs: { leftGraph: graphlib.Graph; rightGraph: graphlib.Graph },
   initialNodes: BaseFlowNode[],
   initialEdges: Edge[]
 ): FlowNode[] {

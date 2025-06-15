@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,8 +37,42 @@ function NodeDataInputForm({
     });
   }, [setSelectedNode, onUpdateNode, nodeId, title, description, link]);
 
+  const formRef = useRef<HTMLFormElement>(null);
+  const [focusableElements, setFocusableElements] = useState<
+    (HTMLInputElement | HTMLTextAreaElement)[]
+  >([]);
+
+  useEffect(() => {
+    const formEl = formRef.current;
+
+    const focusableElements = Array.from(
+      formEl?.querySelectorAll("input, textarea") ?? []
+    ) as (HTMLInputElement | HTMLTextAreaElement)[];
+
+    setFocusableElements(focusableElements);
+  }, []);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Tab") {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // focus on the next focusable element
+        const currentIndex = focusableElements.indexOf(
+          e.target as HTMLInputElement | HTMLTextAreaElement
+        );
+        const nextIndex = (currentIndex + 1) % focusableElements.length;
+        focusableElements[nextIndex].focus();
+      }
+    },
+    [focusableElements]
+  );
+
   return (
-    <>
+    // since we want to provide navigation across fields with tab
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- is needed
+    <form onKeyDown={handleKeyDown} className="space-y-4" ref={formRef}>
       <Label htmlFor="title">Title</Label>
       <Input
         id="title"
@@ -64,7 +98,7 @@ function NodeDataInputForm({
       />
 
       <Button onClick={handleSave}>Save</Button>
-    </>
+    </form>
   );
 }
 

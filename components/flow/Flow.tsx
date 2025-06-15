@@ -39,6 +39,7 @@ export function MindmapFlow() {
     leveledNodes,
     activeNode,
     setActiveNode,
+    selectedNode,
     setSelectedNode,
     actions: {
       // onEdgesChange, onConnect,
@@ -53,6 +54,7 @@ export function MindmapFlow() {
     activeNode,
     setActiveNode,
     onAddNode,
+    setSelectedNode,
   });
 
   const handleNodeChange = useCallback<typeof originalOnNodesChange>(
@@ -156,7 +158,9 @@ export function MindmapFlow() {
         panOnDrag={false}
         zoomOnDoubleClick={false}
         onPaneClick={handlePaneClick}
-        panOnScroll
+        panOnScroll={!selectedNode}
+        zoomOnScroll={false}
+        zoomOnPinch={!selectedNode}
         fitView
         nodeTypes={nodeTypes}
       >

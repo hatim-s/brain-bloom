@@ -12,6 +12,7 @@ export function useMindmapNavigation({
   mindmapNodesMap,
   leveledNodes,
   onAddNode,
+  setSelectedNode,
 }: {
   mindmapNodesMap: Record<string, MindmapNode>;
   leveledNodes: MindmapNode[][];
@@ -21,6 +22,7 @@ export function useMindmapNavigation({
     type: NodeTypes.LEFT | NodeTypes.RIGHT,
     parentNodeId: string
   ) => void;
+  setSelectedNode: (nodeId: string | null) => void;
 }) {
   const handleNavigate = useCallback(
     (operation: Operation) => {
@@ -65,6 +67,21 @@ export function useMindmapNavigation({
 
   useKey("Tab", () => {
     addNode();
+  });
+
+  useKey("Enter", () => {
+    if (!activeNode) return;
+
+    const node = mindmapNodesMap[activeNode];
+    if (!node) return;
+
+    if (node.type === NodeTypes.LEFT || node.type === NodeTypes.RIGHT) {
+      setSelectedNode(activeNode);
+    }
+  });
+
+  useKey("Escape", () => {
+    setSelectedNode(null);
   });
 
   return {
