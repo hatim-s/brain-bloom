@@ -5,6 +5,7 @@ import "@xyflow/react/dist/style.css";
 
 import {
   Background,
+  Node,
   ReactFlow,
   ReactFlowProvider,
   NodeTypes as XYNodeTypes,
@@ -36,6 +37,9 @@ export function MindmapFlow() {
     nodesMap,
     mindmapNodesMap,
     leveledNodes,
+    activeNode,
+    setActiveNode,
+    setSelectedNode,
     actions: {
       // onEdgesChange, onConnect,
       onNodesChange: originalOnNodesChange,
@@ -43,13 +47,15 @@ export function MindmapFlow() {
     },
   } = useMindmapFlow();
 
-  const { activeNode, setActiveNode } = useMindmapNavigation(
+  useMindmapNavigation({
     mindmapNodesMap,
     leveledNodes,
-    onAddNode
-  );
+    activeNode,
+    setActiveNode,
+    onAddNode,
+  });
 
-  const onNodesChange = useCallback<typeof originalOnNodesChange>(
+  const handleNodeChange = useCallback<typeof originalOnNodesChange>(
     (changes) => {
       // Check for selection changes
       const selectionAdd = changes.find(
@@ -71,6 +77,18 @@ export function MindmapFlow() {
     [originalOnNodesChange, setActiveNode]
   );
 
+  const handleNodeDoubleClick = useCallback(
+    (_ev: unknown, _node: Node) => {
+      setSelectedNode(_node.id);
+    },
+    [setSelectedNode]
+  );
+
+  const handlePaneClick = useCallback(() => {
+    setActiveNode(null);
+    setSelectedNode(null);
+  }, [setActiveNode, setSelectedNode]);
+
   const prevActiveNode = useRef<string | null>(null);
 
   // sync active node with the flow
@@ -78,7 +96,7 @@ export function MindmapFlow() {
     if (activeNode) {
       if (prevActiveNode.current === activeNode) return;
 
-      onNodesChange([
+      handleNodeChange([
         {
           id: activeNode,
           type: "select",
@@ -96,8 +114,18 @@ export function MindmapFlow() {
       ]);
 
       prevActiveNode.current = activeNode;
+      return;
     }
-  }, [activeNode, onNodesChange]);
+
+    if (prevActiveNode.current)
+      handleNodeChange([
+        {
+          id: prevActiveNode.current,
+          type: "select" as const,
+          selected: false,
+        },
+      ]);
+  }, [activeNode, handleNodeChange]);
 
   return (
     <Stack className="h-full w-full flex-1">
@@ -121,10 +149,13 @@ export function MindmapFlow() {
         edges={edges}
         // disabling edge selection, node selection is enabled at the node level
         elementsSelectable={false}
-        onNodesChange={onNodesChange}
+        onNodesChange={handleNodeChange}
+        onNodeDoubleClick={handleNodeDoubleClick}
         // onEdgesChange={onEdgesChange}
         // onConnect={onConnect}
         panOnDrag={false}
+        zoomOnDoubleClick={false}
+        onPaneClick={handlePaneClick}
         panOnScroll
         fitView
         nodeTypes={nodeTypes}

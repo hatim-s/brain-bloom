@@ -14,13 +14,35 @@ const GRAPHLIB_CONFIG = {
 const RANK_SEP = 100;
 const NODE_SEP = 100;
 
-const NODE_DIMENSIONS = {
-  height: 30,
+export const NODE_DIMENSIONS = {
+  height: 60,
+  width: 300,
+};
+
+export const ROOT_NODE_DIMENSIONS = {
+  height: 120,
   width: 300,
 };
 
 function edgeLabelRenderer() {
   return {};
+}
+
+function calculateNodeHeight(node: BaseFlowNode): number {
+  const baseHeight = 12 * 2; // top and bottom padding
+  const titleHeight = 28; // text-xl height
+  const descriptionHeight = 24 * 2; // text-base height, we only support 2 lines in view
+
+  let height = baseHeight;
+
+  height += titleHeight;
+
+  // Add height for description if present
+  if (node.data.description) {
+    height += descriptionHeight;
+  }
+
+  return height;
 }
 
 export function initGraphs() {
@@ -71,31 +93,31 @@ export function initLayout(
   // metadata about the node. In this case we're going to add labels to each of
   // our nodes.
   initialNodes.forEach((node) => {
+    const dimensions = getNodeDimensions(node);
     if (node.type === NodeTypes.LEFT) {
       leftGraph.setNode(node.id, {
         ...node.data,
-        height: NODE_DIMENSIONS.height,
-        width: NODE_DIMENSIONS.width,
+        height: dimensions.height,
+        width: dimensions.width,
       });
     } else if (node.type === NodeTypes.RIGHT) {
       rightGraph.setNode(node.id, {
         ...node.data,
-        height: NODE_DIMENSIONS.height,
-        width: NODE_DIMENSIONS.width,
+        height: dimensions.height,
+        width: dimensions.width,
       });
     } else if (node.type === NodeTypes.ROOT) {
-      // we want to set the root nodes to the center of the graph
       leftGraph.setNode(node.id, {
         ...node.data,
-        height: NODE_DIMENSIONS.height,
-        width: NODE_DIMENSIONS.width,
+        height: dimensions.height,
+        width: dimensions.width,
         x: 0,
         y: 0,
       });
       rightGraph.setNode(node.id, {
         ...node.data,
-        height: NODE_DIMENSIONS.height,
-        width: NODE_DIMENSIONS.width,
+        height: dimensions.height,
+        width: dimensions.width,
         x: 0,
         y: 0,
       });
@@ -162,11 +184,18 @@ export function addNodeToGraph(
 ) {
   graph.setNode(node.id, {
     ...node.data,
-    height: NODE_DIMENSIONS.height,
+    height: calculateNodeHeight(node),
     width: NODE_DIMENSIONS.width,
   });
 
   graph.setEdge(edge.source, edge.target);
 
   layout(graph);
+}
+
+export function getNodeDimensions(node: BaseFlowNode) {
+  return {
+    width: 300, // Fixed width based on UI design
+    height: calculateNodeHeight(node),
+  };
 }

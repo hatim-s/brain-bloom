@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 
 import { useKey } from "@/hooks/use-key";
 
@@ -6,16 +6,22 @@ import { ROOT_NODE_ID } from "../const";
 import { navigate, Operation } from "../layout/navigate";
 import { MindmapNode, NodeTypes } from "../types";
 
-export function useMindmapNavigation(
-  mindmapNodesMap: Record<string, MindmapNode>,
-  leveledNodes: MindmapNode[][],
+export function useMindmapNavigation({
+  activeNode,
+  setActiveNode,
+  mindmapNodesMap,
+  leveledNodes,
+  onAddNode,
+}: {
+  mindmapNodesMap: Record<string, MindmapNode>;
+  leveledNodes: MindmapNode[][];
+  activeNode: string | null;
+  setActiveNode: (nodeId: string | null) => void;
   onAddNode: (
     type: NodeTypes.LEFT | NodeTypes.RIGHT,
     parentNodeId: string
-  ) => void
-) {
-  const [activeNode, setActiveNode] = useState<string | null>(ROOT_NODE_ID);
-
+  ) => void;
+}) {
   const handleNavigate = useCallback(
     (operation: Operation) => {
       if (!activeNode) return;
@@ -27,7 +33,7 @@ export function useMindmapNavigation(
       );
       setActiveNode(newNode.id);
     },
-    [activeNode, mindmapNodesMap, leveledNodes]
+    [activeNode, mindmapNodesMap, leveledNodes, setActiveNode]
   );
 
   useKey("ArrowLeft", () => {
