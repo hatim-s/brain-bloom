@@ -10,18 +10,16 @@ const LEFT_NODE_2 = getNewNodeID(NodeTypes.LEFT);
 const RIGHT_NODE_1 = getNewNodeID(NodeTypes.RIGHT);
 const RIGHT_NODE_2 = getNewNodeID(NodeTypes.RIGHT);
 
-// // temp for testing, will need to generate randomly again
-// // once we add active node id support
-// const LEFT_NODE_1 = "left-1";
-// const LEFT_NODE_2 = "left-2";
-// const RIGHT_NODE_1 = "right-1";
-// const RIGHT_NODE_2 = "right-2";
-
 export const INITIAL_NODES: BaseFlowNode[] = [
   {
     id: ROOT_NODE_ID,
     type: NodeTypes.ROOT,
-    data: { title: "Root Node" },
+    data: {
+      title: "Root Node",
+      description:
+        "This is the root node. It is the starting point of the mindmap.",
+      link: "https://www.google.com",
+    },
     selectable: true,
     // root node has no parent
     handles: [
@@ -44,7 +42,7 @@ export const INITIAL_NODES: BaseFlowNode[] = [
   {
     id: LEFT_NODE_1,
     type: NodeTypes.LEFT,
-    data: { title: "Left Node - 1" },
+    data: { title: "Left Node - 1", description: "This is the left node 1" },
     selectable: true,
     handles: [
       {
@@ -60,7 +58,10 @@ export const INITIAL_NODES: BaseFlowNode[] = [
   {
     id: LEFT_NODE_2,
     type: NodeTypes.LEFT,
-    data: { title: "Left Node - 2" },
+    data: {
+      title: "Left Node - 2",
+      description: "This is the left node 2, another left node.",
+    },
     selectable: true,
     handles: [
       {
@@ -76,7 +77,10 @@ export const INITIAL_NODES: BaseFlowNode[] = [
   {
     id: RIGHT_NODE_1,
     type: NodeTypes.RIGHT,
-    data: { title: "Right Node - 1" },
+    data: {
+      title: "Right Node - 1",
+      description: "This is the right node 1, the first right node..",
+    },
     selectable: true,
     handles: [
       {

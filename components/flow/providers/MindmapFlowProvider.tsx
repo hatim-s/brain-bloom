@@ -26,6 +26,7 @@ import { createNode } from "../mindmap/createNode";
 import { BaseFlowNode, FlowNode, MindmapNode, NodeTypes } from "../types";
 import { useCreateXYFlowActions } from "./useCreateXYFlowActions";
 
+// todo: add documentation for the context
 export type MindmapFlowContext = {
   layout: {
     leftGraph: graphlib.Graph<object>;
@@ -36,6 +37,13 @@ export type MindmapFlowContext = {
   nodesMap: Record<string, FlowNode>;
   mindmapNodesMap: Record<string, MindmapNode>;
   leveledNodes: MindmapNode[][];
+
+  activeNode: string | null;
+  setActiveNode: (nodeId: string | null) => void;
+
+  selectedNode: string | null;
+  setSelectedNode: (nodeId: string | null) => void;
+
   actions: {
     onNodesChange: NonNullable<ReactFlowProps["onNodesChange"]>;
     // onEdgesChange: NonNullable<ReactFlowProps["onEdgesChange"]>;
@@ -44,6 +52,7 @@ export type MindmapFlowContext = {
       type: NodeTypes.LEFT | NodeTypes.RIGHT,
       parentNodeId: string
     ) => void;
+    onUpdateNode: (nodeId: string, data: FlowNode["data"]) => void;
   };
 };
 
@@ -203,6 +212,22 @@ export const MindmapFlowProvider = ({
     [nodes, nodesMap, leftGraph, rightGraph]
   );
 
+  const onUpdateNode = useCallback<
+    NonNullable<MindmapFlowContext["actions"]["onUpdateNode"]>
+  >((nodeId, data) => {
+    setNodes((nodes) => {
+      return nodes.map((node) => {
+        if (node.id === nodeId) {
+          return { ...node, data };
+        }
+        return node;
+      });
+    });
+  }, []);
+
+  const [activeNode, setActiveNode] = useState<string | null>(ROOT_NODE_ID);
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+
   const context = useMemo<MindmapFlowContext>(() => {
     return {
       layout: {
@@ -214,11 +239,16 @@ export const MindmapFlowProvider = ({
       nodesMap: nodesMap,
       mindmapNodesMap: mindmapNodesMap,
       leveledNodes: leveledNodes,
+      activeNode,
+      setActiveNode,
+      selectedNode,
+      setSelectedNode,
       actions: {
         onNodesChange,
         // onEdgesChange,
         // onConnect,
         onAddNode,
+        onUpdateNode,
       },
     } as MindmapFlowContext;
   }, [
@@ -233,7 +263,10 @@ export const MindmapFlowProvider = ({
     edges,
     nodesMap,
     onAddNode,
+    onUpdateNode,
     onNodesChange,
+    activeNode,
+    selectedNode,
   ]);
 
   return (

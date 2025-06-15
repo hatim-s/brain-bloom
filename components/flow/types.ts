@@ -13,9 +13,15 @@ export enum NodeTypes {
   RIGHT = "right",
 }
 
+export type NodeData = {
+  title: string;
+  description?: string;
+  link?: string;
+};
+
 export type BaseFlowNode = WithRequired<
   Omit<
-    Node<Record<string, unknown>, NodeTypes>,
+    Node<NodeData, NodeTypes>,
     | "position" // omitting position since we do not create it, and parentId since we do not need it
     | "parentId" // omitting parentId since it interferes with the computed node positions
   >,

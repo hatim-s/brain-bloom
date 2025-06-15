@@ -1,6 +1,7 @@
 import { Handle, NodeProps, Position } from "@xyflow/react";
+import clsx from "clsx";
 
-import { BaseNodeContent } from "./Node";
+import { BaseNodeContent } from "./Node/Node";
 
 export default function RootNode(props: NodeProps) {
   const title = props.data.title as string | undefined;
@@ -12,6 +13,13 @@ export default function RootNode(props: NodeProps) {
   return (
     <>
       <BaseNodeContent
+        classNames={{
+          container: clsx(
+            "bg-primary/40 border-primary outline-primary border outline",
+            { "bg-primary/55": isSelected }
+          ),
+          title: "font-semibold !text-xl",
+        }}
         title={title ?? "Root Node"}
         description={description}
         link={link}
