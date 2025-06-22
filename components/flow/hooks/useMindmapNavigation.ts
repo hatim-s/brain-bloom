@@ -69,7 +69,7 @@ export function useMindmapNavigation({
     addNode();
   });
 
-  useKey("Enter", () => {
+  const onEditNode = useCallback(() => {
     if (!activeNode) return;
 
     const node = mindmapNodesMap[activeNode];
@@ -78,14 +78,11 @@ export function useMindmapNavigation({
     if (node.type === NodeTypes.LEFT || node.type === NodeTypes.RIGHT) {
       setSelectedNode(activeNode);
     }
-  });
+  }, [activeNode, mindmapNodesMap, setSelectedNode]);
+
+  useKey("Enter", onEditNode);
 
   useKey("Escape", () => {
     setSelectedNode(null);
   });
-
-  return {
-    activeNode,
-    setActiveNode,
-  };
 }

@@ -147,6 +147,7 @@ export function MindmapFlow() {
       </Button>
       <ReactFlow
         nodesDraggable={false}
+        disableKeyboardA11y
         nodes={nodes}
         edges={edges}
         // disabling edge selection, node selection is enabled at the node level
