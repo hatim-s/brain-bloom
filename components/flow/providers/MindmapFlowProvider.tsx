@@ -12,7 +12,7 @@ import { useKey } from "@/hooks/use-key";
 import { ROOT_NODE_ID } from "../const";
 import { generateLeveledNodes } from "../layout/generateLeveledNodes";
 import { initGraphs, initLayout } from "../layout/init";
-import { transformFlowNodesToMindmapNodes } from "../mindmap/flowNodeToMindmapNode";
+import { transformFlowNodesAndEdgesToMindmapNodes } from "../mindmap/flowNodeToMindmapNode";
 import { BaseFlowNode, FlowNode, MindmapNode } from "../types";
 import { useCreateMindmapActions } from "./actions/useCreateMindmapActions";
 import { useCreateXYFlowActions } from "./actions/useCreateXYFlowActions";
@@ -51,7 +51,7 @@ export const MindmapFlowProvider = ({
 
   const [mindmapNodesMap, setMindmapNodesMap] = useState<
     Record<string, MindmapNode>
-  >(() => transformFlowNodesToMindmapNodes(nodes, edges));
+  >(() => transformFlowNodesAndEdgesToMindmapNodes(nodes, edges));
 
   // todo: perf optimize this by manually adding/deleting nodes from the leveledNodes
   const leveledNodes = useMemo(
@@ -85,6 +85,7 @@ export const MindmapFlowProvider = ({
     edges,
     setEdges,
     nodesMap,
+    mindmapNodesMap,
     setMindmapNodesMap,
     graphs: { leftGraph, rightGraph },
   });

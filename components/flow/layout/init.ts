@@ -191,6 +191,17 @@ export function initLayout(
   return initialNodesWithPositions as FlowNode[];
 }
 
+/**
+ * Add a node to the graph.
+ *
+ * @description
+ * The function adds a node to the graph and assigns it a position.
+ * It then layouts the graph.
+ *
+ * @param graph - The graph to add the node to.
+ * @param node - The node to add to the graph.
+ * @param edge - The edge to add to the graph.
+ */
 export function addNodeToGraph(
   graph: graphlib.Graph<object>,
   node: BaseFlowNode,

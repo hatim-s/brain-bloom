@@ -22,7 +22,7 @@ export type NodeData = {
 export type BaseFlowNode = WithRequired<
   Omit<
     Node<NodeData, NodeTypes>,
-    | "position" // omitting position since we do not create it, and parentId since we do not need it
+    | "position" // omitting position since we do not create it
     | "parentId" // omitting parentId since it interferes with the computed node positions
   >,
   "id" | "type"
@@ -30,7 +30,7 @@ export type BaseFlowNode = WithRequired<
 
 export type FlowNode = BaseFlowNode & Pick<Node, "position">; // add the position to the base node type
 
-export type MindmapNode = Required<Pick<FlowNode, "id">> & {
+export type MindmapNode = Required<Pick<FlowNode, "id" | "data">> & {
   // creating a map since we want to access children by id, and maintain order of children
   children: Map<string, MindmapNode>;
   /**
