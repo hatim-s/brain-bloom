@@ -1,8 +1,8 @@
-import { applyNodeChanges, Edge, Node, ReactFlowProps } from "@xyflow/react";
+import { applyNodeChanges, Edge, ReactFlowProps } from "@xyflow/react";
 import { Dispatch, SetStateAction, useCallback } from "react";
 
-import { FlowNode } from "../types";
-import { MindmapFlowContext } from "./MindmapFlowProvider";
+import { FlowNode } from "../../types";
+import { MindmapFlowContext } from "../types";
 
 type UseCreateXYFlowActionsReturnType = Pick<
   MindmapFlowContext["actions"],
