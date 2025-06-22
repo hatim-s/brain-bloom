@@ -2,6 +2,7 @@
 
 // eslint-disable-next-line simple-import-sort/imports -- prettier and eslint conflict
 import "@xyflow/react/dist/style.css";
+import "./flow.css";
 
 import {
   Background,
@@ -12,9 +13,7 @@ import {
 } from "@xyflow/react";
 import { useCallback, useEffect, useRef } from "react";
 
-import { Button } from "../ui/button";
 import { Stack } from "../ui/stack";
-import { ROOT_NODE_ID } from "./const";
 import { useMindmapNavigation } from "./hooks/useMindmapNavigation";
 import { INITIAL_EDGES, INITIAL_NODES } from "./initialNodesAndEdges";
 import { LeftNode, RightNode, RootNode } from "./nodes";
@@ -22,7 +21,6 @@ import {
   MindmapFlowProvider,
   useMindmapFlow,
 } from "./providers/MindmapFlowProvider";
-import { NodeTypes } from "./types";
 
 const nodeTypes: XYNodeTypes = {
   root: RootNode,
@@ -34,7 +32,6 @@ export function MindmapFlow() {
   const {
     nodes,
     edges,
-    nodesMap,
     mindmapNodesMap,
     leveledNodes,
     activeNode,
@@ -131,20 +128,6 @@ export function MindmapFlow() {
 
   return (
     <Stack className="h-full w-full flex-1">
-      <Button
-        className="absolute top-20 left-10 z-10"
-        onClick={() => {
-          if (!activeNode || activeNode === ROOT_NODE_ID) return;
-          const parentNode = nodesMap[activeNode];
-          onAddNode(
-            // if node is not root, it must be left or right
-            parentNode.type as NodeTypes.LEFT | NodeTypes.RIGHT,
-            activeNode
-          );
-        }}
-      >
-        add node
-      </Button>
       <ReactFlow
         nodesDraggable={false}
         disableKeyboardA11y
