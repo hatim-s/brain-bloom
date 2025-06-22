@@ -8,6 +8,8 @@ import {
   useState,
 } from "react";
 
+import { useKey } from "@/hooks/use-key";
+
 import { ROOT_NODE_ID } from "../const";
 import { bfs } from "../layout/bfs";
 import {
@@ -268,6 +270,12 @@ export const MindmapFlowProvider = ({
     activeNode,
     selectedNode,
   ]);
+
+  const debugLogger = useCallback(() => {
+    console.log("mindmap", context);
+  }, [context]);
+
+  useKey("d", debugLogger, { isAltKey: true });
 
   return (
     <MindmapFlowContext.Provider value={context}>

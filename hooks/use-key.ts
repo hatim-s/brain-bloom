@@ -20,7 +20,7 @@ export function useKey(
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       if (
-        event.key === key &&
+        (event.key === key || event.code === `Key${key.toUpperCase()}`) &&
         event.metaKey === isMetaKey &&
         event.ctrlKey === isCtrlKey &&
         event.shiftKey === isShiftKey &&
