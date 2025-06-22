@@ -1,4 +1,7 @@
+"use client";
+
 import { Network } from "lucide-react";
+import { useParams } from "next/navigation";
 import * as React from "react";
 
 import {
@@ -15,15 +18,18 @@ import {
 } from "@/components/ui/sidebar";
 import { MindmapDB } from "@/types/Mindmap";
 
+import { Typography } from "../ui/typography";
+
 // This is sample data.
-const getSidenavData = (mindmaps: MindmapDB[]) => ({
+const getSidenavData = (mindmaps: MindmapDB[], mindmapId: string) => ({
   navMain: [
     {
       title: "Your Mindmaps",
-      url: "#",
+      // url: "#",
       items: mindmaps.map((m) => ({
         title: m.name,
         url: `/${m.id}`,
+        isActive: m.id === parseInt(mindmapId),
       })),
     },
   ],
@@ -33,6 +39,9 @@ export function FloatingSidebar({
   mindmaps,
   ...props
 }: React.ComponentProps<typeof Sidebar> & { mindmaps: MindmapDB[] }) {
+  const params = useParams();
+  const mindmapSlug = params.mindmapSlug as string;
+
   return (
     <Sidebar variant="floating" {...props}>
       <SidebarHeader>
@@ -55,21 +64,19 @@ export function FloatingSidebar({
       <SidebarContent>
         <SidebarGroup>
           <SidebarMenu className="gap-2">
-            {getSidenavData(mindmaps).navMain.map((item) => (
-              <SidebarMenuItem key={item.title}>
-                <SidebarMenuButton asChild>
-                  <a href={item.url} className="font-medium">
-                    {item.title}
-                  </a>
-                </SidebarMenuButton>
+            {getSidenavData(mindmaps, mindmapSlug).navMain.map((item) => (
+              <SidebarMenuItem
+                className="flex flex-col gap-2 ms-1"
+                key={item.title}
+              >
+                <Typography className="text-base font-semibold" variant="p">
+                  {item.title}
+                </Typography>
                 {item.items?.length ? (
                   <SidebarMenuSub className="ml-0 border-l-0 px-1.5">
                     {item.items.map((item) => (
                       <SidebarMenuSubItem key={item.title}>
-                        <SidebarMenuSubButton
-                          asChild
-                          // isActive={item.isActive}
-                        >
+                        <SidebarMenuSubButton asChild isActive={item.isActive}>
                           <a href={item.url}>{item.title}</a>
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>

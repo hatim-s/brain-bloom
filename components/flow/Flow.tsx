@@ -182,8 +182,8 @@ export default function Flow({ mindmap: mindmapDB }: { mindmap: MindmapDB }) {
     <ReactFlowProvider>
       <MindmapFlowProvider
         mindmapDB={mindmapDB}
-        initialNodes={initialNodes ?? INITIAL_NODES}
-        initialEdges={initialEdges ?? INITIAL_EDGES}
+        initialNodes={initialNodes.length ? initialNodes : INITIAL_NODES}
+        initialEdges={initialEdges.length ? initialEdges : INITIAL_EDGES}
       >
         <MindmapFlow />
       </MindmapFlowProvider>
