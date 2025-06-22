@@ -60,8 +60,12 @@ export function BaseNodeContent(props: {
           target="_blank"
           className="text-xs absolute right-2 top-2"
         >
-          <Button className="hover:bg-primary/50" variant="ghost" size="icon">
-            <LinkIcon className="size-4" />
+          <Button
+            className="[&_svg]:!size-5 !size-8 hover:scale-105 transition-all duration-200 group"
+            variant="link"
+            size="icon"
+          >
+            <LinkIcon className="group-hover:drop-shadow-[0_0_8px_#22c55e] transition-all duration-200" />
           </Button>
         </Link>
       ) : null}
