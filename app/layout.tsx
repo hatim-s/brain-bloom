@@ -6,7 +6,7 @@ import clsx from "clsx";
 import { ThemeProvider } from "next-themes";
 import { Geist } from "next/font/google";
 
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarProvider } from "@/components/sidebar/sidebar-provider";
 import { Toaster } from "@/components/ui/sonner";
 import SupabaseProvider from "@/providers/SupabaseProvider";
 

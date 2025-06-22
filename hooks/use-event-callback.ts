@@ -15,9 +15,7 @@ function useIsomorphicLayoutEffect(
   effectFn(effect, deps);
 }
 
-export function useEventCallback<F extends (...args: unknown[]) => unknown>(
-  fn: F
-) {
+export function useEventCallback<F extends (...args: any[]) => any>(fn: F) {
   const ref = useRef<F>((() => {
     throw new Error("Cannot call an event handler while rendering.");
   }) as unknown as F);
