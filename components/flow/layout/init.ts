@@ -140,12 +140,10 @@ export function initLayout(
 
   // Add edges to the graph.
   initialEdges.forEach((edge) => {
-    if (edge.source === ROOT_NODE_ID) {
-      if (getNodeTypeFromId(edge.target) === NodeTypes.LEFT) {
-        leftGraph.setEdge(edge.source, edge.target);
-      } else {
-        rightGraph.setEdge(edge.source, edge.target);
-      }
+    if (getNodeTypeFromId(edge.target) === NodeTypes.LEFT) {
+      leftGraph.setEdge(edge.source, edge.target);
+    } else {
+      rightGraph.setEdge(edge.source, edge.target);
     }
   });
 

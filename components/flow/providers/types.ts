@@ -1,7 +1,9 @@
 import { graphlib } from "@dagrejs/dagre";
-import { Edge, Node, ReactFlowProps } from "@xyflow/react";
+import { ReactFlowProps } from "@xyflow/react";
 
-import { FlowNode, MindmapNode, NodeTypes } from "../types";
+import { MindmapDB } from "@/types/Mindmap";
+
+import { FlowEdge, FlowNode, MindmapNode, NodeTypes } from "../types";
 
 // todo: add documentation for the context
 export type MindmapFlowContext = {
@@ -9,10 +11,12 @@ export type MindmapFlowContext = {
     leftGraph: graphlib.Graph<object>;
     rightGraph: graphlib.Graph<object>;
   };
-  nodes: Node[];
-  edges: Edge[];
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+
   nodesMap: Record<string, FlowNode>;
   mindmapNodesMap: Record<string, MindmapNode>;
+
   leveledNodes: MindmapNode[][];
 
   activeNode: string | null;
@@ -20,6 +24,8 @@ export type MindmapFlowContext = {
 
   selectedNode: string | null;
   setSelectedNode: (nodeId: string | null) => void;
+
+  mindmapDB: MindmapDB;
 
   actions: {
     onNodesChange: NonNullable<ReactFlowProps["onNodesChange"]>;

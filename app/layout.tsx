@@ -1,11 +1,13 @@
 // import { ThemeSwitcher } from "@/components/theme-switcher";
+// eslint-disable-next-line simple-import-sort/imports
 import "./globals.css";
 
 import clsx from "clsx";
-import { Geist } from "next/font/google";
 import { ThemeProvider } from "next-themes";
+import { Geist } from "next/font/google";
 
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/sonner";
 import SupabaseProvider from "@/providers/SupabaseProvider";
 
 const defaultUrl = process.env.VERCEL_URL
@@ -41,6 +43,7 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
+          <Toaster position="bottom-right" richColors expand />
           <SupabaseProvider>
             <SidebarProvider>
               {children}

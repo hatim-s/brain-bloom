@@ -1,11 +1,11 @@
 "use server";
 
-import { Mindmap } from "@/types/Mindmap";
+import { MindmapDB } from "@/types/Mindmap";
 import { createClient } from "@/utils/supabase/client";
 
 export async function fetchMindmapById(
   mindmapId: string
-): Promise<Mindmap | null> {
+): Promise<MindmapDB | null> {
   const supabase = await createClient();
 
   const { data, error } = await supabase

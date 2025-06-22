@@ -6,6 +6,8 @@ import { createEdge } from "./createEdge";
 
 export type PartialBaseFlowNode = Pick<BaseFlowNode, "id" | "type" | "data">;
 
+export type PartialBaseFlowEdge = Pick<FlowEdge, "id" | "source" | "target">;
+
 function createFlowNodeFromMindmapNode(
   mindmapNode: MindmapNode
 ): PartialBaseFlowNode {

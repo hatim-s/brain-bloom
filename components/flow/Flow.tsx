@@ -11,11 +11,19 @@ import {
   ReactFlowProvider,
   NodeTypes as XYNodeTypes,
 } from "@xyflow/react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
+import { MindmapDB } from "@/types/Mindmap";
 import { Stack } from "../ui/stack";
+import { SaveMindmap } from "./components/SaveMindmap";
 import { useMindmapNavigation } from "./hooks/useMindmapNavigation";
 import { INITIAL_EDGES, INITIAL_NODES } from "./initialNodesAndEdges";
+import { createFlowEdgeFromPartialBaseFlowEdge } from "./mindmap/createEdge";
+import { createBaseFlowNodeFromPartialBaseFlowNode } from "./mindmap/createNode";
+import {
+  PartialBaseFlowEdge,
+  PartialBaseFlowNode,
+} from "./mindmap/mindmapNodesToFlowNodes";
 import { LeftNode, RightNode, RootNode } from "./nodes";
 import {
   MindmapFlowProvider,
@@ -128,6 +136,7 @@ export function MindmapFlow() {
 
   return (
     <Stack className="h-full w-full flex-1">
+      <SaveMindmap />
       <ReactFlow
         nodesDraggable={false}
         disableKeyboardA11y
@@ -154,12 +163,27 @@ export function MindmapFlow() {
   );
 }
 
-export default function Flow() {
+export default function Flow({ mindmap: mindmapDB }: { mindmap: MindmapDB }) {
+  const initialNodes = useMemo(
+    () =>
+      mindmapDB.nodes.map((node) =>
+        createBaseFlowNodeFromPartialBaseFlowNode(node as PartialBaseFlowNode)
+      ),
+    [mindmapDB.nodes]
+  );
+
+  const initialEdges = useMemo(() => {
+    return mindmapDB.edges.map((edge) =>
+      createFlowEdgeFromPartialBaseFlowEdge(edge as PartialBaseFlowEdge)
+    );
+  }, [mindmapDB.edges]);
+
   return (
     <ReactFlowProvider>
       <MindmapFlowProvider
-        initialNodes={INITIAL_NODES}
-        initialEdges={INITIAL_EDGES}
+        mindmapDB={mindmapDB}
+        initialNodes={initialNodes ?? INITIAL_NODES}
+        initialEdges={initialEdges ?? INITIAL_EDGES}
       >
         <MindmapFlow />
       </MindmapFlowProvider>
