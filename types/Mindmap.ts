@@ -15,7 +15,7 @@ export type MindmapEdgeDB = {
 };
 
 export type MindmapDB = {
-  id: string;
+  id: number;
   name: string;
   created_at: string; // ISO 8601,
   nodes: MindmapNodeDB[];
