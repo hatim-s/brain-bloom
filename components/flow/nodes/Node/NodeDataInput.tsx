@@ -65,8 +65,14 @@ function NodeDataInputForm({
         const nextIndex = (currentIndex + 1) % focusableElements.length;
         focusableElements[nextIndex].focus();
       }
+
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        handleSave();
+      }
     },
-    [focusableElements]
+    [focusableElements, handleSave]
   );
 
   return (
