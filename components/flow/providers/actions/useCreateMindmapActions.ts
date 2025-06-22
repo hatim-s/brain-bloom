@@ -4,11 +4,15 @@ import { Dispatch, SetStateAction, useCallback } from "react";
 import { ROOT_NODE_ID } from "../../const";
 import { addNodeToGraph } from "../../layout/init";
 import { createEdge } from "../../mindmap/createEdge";
-import { createNode } from "../../mindmap/createNode";
+import {
+  createBaseFlowNodeFromPartialBaseFlowNode,
+  createNode,
+} from "../../mindmap/createNode";
 import {
   addChildToMindmapNode,
   createMindmapNodeFromFlowNode,
 } from "../../mindmap/flowNodeToMindmapNode";
+import { transformMindmapNodesToFlowNodesAndEdges } from "../../mindmap/mindmapNodesToFlowNodes";
 import { FlowEdge, FlowNode, MindmapNode, NodeTypes } from "../../types";
 import { MindmapFlowContext as MindmapFlowContextType } from "../types";
 
@@ -18,6 +22,7 @@ type UseCreateMindmapActionsProps = {
   setNodes: Dispatch<SetStateAction<FlowNode[]>>;
   setEdges: Dispatch<SetStateAction<FlowEdge[]>>;
   nodesMap: Record<string, FlowNode>;
+  mindmapNodesMap: Record<string, MindmapNode>;
   setMindmapNodesMap: Dispatch<SetStateAction<Record<string, MindmapNode>>>;
   graphs: {
     leftGraph: graphlib.Graph<object>;
@@ -27,10 +32,11 @@ type UseCreateMindmapActionsProps = {
 
 export function useCreateMindmapActions({
   nodes,
-  edges: _edges,
+  edges,
+  nodesMap,
   setNodes,
   setEdges,
-  nodesMap,
+  mindmapNodesMap,
   setMindmapNodesMap,
   graphs: { leftGraph, rightGraph },
 }: UseCreateMindmapActionsProps): Pick<
@@ -41,7 +47,7 @@ export function useCreateMindmapActions({
     NonNullable<MindmapFlowContextType["actions"]["onAddNode"]>
   >(
     (type, parentNodeId) => {
-      if (!nodesMap[parentNodeId]) {
+      if (!mindmapNodesMap[parentNodeId]) {
         // eslint-disable-next-line no-console -- needed
         console.error(
           `[MindmapFlowProvider] onAddNode: parent node ${parentNodeId} not found`
@@ -49,78 +55,82 @@ export function useCreateMindmapActions({
         return;
       }
 
-      const newNode = createNode(type, "new node");
+      const newNode = createNode(type, "New Node");
       const newEdge = createEdge(parentNodeId, newNode.id);
 
       const newGraph = type === NodeTypes.LEFT ? leftGraph : rightGraph;
+      const oldGraph = type === NodeTypes.LEFT ? rightGraph : leftGraph;
 
       addNodeToGraph(newGraph, newNode, newEdge);
 
-      setMindmapNodesMap((prevMindmapNodesMap) => {
-        const newMindmapNodesMap = {
-          ...prevMindmapNodesMap,
-          [newNode.id]: createMindmapNodeFromFlowNode(
-            newNode,
-            parentNodeId,
-            prevMindmapNodesMap[parentNodeId].level
-          ),
-        };
+      let mindmapNodesMapSync: Record<string, MindmapNode> = mindmapNodesMap;
 
-        if (parentNodeId) {
-          newMindmapNodesMap[parentNodeId] = addChildToMindmapNode(
-            newMindmapNodesMap[parentNodeId],
-            newMindmapNodesMap[newNode.id]
-          );
-        }
+      mindmapNodesMapSync = {
+        ...mindmapNodesMapSync,
+        [newNode.id]: createMindmapNodeFromFlowNode(
+          newNode,
+          parentNodeId,
+          mindmapNodesMapSync[parentNodeId].level
+        ),
+      };
 
-        return newMindmapNodesMap;
-      });
+      if (parentNodeId) {
+        mindmapNodesMapSync[parentNodeId] = addChildToMindmapNode(
+          mindmapNodesMapSync[parentNodeId],
+          mindmapNodesMapSync[newNode.id]
+        );
+      }
 
-      const nodesNotInCurrentGraph = nodes.filter(
-        (node) => node.type !== type && node.id !== ROOT_NODE_ID
-      );
+      setMindmapNodesMap(mindmapNodesMapSync);
 
       const newRootNode = newGraph.node(ROOT_NODE_ID);
 
-      const updatedNodes = [
-        // root node should come in first
-        {
-          ...nodesMap[ROOT_NODE_ID],
+      const { nodes: newGraphNodes, edges: newGraphEdges } =
+        transformMindmapNodesToFlowNodesAndEdges(mindmapNodesMapSync);
+
+      const updatedNodes = newGraphNodes.map<FlowNode>((_node) => {
+        const node = createBaseFlowNodeFromPartialBaseFlowNode(_node);
+
+        if (node.type === NodeTypes.ROOT) {
+          return {
+            ...node,
+            position: {
+              x: newGraph.node(node.id).x - newRootNode.x,
+              y: newGraph.node(node.id).y - newRootNode.y,
+            },
+          };
+        }
+
+        if (node.type !== type) {
+          return {
+            ...node,
+            // leave the position of the node in the old graph as is
+            position: {
+              x: oldGraph.node(node.id).x - oldGraph.node(ROOT_NODE_ID).x,
+              y: oldGraph.node(node.id).y - oldGraph.node(ROOT_NODE_ID).y,
+            },
+          };
+        }
+
+        return {
+          ...node,
+          selected: node.id === parentNodeId, // when adding a node, the parentNode is the activeNode
           position: {
-            x: newRootNode.x - newRootNode.x,
-            y: newRootNode.y - newRootNode.y,
+            x: newGraph.node(node.id).x - newRootNode.x,
+            y: newGraph.node(node.id).y - newRootNode.y,
           },
-        },
-        ...nodesNotInCurrentGraph,
-        ...newGraph
-          .nodes()
-          .filter((nodeId) => nodeId !== ROOT_NODE_ID) // root node is already added
-          .map((nodeId) => {
-            const _node = nodesMap[nodeId];
-            const _graphnode = newGraph.node(nodeId);
-            return {
-              ...(_node ?? newNode),
-              position: {
-                x: _graphnode.x - newRootNode.x,
-                y: _graphnode.y - newRootNode.y,
-              },
-            };
-          }),
-      ] as FlowNode[];
+        };
+      });
 
       setNodes(updatedNodes);
-
-      setEdges((edges) => {
-        return [...edges, newEdge];
-      });
+      setEdges(newGraphEdges);
     },
     [
-      nodes,
-      nodesMap,
       leftGraph,
       rightGraph,
       setNodes,
       setEdges,
+      mindmapNodesMap,
       setMindmapNodesMap,
     ]
   );

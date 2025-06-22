@@ -14,18 +14,20 @@ export function createMindmapNodeFromFlowNode(
   if (node.type === NodeTypes.ROOT || parentNodeId === null) {
     return {
       id: node.id,
+      type: NodeTypes.ROOT,
+      data: node.data,
       parentId: null,
       level: 0,
-      type: NodeTypes.ROOT,
       children: new Map(),
     };
   }
 
   return {
     id: node.id,
+    type: node.type,
+    data: node.data,
     parentId: parentNodeId,
     level: parentNodeLevel + 1,
-    type: node.type,
     children: new Map(),
   };
 }
@@ -47,7 +49,7 @@ export function getParentNodeIdFromFlow(node: BaseFlowNode, edges: FlowEdge[]) {
   return edge?.source ?? null;
 }
 
-export function transformFlowNodesToMindmapNodes(
+export function transformFlowNodesAndEdgesToMindmapNodes(
   nodes: FlowNode[],
   edges: FlowEdge[]
 ) {
