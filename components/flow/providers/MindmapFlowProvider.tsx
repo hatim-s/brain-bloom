@@ -1,5 +1,4 @@
-import { graphlib } from "@dagrejs/dagre";
-import { Edge, Node, ReactFlowProps } from "@xyflow/react";
+import { Edge } from "@xyflow/react";
 import {
   createContext,
   useCallback,
@@ -11,54 +10,15 @@ import {
 import { useKey } from "@/hooks/use-key";
 
 import { ROOT_NODE_ID } from "../const";
-import { bfs } from "../layout/bfs";
-import {
-  addNodeToGraph,
-  // initGraph,
-  initGraphs,
-  initLayout,
-} from "../layout/init";
-import { createEdge } from "../mindmap/createEdge";
-import {
-  addChildToMindmapNode,
-  createMindmapNodeFromFlowNode,
-  getParentNodeIdFromFLow,
-} from "../mindmap/createMindmapNodeFromFlowNode";
-import { createNode } from "../mindmap/createNode";
-import { BaseFlowNode, FlowNode, MindmapNode, NodeTypes } from "../types";
-import { useCreateXYFlowActions } from "./useCreateXYFlowActions";
+import { generateLeveledNodes } from "../layout/generateLeveledNodes";
+import { initGraphs, initLayout } from "../layout/init";
+import { transformFlowNodesToMindmapNodes } from "../mindmap/flowNodeToMindmapNode";
+import { BaseFlowNode, FlowNode, MindmapNode } from "../types";
+import { useCreateMindmapActions } from "./actions/useCreateMindmapActions";
+import { useCreateXYFlowActions } from "./actions/useCreateXYFlowActions";
+import { MindmapFlowContext as MindmapFlowContextType } from "./types";
 
-// todo: add documentation for the context
-export type MindmapFlowContext = {
-  layout: {
-    leftGraph: graphlib.Graph<object>;
-    rightGraph: graphlib.Graph<object>;
-  };
-  nodes: Node[];
-  edges: Edge[];
-  nodesMap: Record<string, FlowNode>;
-  mindmapNodesMap: Record<string, MindmapNode>;
-  leveledNodes: MindmapNode[][];
-
-  activeNode: string | null;
-  setActiveNode: (nodeId: string | null) => void;
-
-  selectedNode: string | null;
-  setSelectedNode: (nodeId: string | null) => void;
-
-  actions: {
-    onNodesChange: NonNullable<ReactFlowProps["onNodesChange"]>;
-    // onEdgesChange: NonNullable<ReactFlowProps["onEdgesChange"]>;
-    // onConnect: NonNullable<ReactFlowProps["onConnect"]>;
-    onAddNode: (
-      type: NodeTypes.LEFT | NodeTypes.RIGHT,
-      parentNodeId: string
-    ) => void;
-    onUpdateNode: (nodeId: string, data: FlowNode["data"]) => void;
-  };
-};
-
-const MindmapFlowContext = createContext<MindmapFlowContext | null>(null);
+const MindmapFlowContext = createContext<MindmapFlowContextType | null>(null);
 
 export const useMindmapFlow = () => {
   const context = useContext(MindmapFlowContext);
@@ -91,28 +51,13 @@ export const MindmapFlowProvider = ({
 
   const [mindmapNodesMap, setMindmapNodesMap] = useState<
     Record<string, MindmapNode>
-  >(() => {
-    return nodes.reduce<Record<string, MindmapNode>>((acc, node) => {
-      const parentNodeId = getParentNodeIdFromFLow(node, edges);
-      acc[node.id] = createMindmapNodeFromFlowNode(
-        node,
-        parentNodeId,
-        parentNodeId ? acc[parentNodeId].level : 0
-      );
-
-      // if the node has a parent, add it to the parent's children
-      if (parentNodeId) {
-        acc[parentNodeId] = addChildToMindmapNode(
-          acc[parentNodeId],
-          acc[node.id]
-        );
-      }
-      return acc;
-    }, {});
-  });
+  >(() => transformFlowNodesToMindmapNodes(nodes, edges));
 
   // todo: perf optimize this by manually adding/deleting nodes from the leveledNodes
-  const leveledNodes = useMemo(() => bfs(mindmapNodesMap), [mindmapNodesMap]);
+  const leveledNodes = useMemo(
+    () => generateLeveledNodes(mindmapNodesMap),
+    [mindmapNodesMap]
+  );
 
   const nodesMap = useMemo(
     () =>
@@ -134,103 +79,20 @@ export const MindmapFlowProvider = ({
     setEdges,
   });
 
-  const onAddNode = useCallback<
-    NonNullable<MindmapFlowContext["actions"]["onAddNode"]>
-  >(
-    (type, parentNodeId) => {
-      if (!nodesMap[parentNodeId]) {
-        // eslint-disable-next-line no-console -- needed
-        console.error(
-          `[MindmapFlowProvider] onAddNode: parent node ${parentNodeId} not found`
-        );
-        return;
-      }
-
-      const newNode = createNode(type, "new node");
-      const newEdge = createEdge(parentNodeId, newNode.id);
-
-      const newGraph = type === NodeTypes.LEFT ? leftGraph : rightGraph;
-
-      addNodeToGraph(newGraph, newNode, newEdge);
-
-      setMindmapNodesMap((prevMindmapNodesMap) => {
-        const newMindmapNodesMap = {
-          ...prevMindmapNodesMap,
-          [newNode.id]: createMindmapNodeFromFlowNode(
-            newNode,
-            parentNodeId,
-            prevMindmapNodesMap[parentNodeId].level
-          ),
-        };
-
-        if (parentNodeId) {
-          newMindmapNodesMap[parentNodeId] = addChildToMindmapNode(
-            newMindmapNodesMap[parentNodeId],
-            newMindmapNodesMap[newNode.id]
-          );
-        }
-
-        return newMindmapNodesMap;
-      });
-
-      const nodesNotInCurrentGraph = nodes.filter(
-        (node) => node.type !== type && node.id !== ROOT_NODE_ID
-      );
-
-      const newRootNode = newGraph.node(ROOT_NODE_ID);
-
-      const updatedNodes = [
-        // root node should come in first
-        {
-          ...nodesMap[ROOT_NODE_ID],
-          position: {
-            x: newRootNode.x - newRootNode.x,
-            y: newRootNode.y - newRootNode.y,
-          },
-        },
-        ...nodesNotInCurrentGraph,
-        ...newGraph
-          .nodes()
-          .filter((nodeId) => nodeId !== ROOT_NODE_ID) // root node is already added
-          .map((nodeId) => {
-            const _node = nodesMap[nodeId];
-            const _graphnode = newGraph.node(nodeId);
-            return {
-              ...(_node ?? newNode),
-              position: {
-                x: _graphnode.x - newRootNode.x,
-                y: _graphnode.y - newRootNode.y,
-              },
-            };
-          }),
-      ] as FlowNode[];
-
-      setNodes(updatedNodes);
-
-      setEdges((edges) => {
-        return [...edges, newEdge];
-      });
-    },
-    [nodes, nodesMap, leftGraph, rightGraph]
-  );
-
-  const onUpdateNode = useCallback<
-    NonNullable<MindmapFlowContext["actions"]["onUpdateNode"]>
-  >((nodeId, data) => {
-    setNodes((nodes) => {
-      return nodes.map((node) => {
-        if (node.id === nodeId) {
-          return { ...node, data };
-        }
-        return node;
-      });
-    });
-  }, []);
+  const { onAddNode, onUpdateNode } = useCreateMindmapActions({
+    nodes,
+    setNodes,
+    edges,
+    setEdges,
+    nodesMap,
+    setMindmapNodesMap,
+    graphs: { leftGraph, rightGraph },
+  });
 
   const [activeNode, setActiveNode] = useState<string | null>(ROOT_NODE_ID);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
 
-  const context = useMemo<MindmapFlowContext>(() => {
+  const context = useMemo<MindmapFlowContextType>(() => {
     return {
       layout: {
         leftGraph,
@@ -252,11 +114,11 @@ export const MindmapFlowProvider = ({
         onAddNode,
         onUpdateNode,
       },
-    } as MindmapFlowContext;
+    } as MindmapFlowContextType;
   }, [
     leftGraph,
     rightGraph,
-    // onNodesChange,
+    onNodesChange,
     // onEdgesChange,
     // onConnect,
     mindmapNodesMap,
@@ -266,12 +128,12 @@ export const MindmapFlowProvider = ({
     nodesMap,
     onAddNode,
     onUpdateNode,
-    onNodesChange,
     activeNode,
     selectedNode,
   ]);
 
   const debugLogger = useCallback(() => {
+    // eslint-disable-next-line no-console -- needed for debug logging
     console.log("mindmap", context);
   }, [context]);
 

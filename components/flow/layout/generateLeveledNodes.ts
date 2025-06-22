@@ -1,7 +1,7 @@
 import { ROOT_NODE_ID } from "../const";
 import { MindmapNode } from "../types";
 
-export function bfs(
+export function generateLeveledNodes(
   mindmapNodesMap: Record<string, MindmapNode>
 ): MindmapNode[][] {
   const queue: (MindmapNode | null)[] = [mindmapNodesMap[ROOT_NODE_ID], null];

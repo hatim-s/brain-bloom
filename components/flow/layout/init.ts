@@ -45,6 +45,20 @@ function calculateNodeHeight(node: BaseFlowNode): number {
   return height;
 }
 
+/**
+ * Initialize the graphs for the left and right sides of the mindmap.
+ *
+ * @description
+ * The graphs are initialized with the following configuration:
+ * - directed: true
+ * - compound: true
+ * - multigraph: false
+ *
+ * @returns {
+ *  leftGraph: graphlib.Graph<object>,
+ *  rightGraph: graphlib.Graph<object>,
+ * }
+ */
 export function initGraphs() {
   const leftGraph = new graphlib.Graph(GRAPHLIB_CONFIG);
   const rightGraph = new graphlib.Graph(GRAPHLIB_CONFIG);
@@ -69,19 +83,19 @@ export function initGraphs() {
   return { leftGraph, rightGraph };
 }
 
-// export function initGraph(type: GraphType) {
-//   const graph = new graphlib.Graph(GRAPHLIB_CONFIG);
-
-//   graph.setGraph({
-//     rankdir: type === GraphType.LEFT ? "RL" : "LR", // Left-to-right layout
-//     ranksep: RANK_SEP, // 100px between ranks
-//     nodesep: NODE_SEP, // 30px between nodes in the same rank
-//   });
-
-//   graph.setDefaultEdgeLabel(edgeLabelRenderer);
-//   return graph;
-// }
-
+/**
+ * Initialize the layout for the left and right sides of the mindmap.
+ *
+ * @description
+ * The function takes the graphs and initial nodes and edges, and adds them to the graphs.
+ * It then layouts the graphs and assigns ranks, levels andpositions to the nodes.
+ * It then returns the initial nodes with positions.
+ *
+ * @param graphs - The graphs to initialize the layout for.
+ * @param initialNodes - The initial nodes to add to the graphs.
+ * @param initialEdges - The initial edges to add to the graphs.
+ * @returns The initial nodes with positions.
+ */
 export function initLayout(
   graphs: { leftGraph: graphlib.Graph; rightGraph: graphlib.Graph },
   initialNodes: BaseFlowNode[],
@@ -96,26 +110,26 @@ export function initLayout(
     const dimensions = getNodeDimensions(node);
     if (node.type === NodeTypes.LEFT) {
       leftGraph.setNode(node.id, {
-        ...node.data,
+        // ...node.data,
         height: dimensions.height,
         width: dimensions.width,
       });
     } else if (node.type === NodeTypes.RIGHT) {
       rightGraph.setNode(node.id, {
-        ...node.data,
+        // ...node.data,
         height: dimensions.height,
         width: dimensions.width,
       });
     } else if (node.type === NodeTypes.ROOT) {
       leftGraph.setNode(node.id, {
-        ...node.data,
+        // ...node.data,
         height: dimensions.height,
         width: dimensions.width,
         x: 0,
         y: 0,
       });
       rightGraph.setNode(node.id, {
-        ...node.data,
+        // ...node.data,
         height: dimensions.height,
         width: dimensions.width,
         x: 0,
@@ -178,7 +192,7 @@ export function initLayout(
 }
 
 export function addNodeToGraph(
-  graph: graphlib.Graph<{}>,
+  graph: graphlib.Graph<object>,
   node: BaseFlowNode,
   edge: Edge
 ) {

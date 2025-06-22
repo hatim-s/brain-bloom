@@ -42,7 +42,30 @@ export function addChildToMindmapNode(
   return newParent;
 }
 
-export function getParentNodeIdFromFLow(node: BaseFlowNode, edges: FlowEdge[]) {
+export function getParentNodeIdFromFlow(node: BaseFlowNode, edges: FlowEdge[]) {
   const edge = edges.find((e) => e.target === node.id);
   return edge?.source ?? null;
+}
+
+export function transformFlowNodesToMindmapNodes(
+  nodes: FlowNode[],
+  edges: FlowEdge[]
+) {
+  return nodes.reduce<Record<string, MindmapNode>>((acc, node) => {
+    const parentNodeId = getParentNodeIdFromFlow(node, edges);
+    acc[node.id] = createMindmapNodeFromFlowNode(
+      node,
+      parentNodeId,
+      parentNodeId ? acc[parentNodeId].level : 0
+    );
+
+    // if the node has a parent, add it to the parent's children
+    if (parentNodeId) {
+      acc[parentNodeId] = addChildToMindmapNode(
+        acc[parentNodeId],
+        acc[node.id]
+      );
+    }
+    return acc;
+  }, {});
 }
