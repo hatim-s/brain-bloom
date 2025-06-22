@@ -7,6 +7,7 @@ import { ThemeProvider } from "next-themes";
 import { Geist } from "next/font/google";
 
 import { SidebarProvider } from "@/components/sidebar/sidebar-provider";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 import { Toaster } from "@/components/ui/sonner";
 import SupabaseProvider from "@/providers/SupabaseProvider";
 
@@ -47,8 +48,7 @@ export default function RootLayout({
           <SupabaseProvider>
             <SidebarProvider>
               {children}
-              {/* todo: add this again */}
-              {/* <ThemeSwitcher /> */}
+              <ThemeSwitcher />
             </SidebarProvider>
           </SupabaseProvider>
         </ThemeProvider>

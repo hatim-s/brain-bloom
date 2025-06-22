@@ -40,13 +40,16 @@ export default async function MindmapPage(props: {
         </Tooltip>
         <Separator
           orientation="vertical"
-          className="mr-2 h-4 text-gray-300 bg-gray-300"
+          className="mr-2 h-4 text-gray-700 bg-gray-700 dark:text-gray-300 dark:bg-gray-300"
         />
-        <Typography className="text-gray-300 font-light text-sm" variant="p">
+        <Typography
+          className="text-gray-700 font-semibold text-sm dark:text-gray-300"
+          variant="p"
+        >
           {mindmap.name}
         </Typography>
       </header>
-      <Stack className="flex-1 p-4 relative">
+      <Stack className="flex-1 relative">
         <Flow mindmap={mindmap} />
       </Stack>
     </SidebarInset>
