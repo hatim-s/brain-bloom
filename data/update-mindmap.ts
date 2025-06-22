@@ -3,17 +3,15 @@
 import { MindmapDB } from "@/types/Mindmap";
 import { createClient } from "@/utils/supabase/server";
 
-export async function fetchAllMindmaps(): Promise<MindmapDB[] | null> {
+export async function updateMindmap(mindmap: MindmapDB) {
   const supabase = await createClient();
 
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from("mindmaps")
-    .select("*")
-    .order("created_at", { ascending: false });
+    .update(mindmap)
+    .eq("id", mindmap.id);
 
   if (error) {
     throw new Error(error.message);
   }
-
-  return data ?? null;
 }

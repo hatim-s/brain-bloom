@@ -13,10 +13,10 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from "@/components/ui/sidebar";
-import { Mindmap } from "@/types/Mindmap";
+import { MindmapDB } from "@/types/Mindmap";
 
 // This is sample data.
-const getSidenavData = (mindmaps: Mindmap[]) => ({
+const getSidenavData = (mindmaps: MindmapDB[]) => ({
   navMain: [
     {
       title: "Your Mindmaps",
@@ -32,7 +32,7 @@ const getSidenavData = (mindmaps: Mindmap[]) => ({
 export function FloatingSidebar({
   mindmaps,
   ...props
-}: React.ComponentProps<typeof Sidebar> & { mindmaps: Mindmap[] }) {
+}: React.ComponentProps<typeof Sidebar> & { mindmaps: MindmapDB[] }) {
   return (
     <Sidebar variant="floating" {...props}>
       <SidebarHeader>

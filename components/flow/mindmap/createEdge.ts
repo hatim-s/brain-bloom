@@ -1,6 +1,7 @@
 import { ROOT_NODE_ID } from "../const";
 import { FlowEdge, NodeTypes } from "../types";
 import { getNodeTypeFromId } from "./createNode";
+import { PartialBaseFlowEdge } from "./mindmapNodesToFlowNodes";
 
 const EDGE_ID_PREFIX = "e";
 const EDGE_ID_SEPARATOR = "@";
@@ -30,5 +31,14 @@ export function createEdge(source: string, target: string) {
     source,
     target,
     ...getEdgeSourceHandle(source, target),
+  };
+}
+
+export function createFlowEdgeFromPartialBaseFlowEdge(
+  edge: PartialBaseFlowEdge
+): FlowEdge {
+  return {
+    ...edge,
+    ...getEdgeSourceHandle(edge.source, edge.target),
   };
 }

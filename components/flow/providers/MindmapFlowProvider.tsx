@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import { useKey } from "@/hooks/use-key";
+import { MindmapDB } from "@/types/Mindmap";
 
 import { ROOT_NODE_ID } from "../const";
 import { generateLeveledNodes } from "../layout/generateLeveledNodes";
@@ -30,12 +31,14 @@ export const useMindmapFlow = () => {
 
 type MindmapFlowProviderProps = {
   children: React.ReactNode;
+  mindmapDB: MindmapDB;
   initialNodes: BaseFlowNode[];
   initialEdges: Edge[];
 };
 
 export const MindmapFlowProvider = ({
   children,
+  mindmapDB,
   initialNodes,
   initialEdges,
 }: MindmapFlowProviderProps) => {
@@ -108,6 +111,7 @@ export const MindmapFlowProvider = ({
       setActiveNode,
       selectedNode,
       setSelectedNode,
+      mindmapDB,
       actions: {
         onNodesChange,
         // onEdgesChange,
@@ -131,6 +135,7 @@ export const MindmapFlowProvider = ({
     onUpdateNode,
     activeNode,
     selectedNode,
+    mindmapDB,
   ]);
 
   const debugLogger = useCallback(() => {
