@@ -64,8 +64,8 @@ function dfsHelper(
   });
 }
 
-export async function createMindmapFromAI() {
-  const aiMindmap = await generateAIMindmap();
+export async function createMindmapFromAI(userPrompt: string) {
+  const { mindmap: aiMindmap, rawOutput } = await generateAIMindmap(userPrompt);
 
   const rootNode = aiMindmap.find((node) => node.nodeId === "root");
   if (!rootNode) {
@@ -102,10 +102,20 @@ export async function createMindmapFromAI() {
     dfsHelper(aiNodesMap, childNode, `${prefix}-${ROOT_NODE_ID}`, nodes, edges);
   });
 
+  // return {
+  //   data: {
+  //     nodes,
+  //     edges,
+  //   },
+  //   error: null,
+  //   rawOutput,
+  // };
+
   const { data, error } = await createMindmap(rootNode.title, nodes, edges);
 
   return {
     data,
     error,
+    rawOutput,
   };
 }

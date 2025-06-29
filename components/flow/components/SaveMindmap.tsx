@@ -40,7 +40,7 @@ export function SaveMindmap() {
         <Button
           variant="ghost"
           size="icon"
-          className="absolute top-8 right-8 z-10"
+          className="absolute top-8 right-20 z-10"
           onClick={handleSaveMindmap}
           disabled={isPending}
         >

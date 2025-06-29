@@ -139,6 +139,7 @@ export function MindmapFlow() {
       <SaveMindmap />
       <ReactFlow
         nodesDraggable={false}
+        minZoom={0.1}
         disableKeyboardA11y
         nodes={nodes}
         edges={edges}
