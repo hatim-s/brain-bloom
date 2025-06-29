@@ -19,6 +19,7 @@ import {
 import { MindmapDB } from "@/types/Mindmap";
 
 import { Typography } from "../ui/typography";
+import { TypographyWithTooltip } from "../ui/typography-with-tooltip";
 
 // This is sample data.
 const getSidenavData = (mindmaps: MindmapDB[], mindmapId: string) => ({
@@ -29,6 +30,7 @@ const getSidenavData = (mindmaps: MindmapDB[], mindmapId: string) => ({
       items: mindmaps.map((m) => ({
         title: m.name,
         url: `/${m.id}`,
+        id: m.id,
         isActive: m.id === parseInt(mindmapId),
       })),
     },
@@ -75,9 +77,16 @@ export function FloatingSidebar({
                 {item.items?.length ? (
                   <SidebarMenuSub className="ml-0 border-l-0 px-1.5">
                     {item.items.map((item) => (
-                      <SidebarMenuSubItem key={item.title}>
+                      <SidebarMenuSubItem key={item.id}>
                         <SidebarMenuSubButton asChild isActive={item.isActive}>
-                          <a href={item.url}>{item.title}</a>
+                          <a href={item.url}>
+                            <TypographyWithTooltip
+                              className="text-sm"
+                              variant="p"
+                            >
+                              {item.title}
+                            </TypographyWithTooltip>
+                          </a>
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
                     ))}
