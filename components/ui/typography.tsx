@@ -27,7 +27,7 @@ function TypographyH2({
   return (
     <h2
       className={cn(
-        "scroll-m-20 text-3xl font-semibold tracking-tight first:mt-0",
+        "scroll-m-20 text-3xl font-extrabold tracking-tight first:mt-0",
         className
       )}
     >
@@ -43,7 +43,7 @@ function TypographyH3({
   return (
     <h3
       className={cn(
-        "scroll-m-20 text-2xl font-semibold tracking-tight",
+        "scroll-m-20 text-xl font-semibold tracking-tight",
         className
       )}
     >
