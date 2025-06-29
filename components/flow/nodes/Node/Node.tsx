@@ -34,7 +34,7 @@ export function BaseNodeContent(props: {
   return (
     <Stack
       className={cn(
-        "border border-secondary-foreground rounded-sm py-3 px-5 w-[300px] bg-background",
+        "border border-secondary-foreground rounded-sm py-3 px-5 w-[300px] bg-background items-start text-left",
         {
           "outline outline-2 outline-offset-4 outline-primary !border-primary bg-primary/15":
             isSelected,
