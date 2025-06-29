@@ -18,7 +18,7 @@ export default async function NewMindmapPage() {
     <main className="w-full px-20 relative">
       <Stack
         direction="column"
-        className="gap-y-4 absolute top-[30%] w-[calc(100% - 80px)]"
+        className="gap-y-4 absolute top-[30%] w-[calc(100%-80px)]"
       >
         <Box>
           <Typography variant="h1">Brain to Branch 🧠 → 🌳</Typography>

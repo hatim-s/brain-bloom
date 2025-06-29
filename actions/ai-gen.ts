@@ -282,19 +282,22 @@ export async function generateAIMindmap(userPrompt: string) {
         content: userPrompt,
       },
     ],
-    model: "llama-3.3-70b-versatile",
+    // model: "llama-3.3-70b-versatile",
+    // model: "mistral-saba-24b",
+    // model: "meta-llama/llama-prompt-guard-2-86m",
+    model: "deepseek-r1-distill-llama-70b",
     response_format: { type: "json_object" },
-    max_completion_tokens: 2048,
+    max_completion_tokens: 3000,
   });
 
   // console.log(aiResponse);
 
   let mindmap = [] as AIMindmap[];
   try {
-    const json = JSON.parse(aiResponse.choices[0].message.content ?? "[]") as {
-      mindmap: AIMindmap[];
+    const json = JSON.parse(aiResponse.choices[0].message.content ?? "{}") as {
+      mindmap?: AIMindmap[];
     };
-    mindmap = json.mindmap;
+    mindmap = json.mindmap ?? [];
   } catch (err) {
     // eslint-disable-next-line no-console -- needed for logging
     console.error(err);
