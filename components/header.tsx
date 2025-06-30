@@ -14,7 +14,7 @@ export function Header({ mindmap }: { mindmap: MindmapDB }) {
   return (
     <header
       className={clsx(
-        "absolute top-4 right-0 z-10",
+        "absolute top-2 right-0 z-10",
         "items-center flex h-10 shrink-0 gap-2",
         "ease-linear duration-200",
         open ? "left-[332px]" : "left-8" // 300px (sidebar width) + 32px (padding)
@@ -24,7 +24,9 @@ export function Header({ mindmap }: { mindmap: MindmapDB }) {
         <TooltipTrigger asChild>
           <SidebarTrigger className="size-4 [&_svg]:!size-4" />
         </TooltipTrigger>
-        <TooltipContent>⌘ + /</TooltipContent>
+        <TooltipContent align="start" alignOffset={-10} sideOffset={10}>
+          Toggle Sidebar (⌘ + /)
+        </TooltipContent>
       </Tooltip>
       <Separator
         orientation="vertical"

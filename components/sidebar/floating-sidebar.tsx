@@ -10,7 +10,6 @@ import {
   SidebarGroup,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
   SidebarMenuSubButton,
@@ -18,8 +17,10 @@ import {
 } from "@/components/ui/sidebar";
 import { MindmapDB } from "@/types/Mindmap";
 
+import { Box } from "../ui/box";
 import { Typography } from "../ui/typography";
 import { TypographyWithTooltip } from "../ui/typography-with-tooltip";
+import { NewMindmapButton } from "./new-mindmap-btn";
 
 // This is sample data.
 const getSidenavData = (mindmaps: MindmapDB[], mindmapId: string) => ({
@@ -46,20 +47,21 @@ export function FloatingSidebar({
 
   return (
     <Sidebar variant="floating" {...props}>
-      <SidebarHeader>
+      <SidebarHeader className="py-4 px-3">
         <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild>
-              <a href="#">
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                  <Network className="size-4" />
-                </div>
-                <div className="flex flex-col gap-0.5 leading-none">
-                  <span className="font-semibold">BrainBloom</span>
-                  <span className="text-xs">v0.1-alpha</span>
-                </div>
-              </a>
-            </SidebarMenuButton>
+          <SidebarMenuItem className="flex flex-row items-center gap-x-3">
+            {/* <SidebarMenuButton size="lg" asChild> */}
+            <Box className="flex flex-row items-center gap-x-3 flex-1">
+              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                <Network className="size-4" />
+              </div>
+              <div className="flex flex-col gap-0.5 leading-none">
+                <span className="font-semibold">BrainBloom</span>
+                <span className="text-xs">v0.1-alpha</span>
+              </div>
+            </Box>
+            <NewMindmapButton />
+            {/* </SidebarMenuButton> */}
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>

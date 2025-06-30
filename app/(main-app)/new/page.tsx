@@ -1,4 +1,5 @@
-import { NewAIMindmap } from "@/components/new-ai-mindmap";
+import { AuroraText } from "@/components/magicui/aurora-text";
+import { AIMindmapInput } from "@/components/new-ai-mindmap";
 import { Box } from "@/components/ui/box";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Stack } from "@/components/ui/stack";
@@ -12,21 +13,25 @@ const TIPS = [
 ];
 
 export default async function NewMindmapPage() {
-  // const { data: newMindmap, error } = await createMindmapFromAI();
-  // return <pre>{JSON.stringify(newMindmap, null, 2)}</pre>;
   return (
-    <main className="w-full px-20 relative">
+    <main className="w-[68%] mx-auto px-40 relative">
       <Stack
         direction="column"
         className="gap-y-4 absolute top-[30%] w-[calc(100%-80px)]"
       >
         <Box>
-          <Typography variant="h1">Brain to Branch 🧠 → 🌳</Typography>
-          <Typography variant="h3">
-            Transform your scattered thoughts into organized brilliance.
+          <Typography variant="h1">
+            Transform Your <AuroraText>Brain to Branch</AuroraText>
+          </Typography>
+          <Typography className="flex flex-row gap-x-1" variant="h3">
+            Transform your scattered thoughts into
+            <Typography className="text-primary" variant="h3">
+              organized brilliance
+            </Typography>
+            .
           </Typography>
         </Box>
-        <NewAIMindmap />
+        <AIMindmapInput />
       </Stack>
       <Card className="absolute bottom-20 w-[68%]">
         <CardHeader>
