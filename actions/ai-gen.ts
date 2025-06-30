@@ -287,7 +287,7 @@ export async function generateAIMindmap(userPrompt: string) {
     // model: "meta-llama/llama-prompt-guard-2-86m",
     model: "deepseek-r1-distill-llama-70b",
     response_format: { type: "json_object" },
-    max_completion_tokens: 3000,
+    max_completion_tokens: 10000,
   });
 
   // console.log(aiResponse);
