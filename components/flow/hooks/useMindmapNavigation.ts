@@ -81,6 +81,7 @@ export function useMindmapNavigation({
   }, [activeNode, mindmapNodesMap, setSelectedNode]);
 
   useKey("Enter", onEditNode);
+  useKey(" ", onEditNode); // space is also used to edit nodes
 
   useKey("Escape", () => {
     setSelectedNode(null);

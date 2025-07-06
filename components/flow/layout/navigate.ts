@@ -41,11 +41,11 @@ function getSiblingId(
    *
    * This is because a left node cannot be the sibling of a right node, and vice versa.
    */
-  if (currentNode.level === 1) {
-    childLevelNodes = childLevelNodes.filter(
-      (node) => node.type === currentNode.type
-    );
-  }
+  // if (currentNode.level === 1) {
+  childLevelNodes = childLevelNodes.filter(
+    (node) => node.type === currentNode.type
+  );
+  // }
 
   const currentNodeIndex = childLevelNodes.findIndex(
     (node) => node.id === currentNode.id

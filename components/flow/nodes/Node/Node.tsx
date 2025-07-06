@@ -50,7 +50,7 @@ export function BaseNodeContent(props: {
         {title}
       </Typography>
       {description ? (
-        <Typography className="flex-1 text-base" variant="p">
+        <Typography className="flex-1 text-base line-clamp-2" variant="p">
           {description}
         </Typography>
       ) : null}
