@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 
 export function useKey(
-  key: string,
+  key: KeyboardEvent["key"] | KeyboardEvent["code"],
   callback: () => void,
   opts?: {
     isMetaKey?: boolean;
