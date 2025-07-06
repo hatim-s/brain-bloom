@@ -9,6 +9,7 @@ import {
   Node,
   ReactFlow,
   ReactFlowProvider,
+  useReactFlow,
   NodeTypes as XYNodeTypes,
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
@@ -98,6 +99,8 @@ export function MindmapFlow() {
 
   const prevActiveNode = useRef<string | null>(null);
 
+  const reactflowInstance = useReactFlow();
+
   // sync active node with the flow
   useEffect(() => {
     if (activeNode) {
@@ -121,6 +124,19 @@ export function MindmapFlow() {
       ]);
 
       prevActiveNode.current = activeNode;
+
+      requestAnimationFrame(() => {
+        reactflowInstance.fitView({
+          nodes: [
+            {
+              id: activeNode,
+            },
+          ],
+          duration: 700,
+          minZoom: reactflowInstance.getZoom(), // maintain the current zoom level
+          maxZoom: reactflowInstance.getZoom(), // maintain the current zoom level
+        });
+      });
       return;
     }
 
@@ -132,7 +148,7 @@ export function MindmapFlow() {
           selected: false,
         },
       ]);
-  }, [activeNode, handleNodeChange]);
+  }, [activeNode, handleNodeChange, reactflowInstance]);
 
   return (
     <Stack className="h-full w-full flex-1">
