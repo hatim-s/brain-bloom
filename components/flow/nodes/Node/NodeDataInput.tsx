@@ -78,30 +78,46 @@ function NodeDataInputForm({
   return (
     // since we want to provide navigation across fields with tab
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- is needed
-    <form onKeyDown={handleKeyDown} className="space-y-4" ref={formRef}>
-      <Label htmlFor="title">Title</Label>
-      <Input
-        id="title"
-        maxLength={50}
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-      />
+    <form
+      onKeyDown={handleKeyDown}
+      className="gap-y-4 flex flex-col"
+      ref={formRef}
+    >
+      <Stack className="gap-y-2" direction="column">
+        <Label className="ms-1" htmlFor="title">
+          Title
+        </Label>
+        <Input
+          id="title"
+          maxLength={50}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+      </Stack>
 
-      <Label htmlFor="description">Description</Label>
-      <Textarea
-        id="description"
-        maxLength={150}
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-      />
+      <Stack className="gap-y-2" direction="column">
+        <Label className="ms-1" htmlFor="description">
+          Description
+        </Label>
+        <Textarea
+          id="description"
+          maxLength={150}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+      </Stack>
 
-      <Label htmlFor="link">Link</Label>
-      <Input
-        id="link"
-        maxLength={100}
-        value={link}
-        onChange={(e) => setLink(e.target.value)}
-      />
+      <Stack className="gap-y-2" direction="column">
+        <Label className="ms-1" htmlFor="link">
+          Link
+        </Label>
+        <Input
+          id="link"
+          maxLength={100}
+          value={link}
+          onChange={(e) => setLink(e.target.value)}
+        />
+      </Stack>
 
       <Button onClick={handleSave}>Save</Button>
     </form>
