@@ -65,7 +65,7 @@ export function PromptInput({
         }}
         ref={inputRef}
         value={value}
-      ></Textarea>
+      />
       <div className="absolute flex items-center rounded-full pointer-events-none top-0">
         <AnimatePresence mode="wait">
           {!value && (

@@ -158,7 +158,7 @@ export function MindmapFlow() {
         fitView
         nodeTypes={nodeTypes}
       >
-        <Background />
+        <Background gap={20} />
       </ReactFlow>
     </Stack>
   );

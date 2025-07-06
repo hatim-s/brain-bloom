@@ -11,7 +11,7 @@ import { PromptInput } from "./prompt-input";
 import { Button } from "./ui/button";
 import { Stack } from "./ui/stack";
 
-export function NewAIMindmap() {
+export function AIMindmapInput() {
   const [userPrompt, setUserPrompt] = useState("");
   const router = useRouter();
 
