@@ -1,5 +1,6 @@
 import Flow from "@/components/flow/Flow";
 import { Header } from "@/components/header";
+import { MindmapNotFound } from "@/components/mindmap-not-found";
 import { Stack } from "@/components/ui/stack";
 import { fetchMindmapById } from "@/data/fetch-mindmap-by-id";
 
@@ -12,7 +13,7 @@ export default async function MindmapPage(props: {
   const mindmap = await fetchMindmapById(mindmapSlug as string);
 
   if (!mindmap) {
-    return <div>Mindmap not found</div>;
+    return <MindmapNotFound />;
   }
 
   return (
