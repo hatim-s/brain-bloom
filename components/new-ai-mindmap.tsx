@@ -30,7 +30,7 @@ export function AIMindmapInput() {
   });
 
   return (
-    <Stack className="gap-y-3 w-[68%]" direction="column">
+    <Stack className="gap-y-3 w-[68%] min-w-[480px]" direction="column">
       <PromptInput
         placeholders={[
           "How to start a small business?",

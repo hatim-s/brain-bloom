@@ -37,7 +37,7 @@ export default function RootLayout({
       className={clsx(geistSans.className, "scrollbar-styles")}
       suppressHydrationWarning
     >
-      <body className="bg-background text-foreground h-screen w-screen relative">
+      <body className="bg-background text-foreground h-screen w-screen relative overflow-hidden">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

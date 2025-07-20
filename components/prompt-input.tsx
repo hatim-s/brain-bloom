@@ -56,7 +56,7 @@ export function PromptInput({
     <Box className="relative">
       <Textarea
         className={cn(
-          "w-full text-sm sm:text-base rounded-xl max-h-10 bg-transparent",
+          "w-full text-sm sm:text-base rounded-xl min-h-32 bg-transparent",
           "dark:text-white text-black focus:outline-none focus:ring-0"
         )}
         onChange={(e) => {
