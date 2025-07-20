@@ -162,5 +162,5 @@
 
 /* TODO: check why is this working? */
 .animate-aurora {
-  animation: aurora 8s ease-in-out infinite alternate;
+  animation: aurora 8s ease-in-out infinite;
 }
