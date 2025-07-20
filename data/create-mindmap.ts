@@ -9,10 +9,15 @@ export async function createMindmap(
   edges?: MindmapEdgeDB[]
 ) {
   const supabase = await createClient();
+  const { data: user, error: userError } = await supabase.auth.getUser();
+
+  if (userError) {
+    throw new Error(userError.message);
+  }
 
   const { data, error } = await supabase
     .from("mindmaps")
-    .insert({ name, nodes, edges })
+    .insert({ name, nodes, edges, owner_user_id: user.user.id })
     .select();
 
   if (error) {

@@ -1,7 +1,7 @@
 "use server";
 
 import { MindmapDB } from "@/types/Mindmap";
-import { createClient } from "@/utils/supabase/client";
+import { createClient } from "@/utils/supabase/server";
 
 export async function fetchMindmapById(
   mindmapId: string
