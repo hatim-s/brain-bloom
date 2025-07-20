@@ -14,6 +14,7 @@ import { Typography } from "@/components/ui/typography";
 import { cn } from "@/lib/utils";
 
 import { useMindmapFlow } from "../../providers/MindmapFlowProvider";
+import NodeAiEdit from "./NodeAiEdit";
 import NodeDataInput from "./NodeDataInput";
 
 export function BaseNodeContent(props: {
@@ -87,10 +88,10 @@ export default function BaseNode(
   const targetPosition =
     props.direction === "left" ? Position.Right : Position.Left;
 
-  const { selectedNode } = useMindmapFlow();
+  const { selectedNode, aiEditNode: isAiEditing } = useMindmapFlow();
 
   return (
-    <Popover open={selectedNode === props.id}>
+    <Popover open={selectedNode === props.id || isAiEditing === props.id}>
       {/* override the blue border since it looks weird */}
       <PopoverTrigger className="focus-visible:outline-none focus-visible:ring-0">
         <BaseNodeContent
@@ -110,8 +111,19 @@ export default function BaseNode(
           className="!size-3 !bg-primary !border-primary"
         />
       </PopoverTrigger>
-      <PopoverContent sideOffset={10}>
+      <PopoverContent
+        className={!selectedNode ? "hidden" : ""}
+        side="bottom"
+        sideOffset={10}
+      >
         <NodeDataInput />
+      </PopoverContent>
+      <PopoverContent
+        className={clsx("!p-0 w-[400px]", { hidden: !isAiEditing })}
+        side="right"
+        sideOffset={20}
+      >
+        <NodeAiEdit />
       </PopoverContent>
     </Popover>
   );

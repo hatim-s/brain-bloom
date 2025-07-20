@@ -1,5 +1,5 @@
 import { graphlib } from "@dagrejs/dagre";
-import { Dispatch, SetStateAction, useCallback } from "react";
+import { Dispatch, SetStateAction, useCallback, useRef } from "react";
 
 import { ROOT_NODE_ID } from "../../const";
 import { addNodeToGraph } from "../../layout/init";
@@ -43,19 +43,22 @@ export function useCreateMindmapActions({
   MindmapFlowContextType["actions"],
   "onAddNode" | "onUpdateNode"
 > {
+  const mindmapNodesMapSync = useRef<typeof mindmapNodesMap>(mindmapNodesMap);
+  mindmapNodesMapSync.current = mindmapNodesMap;
+
   const onAddNode = useCallback<
     NonNullable<MindmapFlowContextType["actions"]["onAddNode"]>
   >(
-    (type, parentNodeId) => {
-      if (!mindmapNodesMap[parentNodeId]) {
+    (type, parentNodeId, id, data) => {
+      if (!mindmapNodesMapSync.current[parentNodeId]) {
         // eslint-disable-next-line no-console -- needed
         console.error(
           `[MindmapFlowProvider] onAddNode: parent node ${parentNodeId} not found`
         );
-        return;
+        return null;
       }
 
-      const newNode = createNode(type, "New Node");
+      const newNode = createNode(type, "New Node", id, data);
       const newEdge = createEdge(parentNodeId, newNode.id);
 
       const newGraph = type === NodeTypes.LEFT ? leftGraph : rightGraph;
@@ -63,30 +66,35 @@ export function useCreateMindmapActions({
 
       addNodeToGraph(newGraph, newNode, newEdge);
 
-      let mindmapNodesMapSync: Record<string, MindmapNode> = mindmapNodesMap;
+      // let mindmapNodesMapSync: Record<string, MindmapNode> = mindmapNodesMap;
 
-      mindmapNodesMapSync = {
-        ...mindmapNodesMapSync,
+      mindmapNodesMapSync.current = {
+        ...mindmapNodesMapSync.current,
         [newNode.id]: createMindmapNodeFromFlowNode(
           newNode,
           parentNodeId,
-          mindmapNodesMapSync[parentNodeId].level
+          mindmapNodesMapSync.current[parentNodeId].level
         ),
       };
 
       if (parentNodeId) {
-        mindmapNodesMapSync[parentNodeId] = addChildToMindmapNode(
-          mindmapNodesMapSync[parentNodeId],
-          mindmapNodesMapSync[newNode.id]
+        mindmapNodesMapSync.current[parentNodeId] = addChildToMindmapNode(
+          mindmapNodesMapSync.current[parentNodeId],
+          mindmapNodesMapSync.current[newNode.id]
         );
       }
 
-      setMindmapNodesMap(mindmapNodesMapSync);
+      // partial update the mindmapNodesMap since we can add multiple nodes at once
+      setMindmapNodesMap((prev) => {
+        prev[newNode.id] = mindmapNodesMapSync.current[newNode.id];
+        prev[parentNodeId] = mindmapNodesMapSync.current[parentNodeId];
+        return prev;
+      });
 
       const newRootNode = newGraph.node(ROOT_NODE_ID);
 
       const { nodes: newGraphNodes, edges: newGraphEdges } =
-        transformMindmapNodesToFlowNodesAndEdges(mindmapNodesMapSync);
+        transformMindmapNodesToFlowNodesAndEdges(mindmapNodesMapSync.current);
 
       const updatedNodes = newGraphNodes.map<FlowNode>((_node) => {
         const node = createBaseFlowNodeFromPartialBaseFlowNode(_node);
@@ -124,15 +132,10 @@ export function useCreateMindmapActions({
 
       setNodes(updatedNodes);
       setEdges(newGraphEdges);
+
+      return newNode.id;
     },
-    [
-      leftGraph,
-      rightGraph,
-      setNodes,
-      setEdges,
-      mindmapNodesMap,
-      setMindmapNodesMap,
-    ]
+    [leftGraph, rightGraph, setNodes, setEdges, setMindmapNodesMap]
   );
 
   const onUpdateNode = useCallback<

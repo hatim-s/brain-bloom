@@ -40,7 +40,7 @@ export function AIMindmapInput() {
         ]}
         onChange={(e) => setUserPrompt(e.target.value)}
       />
-      <Button onClick={handleSubmit} disabled={isPending}>
+      <Button onClick={handleSubmit} disabled={isPending || !userPrompt}>
         {isPending ? <Loader className="animate-spin" /> : "Get Started"}
       </Button>
     </Stack>

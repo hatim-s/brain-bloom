@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 
+import { useEventCallback } from "@/hooks/use-event-callback";
 import { useKey } from "@/hooks/use-key";
 
 import { ROOT_NODE_ID } from "../const";
@@ -13,6 +14,7 @@ export function useMindmapNavigation({
   leveledNodes,
   onAddNode,
   setSelectedNode,
+  setAiEditNode,
 }: {
   mindmapNodesMap: Record<string, MindmapNode>;
   leveledNodes: MindmapNode[][];
@@ -23,6 +25,7 @@ export function useMindmapNavigation({
     parentNodeId: string
   ) => void;
   setSelectedNode: (nodeId: string | null) => void;
+  setAiEditNode: (nodeId: string | null) => void;
 }) {
   const handleNavigate = useCallback(
     (operation: Operation) => {
@@ -83,7 +86,15 @@ export function useMindmapNavigation({
   useKey("Enter", onEditNode);
   useKey(" ", onEditNode); // space is also used to edit nodes
 
+  const onStartAiEditing = useEventCallback(() => {
+    setAiEditNode(activeNode);
+    setSelectedNode(null); // we unset the selected node to prevent user from editing the node
+  });
+
+  useKey("k", onStartAiEditing, { isCtrlKey: true, isMetaKey: true });
+
   useKey("Escape", () => {
     setSelectedNode(null);
+    setAiEditNode(null);
   });
 }
