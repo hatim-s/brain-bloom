@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 export default async function Login(props: { searchParams: Promise<Message> }) {
   const searchParams = await props.searchParams;
   return (
-    <form className="flex flex-col min-w-64">
+    <form className="flex flex-col min-w-[400px] max-w-[400px] mx-auto">
       <h1 className="text-2xl font-medium">Sign in</h1>
       <p className="text-sm text-foreground">
         Don't have an account?{" "}
