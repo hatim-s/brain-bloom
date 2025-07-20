@@ -1,8 +1,14 @@
-import { useState } from "react";
+import { Loader } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { useMemo, useRef, useState, useTransition } from "react";
 
 import { editMindmapWithAI } from "@/actions/mindmap";
+import { AuroraText } from "@/components/aurora-text";
+import {
+  AutosizeTextarea,
+  AutosizeTextAreaRef,
+} from "@/components/auto-resizer-textarea";
 import { Box } from "@/components/ui/box";
-import { Textarea } from "@/components/ui/textarea";
 import { useEventCallback } from "@/hooks/use-event-callback";
 import { AIMindmap } from "@/types/AI";
 
@@ -67,6 +73,8 @@ export default function NodeAiEdit() {
   const { aiEditNode, nodesMap } = useMindmapFlow();
 
   const [value, setValue] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const textareaRef = useRef<AutosizeTextAreaRef>(null);
 
   const handleChange = useEventCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -86,39 +94,42 @@ export default function NodeAiEdit() {
 
   const handleSubmit = useEventCallback(async () => {
     const currentBranch = getCurrentBranch(mindmapNodesMap, activeNodeId);
-    const aiResponse = await editMindmapWithAI(
-      value,
-      currentBranch,
-      activeNodeId ?? ""
-    );
 
-    const edgesMap = [...edges, ...aiResponse.editedMindmap.edges].reduce(
-      (acc, edge) => {
-        acc[edge.target] = edge.source;
-        return acc;
-      },
-      {} as Record<string, string>
-    );
+    let aiResponse: Awaited<ReturnType<typeof editMindmapWithAI>>;
 
-    aiResponse.editedMindmap.nodes.forEach((node) => {
-      const nodeId = node.id;
-      if (nodesMap[nodeId]) return;
-
-      onAddNode(
-        node.type as NodeTypes.LEFT | NodeTypes.RIGHT,
-        edgesMap[node.id],
-        node.id,
-        node.data
+    startTransition(async () => {
+      aiResponse = await editMindmapWithAI(
+        value,
+        currentBranch,
+        activeNodeId ?? ""
       );
-    });
+      const edgesMap = [...edges, ...aiResponse.editedMindmap.edges].reduce(
+        (acc, edge) => {
+          acc[edge.target] = edge.source;
+          return acc;
+        },
+        {} as Record<string, string>
+      );
 
-    setAiEditNode(null);
+      aiResponse.editedMindmap.nodes.forEach((node) => {
+        const nodeId = node.id;
+        if (nodesMap[nodeId]) return;
+
+        onAddNode(
+          node.type as NodeTypes.LEFT | NodeTypes.RIGHT,
+          edgesMap[node.id],
+          node.id,
+          node.data
+        );
+      });
+      setAiEditNode(null);
+    });
   });
 
   const handleKeyDown = useEventCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (
-        e.key === "Enter" ||
+        (e.key === "Enter" && !e.shiftKey) ||
         // e.key === "Escape" ||
         e.key === " " ||
         e.key === "ArrowUp" ||
@@ -131,8 +142,9 @@ export default function NodeAiEdit() {
       }
 
       if (e.key === "Enter") {
-        handleSubmit();
-        // setValue((prev) => prev + "\n");
+        if (e.shiftKey) {
+          // setValue((prev) => prev + "\n");
+        } else handleSubmit();
       }
 
       if (e.key === " ") {
@@ -141,20 +153,52 @@ export default function NodeAiEdit() {
     }
   );
 
+  const width = textareaRef.current?.textArea.clientWidth ?? 0;
+  const height = textareaRef.current?.textArea.clientHeight ?? 0;
+
+  const textAreaDimensions = useMemo(() => {
+    return { width, height };
+  }, [width, height]);
+
   // selectedNode is not null
   const node = nodesMap[aiEditNode!];
-
   if (!node) return null;
 
   return (
     <Box>
-      <Textarea
-        className="h-full w-full !min-h-[30px] !outline-none !border-none"
+      <AutosizeTextarea
+        className="h-full w-full !min-h-[30px] !outline-none !border-none resize-none"
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
         placeholder="Edit the mindmap with AI ✨"
+        ref={textareaRef}
       />
+      {isPending && (
+        <AnimatePresence mode="wait">
+          <motion.div
+            className="absolute top-0 left-0 justify-center items-center bg-white rounded-md gap-x-2 flex flex-row"
+            style={textAreaDimensions}
+            initial={{
+              y: 0,
+              opacity: 0,
+            }}
+            animate={{
+              y: 0,
+              opacity: 1,
+            }}
+            transition={{
+              duration: 0.2,
+              ease: "linear",
+            }}
+          >
+            <AuroraText className="text-lg font-medium">
+              Generating with AI
+            </AuroraText>
+            <Loader className="animate-spin-slow text-primary" />
+          </motion.div>
+        </AnimatePresence>
+      )}
     </Box>
   );
 }

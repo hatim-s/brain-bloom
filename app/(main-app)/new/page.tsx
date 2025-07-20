@@ -1,4 +1,4 @@
-import { AuroraText } from "@/components/magicui/aurora-text";
+import { AuroraText } from "@/components/aurora-text";
 import { AIMindmapInput } from "@/components/new-ai-mindmap";
 import { Box } from "@/components/ui/box";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
