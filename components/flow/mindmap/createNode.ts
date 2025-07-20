@@ -91,12 +91,14 @@ function getAdditionalBaseFlowNodeProps(): Pick<BaseFlowNode, "selectable"> {
 
 export function createNode(
   type: NodeTypes.LEFT | NodeTypes.RIGHT,
-  title: string
+  title: string,
+  id?: string,
+  data?: FlowNode["data"]
 ): BaseFlowNode {
   return {
-    id: getNewNodeID(type),
+    id: id ?? getNewNodeID(type),
     type: type,
-    data: { title: title },
+    data: { title: title, ...data },
     ...getAdditionalBaseFlowNodeProps(),
     ...getNodeSourceHandles(type),
   };

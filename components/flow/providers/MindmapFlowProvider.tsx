@@ -95,6 +95,7 @@ export const MindmapFlowProvider = ({
 
   const [activeNode, setActiveNode] = useState<string | null>(ROOT_NODE_ID);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [aiEditNode, setAiEditNode] = useState<string | null>(null);
 
   const context = useMemo<MindmapFlowContextType>(() => {
     return {
@@ -111,6 +112,8 @@ export const MindmapFlowProvider = ({
       setActiveNode,
       selectedNode,
       setSelectedNode,
+      aiEditNode,
+      setAiEditNode,
       mindmapDB,
       actions: {
         onNodesChange,
@@ -135,6 +138,7 @@ export const MindmapFlowProvider = ({
     onUpdateNode,
     activeNode,
     selectedNode,
+    aiEditNode,
     mindmapDB,
   ]);
 

@@ -25,6 +25,9 @@ export type MindmapFlowContext = {
   selectedNode: string | null;
   setSelectedNode: (nodeId: string | null) => void;
 
+  aiEditNode: string | null;
+  setAiEditNode: (nodeId: string | null) => void;
+
   mindmapDB: MindmapDB;
 
   actions: {
@@ -33,8 +36,10 @@ export type MindmapFlowContext = {
     // onConnect: NonNullable<ReactFlowProps["onConnect"]>;
     onAddNode: (
       type: NodeTypes.LEFT | NodeTypes.RIGHT,
-      parentNodeId: string
-    ) => void;
+      parentNodeId: string,
+      id?: string,
+      data?: FlowNode["data"]
+    ) => string | null;
     onUpdateNode: (nodeId: string, data: FlowNode["data"]) => void;
   };
 };

@@ -1,0 +1,109 @@
+[
+  {
+    "nodeId": "r-4h4oi",
+    "title": "Improve Focus",
+    "description": "Techniques to enhance concentration and reduce distractions",
+    "link": "https://www.focus@work.com",
+    "childrenNodes": [
+      "r-kh5cn",
+      "r-t0afx",
+      "r-ljh7o",
+      "r-mindfulness",
+      "r-exercise",
+      "r-limit",
+      "r-sleep",
+      "r-nutrition"
+    ]
+  },
+  {
+    "nodeId": "r-mindfulness",
+    "title": "Mindfulness Meditation",
+    "description": "Practice mindfulness to improve attention and reduce mind-wandering",
+    "link": "https://www.mindful.org/",
+    "childrenNodes": ["r-meditation", "r-breathing"]
+  },
+  {
+    "nodeId": "r-exercise",
+    "title": "Regular Physical Exercise",
+    "description": "Boost cognitive function and focus through regular physical activity",
+    "link": "https://www.healthline.com/",
+    "childrenNodes": ["r-aerobic", "r-strength"]
+  },
+  {
+    "nodeId": "r-limit",
+    "title": "Limit Digital Distractions",
+    "description": "Minimize digital distractions to improve concentration",
+    "link": "https://www.focus@work.com",
+    "childrenNodes": ["r-apps", "r-environment"]
+  },
+  {
+    "nodeId": "r-sleep",
+    "title": "Ensure Adequate Sleep",
+    "description": "Improve focus by maintaining proper sleep hygiene",
+    "link": "https://www.sleepfoundation.org/",
+    "childrenNodes": []
+  },
+  {
+    "nodeId": "r-nutrition",
+    "title": "Brain-Healthy Diet",
+    "description": "Eat foods that support cognitive function and focus",
+    "link": "https://www.healthline.com/",
+    "childrenNodes": ["r-omega3", "r-antioxidants"]
+  },
+  {
+    "nodeId": "r-meditation",
+    "title": "Daily Meditation Practice",
+    "description": "Regular meditation improves attention span",
+    "link": "https://www.headspace.com/",
+    "childrenNodes": []
+  },
+  {
+    "nodeId": "r-breathing",
+    "title": "Conscious Breathing",
+    "description": "Use breathing exercises to stay focused",
+    "link": "https://www.mindful.org/",
+    "childrenNodes": []
+  },
+  {
+    "nodeId": "r-aerobic",
+    "title": "Aerobic Exercises",
+    "description": "Improve cognitive function through aerobic activities",
+    "link": "https://www.healthline.com/",
+    "childrenNodes": []
+  },
+  {
+    "nodeId": "r-strength",
+    "title": "Strength Training",
+    "description": "Enhance focus through regular strength exercises",
+    "link": "https://www.healthline.com/",
+    "childrenNodes": []
+  },
+  {
+    "nodeId": "r-apps",
+    "title": "Use Focus-Enhancing Apps",
+    "description": "Utilize apps that block distracting websites",
+    "link": "https://www.focus@work.com",
+    "childrenNodes": []
+  },
+  {
+    "nodeId": "r-environment",
+    "title": "Optimize Workspace",
+    "description": "Create a distraction-free work environment",
+    "link": "https://www.focus@work.com",
+    "childrenNodes": []
+  },
+  {
+    "nodeId": "r-omega3",
+    "title": "Omega-3 Fatty Acids",
+    "description": "Include foods rich in omega-3 for brain health",
+    "link": "https://www.healthline.com/",
+    "childrenNodes": []
+  },
+  {
+    "nodeId": "r-antioxidants",
+    "title": "Antioxidant-Rich Foods",
+    "description": "Eat foods high in antioxidants to support brain function",
+    "link": "https://www.healthline.com/",
+    "childrenNodes": []
+  }
+]

@@ -14,6 +14,7 @@ import { NodeTypes } from "@/components/flow/types";
 import { createMindmap } from "@/data/create-mindmap";
 import { AIMindmap } from "@/types/AI";
 
+import { editAIMindmap } from "./ai-edit";
 import { generateAIMindmap } from "./ai-gen";
 
 function sanitizeParentId(parentId: string) {
@@ -57,7 +58,10 @@ function dfsHelper(
   aiNode.childrenNodes?.forEach((childNodeId) => {
     const childNode = aiNodesMap.get(childNodeId);
     if (!childNode) {
-      throw new Error(`Child node ${childNodeId} not found`);
+      // eslint-disable-next-line no-console -- needed for logging
+      console.warn(`Child node ${childNodeId} not found`);
+      return;
+      // throw new Error(`Child node ${childNodeId} not found`);
     }
 
     dfsHelper(aiNodesMap, childNode, baseFlowNode.id, nodes, edges);
@@ -116,6 +120,57 @@ export async function createMindmapFromAI(userPrompt: string) {
   return {
     data,
     error,
+    rawOutput,
+  };
+}
+
+export async function editMindmapWithAI(
+  userPrompt: string,
+  currentBranch: AIMindmap[],
+  activeNodeId: string
+) {
+  const { mindmap: aiMindmap, rawOutput } = await editAIMindmap(
+    userPrompt,
+    currentBranch,
+    activeNodeId
+  );
+
+  const aiNodesMap = new Map<string, AIMindmap>();
+  aiMindmap.forEach((node) => {
+    aiNodesMap.set(node.nodeId, node);
+  });
+
+  const nodes: PartialBaseFlowNode[] = [];
+  const edges: PartialBaseFlowEdge[] = [];
+
+  const parentNode = currentBranch.find(
+    ({ nodeId }) => nodeId === aiMindmap[0].nodeId
+  )?.nodeId;
+
+  dfsHelper(aiNodesMap, aiMindmap[0], parentNode ?? ROOT_NODE_ID, nodes, edges);
+
+  if (aiMindmap[0].nodeId === activeNodeId) {
+    // we have the first node in the edited nodes, which is the active node
+    // therefore, we need to omit duplicate nodes and remove unwanted edges from
+    // from the generated edited nodes
+
+    // 1. remove duplicate nodes
+    const { id: newId } = nodes.shift()!; // we assume that there is always one new node
+
+    // 2. edit edges to connect to correct active node id
+    edges.forEach((edge) => {
+      if (edge.source === newId) {
+        edge.source = activeNodeId;
+      }
+    });
+  }
+
+  return {
+    editedMindmap: {
+      nodes,
+      edges,
+    },
+    aiMindmap,
     rawOutput,
   };
 }

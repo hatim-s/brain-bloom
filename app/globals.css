@@ -123,6 +123,9 @@
   .animate-aurora {
     --animate-aurora: aurora 8s ease-in-out infinite;
   }
+  .animate-spin-slow {
+    animation: spin 2s linear infinite;
+  }
 }
 
 @layer base {

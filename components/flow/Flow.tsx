@@ -46,7 +46,9 @@ export function MindmapFlow() {
     activeNode,
     setActiveNode,
     selectedNode,
+    aiEditNode,
     setSelectedNode,
+    setAiEditNode,
     actions: {
       // onEdgesChange, onConnect,
       onNodesChange: originalOnNodesChange,
@@ -61,6 +63,7 @@ export function MindmapFlow() {
     setActiveNode,
     onAddNode,
     setSelectedNode,
+    setAiEditNode,
   });
 
   const handleNodeChange = useCallback<typeof originalOnNodesChange>(
@@ -95,7 +98,8 @@ export function MindmapFlow() {
   const handlePaneClick = useCallback(() => {
     setActiveNode(null);
     setSelectedNode(null);
-  }, [setActiveNode, setSelectedNode]);
+    setAiEditNode(null);
+  }, [setActiveNode, setSelectedNode, setAiEditNode]);
 
   const prevActiveNode = useRef<string | null>(null);
 
@@ -168,9 +172,9 @@ export function MindmapFlow() {
         panOnDrag={false}
         zoomOnDoubleClick={false}
         onPaneClick={handlePaneClick}
-        panOnScroll={!selectedNode}
+        panOnScroll={!(selectedNode || aiEditNode)}
         zoomOnScroll={false}
-        zoomOnPinch={!selectedNode}
+        zoomOnPinch={!(selectedNode || aiEditNode)}
         fitView
         nodeTypes={nodeTypes}
       >
