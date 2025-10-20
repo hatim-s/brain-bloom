@@ -81,10 +81,7 @@ export async function editAIMindmap(
         content: `Current branch: ${JSON.stringify(currentBranch)}. You need to add content to the active node: ${activeNodeId}`,
       },
     ],
-    // model: "llama-3.3-70b-versatile",
-    // model: "mistral-saba-24b",
-    // model: "meta-llama/llama-prompt-guard-2-86m",
-    model: "deepseek-r1-distill-llama-70b",
+    model: "llama-3.3-70b-versatile",
     response_format: { type: "json_object" },
     max_completion_tokens: 10000,
   });
