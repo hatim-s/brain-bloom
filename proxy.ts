@@ -2,10 +2,15 @@ import { type NextRequest } from "next/server";
 
 import { updateSession } from "@/utils/supabase/middleware";
 
-export async function middleware(request: NextRequest) {
+/**
+ * Refreshes the Supabase session before protected routes handle a request.
+ */
+async function proxy(request: NextRequest) {
   return await updateSession(request);
 }
 
+// Next parses `config` statically at compile time, so it must be exported inline —
+// a re-export from a trailing `export { ... }` statement fails the build.
 export const config = {
   matcher: [
     /*
@@ -19,3 +24,5 @@ export const config = {
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
+
+export { proxy };

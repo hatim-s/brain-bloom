@@ -56,7 +56,7 @@ export function FloatingSidebar({
                 <Network className="size-4" />
               </div>
               <div className="flex flex-col gap-0.5 leading-none">
-                <span className="font-semibold">BrainBloom</span>
+                <span className="font-semibold">Sprig</span>
                 <span className="text-xs">v0.1-alpha</span>
               </div>
             </Box>
