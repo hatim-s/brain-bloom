@@ -7,7 +7,7 @@ mindmap, supports AI-assisted branch editing, and stores mindmaps in Supabase.
 
 ### Prerequisites
 
-- Node.js 20.9 or newer (Node.js 24 is selected by `.nvmrc`)
+- Node.js 24 or newer (Node.js 24 is selected by `.nvmrc`)
 - pnpm
 - A Supabase project
 - A Groq API key for AI generation and editing
@@ -44,3 +44,10 @@ The application is then available at
 
 See [`docs/ENV.md`](docs/ENV.md) for the variables used by Sprig and their
 deployment behavior.
+
+## Runtime notes
+
+The proxy runs on the Node.js runtime because Next.js 16 requires it. Session
+refreshes therefore run in a single region rather than on the global Edge
+network; the associated latency, cold-start, and billing implications are an
+accepted consequence of the upgrade.

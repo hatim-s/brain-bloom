@@ -58,4 +58,16 @@ describe("createFlowEdgeFromPartialBaseFlowEdge", () => {
       partialEdge
     );
   });
+
+  it("anchors a partial edge from the root to its target-side handle", () => {
+    const partialEdge = {
+      id: "e@root@l-child",
+      source: ROOT_NODE_ID,
+      target: "l-child",
+    };
+
+    expect(
+      createFlowEdgeFromPartialBaseFlowEdge(partialEdge).sourceHandle
+    ).toBe("root-left");
+  });
 });

@@ -1,10 +1,11 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import path from "node:path";
 
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["**/*.test.ts"],
+    include: ["**/*.test.ts", "**/*.test.tsx"],
+    exclude: [...configDefaults.exclude, "**/.next/**", "**/dist/**"],
     coverage: { provider: "v8", reporter: ["text", "html"] },
   },
   resolve: {
