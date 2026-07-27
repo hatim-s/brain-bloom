@@ -5,7 +5,7 @@ import { updateSession } from "@/utils/supabase/middleware";
 /**
  * Refreshes the Supabase session before protected routes handle a request.
  */
-export async function proxy(request: NextRequest) {
+async function proxy(request: NextRequest) {
   return await updateSession(request);
 }
 
@@ -25,3 +25,4 @@ export const config = {
   ],
 };
 
+export { proxy };

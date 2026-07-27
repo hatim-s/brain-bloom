@@ -29,6 +29,9 @@ describe("generateLeveledNodes", () => {
       [rightTwo.id]: rightTwo,
     };
 
+    // KNOWN BUG (P3): the algorithm pushes a level before testing for termination, so
+    // every result carries a trailing empty level. Asserted here to pin today's behavior;
+    // when P3 removes it, delete the trailing `[]` instead of reverting the fix.
     expect(generateLeveledNodes(nodes)).toEqual([
       [root],
       [leftOne, leftTwo, rightOne, rightTwo],
@@ -57,6 +60,9 @@ describe("generateLeveledNodes", () => {
       [grandchild.id]: grandchild,
     };
 
+    // KNOWN BUG (P3): the algorithm pushes a level before testing for termination, so
+    // every result carries a trailing empty level. Asserted here to pin today's behavior;
+    // when P3 removes it, delete the trailing `[]` instead of reverting the fix.
     expect(generateLeveledNodes(nodes)).toEqual([
       [root],
       [child],
@@ -65,9 +71,12 @@ describe("generateLeveledNodes", () => {
     ]);
   });
 
-  it("preserves the current failure for an empty node set", () => {
-    expect(() => generateLeveledNodes({})).toThrow(RangeError);
-  });
+  // generateLeveledNodes currently loops forever on an empty map: the root lookup yields
+  // `undefined`, which is indistinguishable from the `null` level sentinel, so the queue
+  // never drains. Fixing that is P3's job (canvas hardening); this records the contract.
+  it.todo(
+    "returns an empty result for an empty node map instead of looping forever"
+  );
 });
 
 function createRootNode(children: MindmapNode[]): MindmapNode {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { ROOT_NODE_ID } from "@/components/flow/const";
 import {
   createEdge,
   createFlowEdgeFromPartialBaseFlowEdge,
@@ -23,10 +24,25 @@ describe("createEdge", () => {
       source: "l-parent",
       target: "l-child",
     });
-    expect(edge).not.toMatchObject({
-      source: "l-child",
-      target: "l-parent",
-    });
+  });
+
+  it("anchors an edge from the root to a left target on the left handle", () => {
+    const edge = createEdge(ROOT_NODE_ID, "l-child");
+
+    expect(edge.sourceHandle).toBe("root-left");
+  });
+
+  it("anchors an edge from the root to a right target on the right handle", () => {
+    const edge = createEdge(ROOT_NODE_ID, "r-child");
+
+    expect(edge.sourceHandle).toBe("root-right");
+  });
+
+  it("does not assign a root source handle to a non-root edge", () => {
+    const edge = createEdge("l-parent", "l-child");
+
+    // The helper returns null for non-root sources, so spreading it leaves no property.
+    expect(edge.sourceHandle).toBeUndefined();
   });
 });
 

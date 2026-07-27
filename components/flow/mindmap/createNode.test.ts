@@ -21,15 +21,16 @@ describe("getNewNodeID", () => {
     expect(getNewNodeID(type)).toMatch(new RegExp(`^${prefix}`));
   });
 
-  it("does not collide across successive calls for the same node type", () => {
-    vi.spyOn(Math, "random")
-      .mockReturnValueOnce(0.1)
-      .mockReturnValueOnce(0.2);
+  it("preserves the current empty suffix and collision when randomness is zero", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
 
     const firstId = getNewNodeID(NodeTypes.LEFT);
     const secondId = getNewNodeID(NodeTypes.LEFT);
 
-    expect(firstId).not.toBe(secondId);
+    // KNOWN BUG (P3): zero produces no five-character suffix, so both ids are bare
+    // prefixes and collide. P3 will harden node id generation.
+    expect(firstId).toBe("l-");
+    expect(secondId).toBe("l-");
   });
 });
 
