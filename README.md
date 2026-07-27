@@ -1,6 +1,6 @@
-# 🚀 Next.js + shadcn/ui + Supabase Starter Kit
+# Sprig
 
-Welcome to your shiny new full-stack web application starter! This repo contains everything you need to build awesome web apps without the boring setup work. Let's get you from zero to hero in no time.
+Sprig is a visual mind-mapping application built with Next.js, shadcn/ui, and Supabase.
 
 ## ✨ What's in the Box?
 
@@ -21,8 +21,8 @@ This starter kit comes packed with goodness:
 
 ### Prerequisites
 
-- Node.js 18+ (20+ recommended)
-- npm or pnpm or yarn (we use pnpm in examples)
+- Node.js 20.9 or newer (Node.js 24 is selected by `.nvmrc`)
+- pnpm
 - A Supabase account (free tier works great!)
 
 ### First-Time Setup
@@ -68,6 +68,23 @@ pnpm dev
 ```
 
 Visit [http://localhost:3000](http://localhost:3000) to see your app in action! 🎉
+
+### Commands
+
+| Command | Purpose |
+| --- | --- |
+| `pnpm dev` | Start the Turbopack development server. |
+| `pnpm build` | Create a production build with Turbopack. |
+| `pnpm start` | Run the production server from a completed build. |
+| `pnpm typecheck` | Check TypeScript types without emitting files. |
+| `pnpm test` | Run the Vitest suite once. |
+| `pnpm test:watch` | Run Vitest in watch mode. |
+| `pnpm test:coverage` | Run the Vitest suite and generate text and HTML coverage reports. |
+| `pnpm lint` | Check JavaScript and TypeScript files with ESLint. |
+| `pnpm lint:fix` | Fix ESLint issues that can be corrected automatically. |
+| `pnpm format` | Format the repository with Prettier. |
+| `pnpm format:check` | Check repository formatting without changing files. |
+| `pnpm fix:all` | Apply ESLint fixes, then format the repository. |
 
 ## 🔧 Configuring Supabase
 
