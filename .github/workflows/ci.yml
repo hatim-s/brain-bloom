@@ -45,5 +45,12 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # Prerendering /_not-found constructs a Supabase client, which throws without a
+      # URL and key, so the build cannot complete on credentials alone being absent.
+      # These are syntactically valid placeholders, never contacted: the build only
+      # needs the client to construct. Replaced when Supabase is removed in P6.
       - name: Build
         run: pnpm build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
