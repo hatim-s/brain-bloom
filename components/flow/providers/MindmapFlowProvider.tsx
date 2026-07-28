@@ -3,8 +3,9 @@ import { createContext, useCallback, useContext, useState } from "react";
 import { StoreApi, useStore } from "zustand";
 
 import { useKey } from "@/hooks/use-key";
-import { MindmapDB } from "@/types/Mindmap";
+import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 
+import { INITIAL_EDGES, INITIAL_NODES } from "../initialNodesAndEdges";
 import { BaseFlowNode } from "../types";
 import { createMindmapStore, MindmapStore } from "./store";
 import { MindmapFlowContext as MindmapFlowContextType } from "./types";
@@ -34,28 +35,48 @@ function useMindmapStoreApi(): StoreApi<MindmapStore> {
   return store;
 }
 
-type MindmapFlowProviderProps = {
+type MindmapFlowProviderBaseProps = {
   children: React.ReactNode;
   readOnly?: boolean;
   mindmapDB: MindmapDB;
-  initialNodes: BaseFlowNode[];
-  initialEdges: Edge[];
 };
+
+type MindmapFlowProviderProps =
+  | (MindmapFlowProviderBaseProps & {
+      serverNodes: MindmapNodeProjection[];
+    })
+  | (MindmapFlowProviderBaseProps & {
+      initialNodes: BaseFlowNode[];
+      initialEdges: Edge[];
+    });
 
 /**
  * Provides one isolated mindmap store initialized from the supplied mindmap.
  */
-const MindmapFlowProvider = ({
-  children,
-  readOnly = false,
-  mindmapDB,
-  initialNodes,
-  initialEdges,
-}: MindmapFlowProviderProps) => {
+const MindmapFlowProvider = (props: MindmapFlowProviderProps) => {
+  const { children, mindmapDB } = props;
+  const readOnly = props.readOnly ?? false;
+
   // A lazy state initializer guarantees one prop-seeded store per provider.
-  const [store] = useState(() =>
-    createMindmapStore({ readOnly, mindmapDB, initialNodes, initialEdges })
-  );
+  const [store] = useState(() => {
+    if ("serverNodes" in props && props.serverNodes.length > 0) {
+      return createMindmapStore({
+        readOnly,
+        mindmapDB,
+        serverNodes: props.serverNodes,
+      });
+    }
+
+    const fallbackSeed =
+      "initialNodes" in props
+        ? {
+            initialNodes: props.initialNodes,
+            initialEdges: props.initialEdges,
+          }
+        : { initialNodes: INITIAL_NODES, initialEdges: INITIAL_EDGES };
+
+    return createMindmapStore({ readOnly, mindmapDB, ...fallbackSeed });
+  });
 
   const debugLogger = useCallback(() => {
     // eslint-disable-next-line no-console -- needed for debug logging

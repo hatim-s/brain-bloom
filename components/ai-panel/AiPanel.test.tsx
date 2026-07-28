@@ -30,6 +30,9 @@ import type { UseSprigChat } from "./useSprigChat";
 
 const mocks = vi.hoisted(() => ({
   chat: { current: null as unknown as UseSprigChat },
+  onTurnFinished: {
+    current: null as null | ((message: SprigUIMessage) => Promise<void>),
+  },
   refresh: vi.fn(),
   undoTo: vi.fn(),
 }));
@@ -52,7 +55,14 @@ vi.mock("streamdown", () => ({
 }));
 
 vi.mock("./useSprigChat", () => ({
-  useSprigChat: () => mocks.chat.current,
+  useSprigChat: ({
+    onTurnFinished,
+  }: {
+    onTurnFinished: (message: SprigUIMessage) => Promise<void>;
+  }) => {
+    mocks.onTurnFinished.current = onTurnFinished;
+    return mocks.chat.current;
+  },
 }));
 
 /** Builds the chat surface state the panel renders against. */
@@ -89,6 +99,23 @@ function createTurnWithOperation(): SprigUIMessage {
   };
 }
 
+/** An assistant turn that changed only the RSC-rendered mindmap name. */
+function createRenameTurn(): SprigUIMessage {
+  return {
+    id: "assistant-rename",
+    role: "assistant",
+    parts: [
+      {
+        type: "tool-renameMindmap",
+        toolCallId: "tool:rename",
+        state: "output-available",
+        input: { name: "Renamed" },
+        output: { operationId: "operations:rename" },
+      },
+    ] as SprigUIMessage["parts"],
+  };
+}
+
 beforeAll(() => {
   globalThis.ResizeObserver ??= class {
     observe() {}
@@ -100,6 +127,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   mocks.chat.current = createChat();
+  mocks.onTurnFinished.current = null;
   mocks.refresh.mockReset();
   mocks.undoTo.mockReset().mockResolvedValue({ undoneCount: 1, seq: 4 });
 });
@@ -196,6 +224,8 @@ describe("AiPanel", () => {
       expect(screen.getByText("Undone back to this change.")).toBeDefined()
     );
     expect(mocks.refresh).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Reload" })).toBeNull();
+    expect(screen.queryByText(/Reload to see it/)).toBeNull();
   });
 
   it("explains a rejected undo inline instead of failing silently", async () => {
@@ -271,36 +301,66 @@ describe("AiPanel", () => {
     expect(clearError).toHaveBeenCalled();
   });
 
-  it("reloads immediately when the canvas queue is clean", async () => {
-    const user = userEvent.setup();
-    const reload = vi.fn();
-    mocks.chat.current = createChat({ messages: [createTurnWithOperation()] });
-    renderPanel(reload);
+  it("queues an AI-created id to bloom after the next server reseed", async () => {
+    renderPanel();
 
-    await user.click(screen.getByRole("button", { name: "Undo to message 1" }));
-    await user.click(screen.getByRole("button", { name: "Reload" }));
+    await act(async () => {
+      await mocks.onTurnFinished.current?.(createTurnWithOperation());
+    });
 
-    expect(reload).toHaveBeenCalledOnce();
+    expect(panelStore.getState().aiTouchedNodeIds).toEqual([]);
+    expect(panelStore.getState().pendingAiTouchedNodeIds).toEqual(["l-1"]);
+    expect(screen.queryByText(/Reload to see it/)).toBeNull();
   });
 
-  it("attempts a flush and refuses reload when dirty edits cannot save", async () => {
-    const user = userEvent.setup();
-    const reload = vi.fn();
-    const flushNow = vi.fn(async () => false);
-    mocks.chat.current = createChat({ messages: [createTurnWithOperation()] });
-    renderPanel(reload);
+  it("blooms immediately when the AI reseed beat the turn-finished callback", async () => {
+    renderPanel();
 
-    await user.click(screen.getByRole("button", { name: "Undo to message 1" }));
+    act(() => {
+      panelStore.getState().actions.reseedFromServer({
+        updatedAt: 2,
+        nodes: [
+          {
+            nodeId: ROOT_NODE_ID,
+            parentId: null,
+            type: "root",
+            title: "Root",
+            order: 0,
+          },
+          {
+            nodeId: "l-1",
+            parentId: ROOT_NODE_ID,
+            type: "left",
+            title: "Created early",
+            order: 0,
+          },
+        ],
+      });
+    });
+    await act(async () => {
+      await mocks.onTurnFinished.current?.(createTurnWithOperation());
+    });
+
+    expect(panelStore.getState().aiTouchedNodeIds).toEqual(["l-1"]);
+    expect(panelStore.getState().pendingAiTouchedNodeIds).toEqual([]);
+  });
+
+  it("keeps the flush guard before refreshing renamed RSC chrome", async () => {
+    const flushNow = vi.fn(async () => false);
+    renderPanel();
+
     act(() => {
       panelStore
         .getState()
         .actions.onUpdateNode("right-child", { title: "Unsaved" });
       panelStore.getState().actions.registerFlushNow(flushNow);
     });
-    await user.click(screen.getByRole("button", { name: "Reload" }));
+    await act(async () => {
+      await mocks.onTurnFinished.current?.(createRenameTurn());
+    });
 
     expect(flushNow).toHaveBeenCalledOnce();
-    expect(reload).not.toHaveBeenCalled();
+    expect(mocks.refresh).not.toHaveBeenCalled();
     expect(screen.getByRole("alert").textContent).toContain(
       "Couldn't save your latest canvas edits"
     );
@@ -308,11 +368,11 @@ describe("AiPanel", () => {
 });
 
 /** Mounts the panel over a real mindmap store, as the canvas does. */
-function renderPanel(onReload?: () => void): void {
+function renderPanel(): void {
   render(
     <MindmapFlowProvider {...createPanelFixture()}>
       <PanelStoreProbe />
-      <AiPanel onCollapse={vi.fn()} onReload={onReload} />
+      <AiPanel onCollapse={vi.fn()} />
     </MindmapFlowProvider>
   );
 }

@@ -1,7 +1,7 @@
 import { applyNodeChanges, Edge } from "@xyflow/react";
 import { createStore, StoreApi } from "zustand";
 
-import { MindmapDB } from "@/types/Mindmap";
+import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 
 import { ROOT_NODE_ID } from "../const";
 import { generateLeveledNodes } from "../layout/generateLeveledNodes";
@@ -12,7 +12,10 @@ import {
   initLayout,
   NODE_DIMENSIONS,
 } from "../layout/init";
-import { createEdge } from "../mindmap/createEdge";
+import {
+  createEdge,
+  createFlowEdgeFromPartialBaseFlowEdge,
+} from "../mindmap/createEdge";
 import {
   createBaseFlowNodeFromPartialBaseFlowNode,
   createNode,
@@ -22,16 +25,38 @@ import {
   createMindmapNodeFromFlowNode,
   transformFlowNodesAndEdgesToMindmapNodes,
 } from "../mindmap/flowNodeToMindmapNode";
-import { transformMindmapNodesToFlowNodesAndEdges } from "../mindmap/mindmapNodesToFlowNodes";
+import {
+  PartialBaseFlowEdge,
+  PartialBaseFlowNode,
+  transformConvexNodesToFlowNodesAndEdges,
+  transformMindmapNodesToFlowNodesAndEdges,
+} from "../mindmap/mindmapNodesToFlowNodes";
 import { appendPendingOp, PendingNodePatch } from "../mindmap/pendingOps";
 import { BaseFlowNode, FlowNode, MindmapNode, NodeTypes } from "../types";
-import { MindmapFlowContext } from "./types";
+import { MindmapFlowContext, ServerMindmapState } from "./types";
 
 type MindmapStore = MindmapFlowContext;
 
-type MindmapStoreSeed = {
+type MindmapStoreSeedBase = {
   readOnly?: boolean;
   mindmapDB: MindmapDB;
+};
+
+type MindmapStoreSeed =
+  | (MindmapStoreSeedBase & {
+      serverNodes: MindmapNodeProjection[];
+    })
+  | (MindmapStoreSeedBase & {
+      initialNodes: BaseFlowNode[];
+      initialEdges: Edge[];
+    });
+
+type SeededGraphState = Pick<
+  MindmapStore,
+  "layout" | "nodes" | "edges" | "nodesMap" | "mindmapNodesMap" | "leveledNodes"
+>;
+
+type FlowGraphSeed = {
   initialNodes: BaseFlowNode[];
   initialEdges: Edge[];
 };
@@ -49,6 +74,48 @@ function deriveLeveledNodes(
   mindmapNodesMap: Record<string, MindmapNode>
 ): MindmapNode[][] {
   return generateLeveledNodes(mindmapNodesMap);
+}
+
+/**
+ * Runs the canonical layout pipeline and derives every graph representation.
+ */
+function createSeededGraphState({
+  initialNodes,
+  initialEdges,
+}: FlowGraphSeed): SeededGraphState {
+  const layout = initGraphs();
+  const nodes = initLayout(layout, initialNodes, initialEdges);
+  const edges = initialEdges;
+  const mindmapNodesMap = transformFlowNodesAndEdgesToMindmapNodes(
+    nodes,
+    edges
+  );
+
+  return {
+    layout,
+    nodes,
+    edges,
+    nodesMap: deriveNodesMap(nodes),
+    mindmapNodesMap,
+    leveledNodes: deriveLeveledNodes(mindmapNodesMap),
+  };
+}
+
+/**
+ * Transforms one sorted Convex projection through the canonical seed pipeline.
+ */
+function createSeededGraphStateFromServer(
+  serverNodes: MindmapNodeProjection[]
+): SeededGraphState {
+  const graph = transformConvexNodesToFlowNodesAndEdges(serverNodes);
+  const initialNodes = graph.nodes.map((node) =>
+    createBaseFlowNodeFromPartialBaseFlowNode(node as PartialBaseFlowNode)
+  );
+  const initialEdges = graph.edges.map((edge) =>
+    createFlowEdgeFromPartialBaseFlowEdge(edge as PartialBaseFlowEdge)
+  );
+
+  return createSeededGraphState({ initialNodes, initialEdges });
 }
 
 /** Builds a minimal wire patch while preserving explicit optional removals. */
@@ -87,21 +154,70 @@ function warnReadOnlyMutation(action: string): void {
  * Graph objects stay mutable as before, while each state write also refreshes
  * every derived view affected by that write.
  */
-function createMindmapStore({
-  readOnly = false,
-  mindmapDB,
-  initialNodes,
-  initialEdges,
-}: MindmapStoreSeed): StoreApi<MindmapStore> {
-  const layout = initGraphs();
-  const nodes = initLayout(layout, initialNodes, initialEdges);
-  const edges = initialEdges;
-  const initialMindmapNodesMap = transformFlowNodesAndEdgesToMindmapNodes(
-    nodes,
-    edges
-  );
+function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
+  const { mindmapDB } = seed;
+  const readOnly = seed.readOnly ?? false;
+  const initialGraphState =
+    "serverNodes" in seed
+      ? createSeededGraphStateFromServer(seed.serverNodes)
+      : createSeededGraphState(seed);
 
   return createStore<MindmapStore>((set, get) => {
+    /**
+     * Replaces server-backed graph views while retaining local and UI state.
+     */
+    const reseedFromServer = (serverState: ServerMindmapState): boolean => {
+      const current = get();
+
+      if (readOnly) {
+        warnReadOnlyMutation("reseedFromServer");
+        return false;
+      }
+
+      if (serverState.updatedAt <= current.seededUpdatedAt) {
+        return false;
+      }
+
+      const graphState = createSeededGraphStateFromServer(serverState.nodes);
+      const liveNodeIds = new Set(Object.keys(graphState.nodesMap));
+      const pendingTouchedNodeIds = current.pendingAiTouchedNodeIds;
+
+      // The first commit mounts the server nodes; the second starts any queued
+      // bloom only after those nodes can receive the CSS class.
+      set((state) => ({
+        ...graphState,
+        activeNode:
+          state.activeNode !== null && liveNodeIds.has(state.activeNode)
+            ? state.activeNode
+            : null,
+        selectedNode:
+          state.selectedNode !== null && liveNodeIds.has(state.selectedNode)
+            ? state.selectedNode
+            : null,
+        aiEditNode:
+          state.aiEditNode !== null && liveNodeIds.has(state.aiEditNode)
+            ? state.aiEditNode
+            : null,
+        mindmapDB: {
+          ...state.mindmapDB,
+          updatedAt: serverState.updatedAt,
+        },
+        seededUpdatedAt: serverState.updatedAt,
+        pendingServerState:
+          state.pendingServerState !== null &&
+          state.pendingServerState.updatedAt > serverState.updatedAt
+            ? state.pendingServerState
+            : null,
+        pendingAiTouchedNodeIds: [],
+      }));
+
+      if (pendingTouchedNodeIds.length > 0) {
+        set({ aiTouchedNodeIds: pendingTouchedNodeIds });
+      }
+
+      return true;
+    };
+
     /** Applies XYFlow node changes and refreshes the node lookup atomically. */
     const onNodesChange: MindmapFlowContext["actions"]["onNodesChange"] = (
       changes
@@ -145,7 +261,8 @@ function createMindmapStore({
         return null;
       }
 
-      const currentMindmapNodesMap = get().mindmapNodesMap;
+      const currentState = get();
+      const currentMindmapNodesMap = currentState.mindmapNodesMap;
 
       if (!currentMindmapNodesMap[parentNodeId]) {
         // eslint-disable-next-line no-console -- needed
@@ -169,9 +286,13 @@ function createMindmapStore({
       }
 
       const newGraph =
-        type === NodeTypes.LEFT ? layout.leftGraph : layout.rightGraph;
+        type === NodeTypes.LEFT
+          ? currentState.layout.leftGraph
+          : currentState.layout.rightGraph;
       const oldGraph =
-        type === NodeTypes.LEFT ? layout.rightGraph : layout.leftGraph;
+        type === NodeTypes.LEFT
+          ? currentState.layout.rightGraph
+          : currentState.layout.leftGraph;
 
       if (!newGraph.hasNode(parentNodeId)) {
         // eslint-disable-next-line no-console -- needed
@@ -308,8 +429,8 @@ function createMindmapStore({
         const updatedNode = { ...currentNode, data };
         const graph =
           updatedNode.type === NodeTypes.LEFT
-            ? layout.leftGraph
-            : layout.rightGraph;
+            ? state.layout.leftGraph
+            : state.layout.rightGraph;
         const patch = createNodeDataPatch(currentNode.data, data);
         const hasChanges = Object.keys(patch).length > 0;
 
@@ -349,12 +470,7 @@ function createMindmapStore({
 
     return {
       readOnly,
-      layout,
-      nodes,
-      edges,
-      nodesMap: deriveNodesMap(nodes),
-      mindmapNodesMap: initialMindmapNodesMap,
-      leveledNodes: deriveLeveledNodes(initialMindmapNodesMap),
+      ...initialGraphState,
       activeNode: ROOT_NODE_ID,
       setActiveNode: (activeNode) => set({ activeNode }),
       selectedNode: null,
@@ -370,6 +486,7 @@ function createMindmapStore({
         }
       },
       aiTouchedNodeIds: [],
+      pendingAiTouchedNodeIds: [],
       setAiTouchedNodeIds: (nodeIds) => {
         if (readOnly) {
           warnReadOnlyMutation("setAiTouchedNodeIds");
@@ -380,6 +497,8 @@ function createMindmapStore({
         set({ aiTouchedNodeIds: nodeIds });
       },
       mindmapDB,
+      seededUpdatedAt: mindmapDB.updatedAt,
+      pendingServerState: null,
       pendingOps: [],
       flushedWatermark: 0,
       lastSyncError: null,
@@ -390,6 +509,66 @@ function createMindmapStore({
         onNodesChange,
         onAddNode,
         onUpdateNode,
+        reseedFromServer,
+        reconcileServerState: (serverState) => {
+          const state = get();
+
+          if (readOnly || serverState.updatedAt <= state.seededUpdatedAt) {
+            return;
+          }
+
+          if (state.pendingOps.length > 0 || state.syncState === "saving") {
+            if (
+              state.pendingServerState === null ||
+              serverState.updatedAt > state.pendingServerState.updatedAt
+            ) {
+              set({ pendingServerState: serverState });
+            }
+            return;
+          }
+
+          reseedFromServer(serverState);
+        },
+        applyPendingServerState: () => {
+          const state = get();
+
+          if (
+            state.pendingServerState === null ||
+            state.pendingOps.length > 0 ||
+            state.syncState === "saving"
+          ) {
+            return false;
+          }
+
+          return reseedFromServer(state.pendingServerState);
+        },
+        setAiTouchedNodeIdsAfterReseed: (
+          nodeIds,
+          seededUpdatedAtAtTurnStart
+        ) => {
+          if (readOnly) {
+            warnReadOnlyMutation("setAiTouchedNodeIdsAfterReseed");
+            return;
+          }
+
+          const state = get();
+          const touchedNodesAreMounted = nodeIds.every(
+            (nodeId) => state.nodesMap[nodeId] !== undefined
+          );
+          if (
+            state.seededUpdatedAt > seededUpdatedAtAtTurnStart &&
+            touchedNodesAreMounted
+          ) {
+            state.setAiTouchedNodeIds(nodeIds);
+            return;
+          }
+
+          set((current) => ({
+            pendingAiTouchedNodeIds: Array.from(
+              new Set([...current.pendingAiTouchedNodeIds, ...nodeIds])
+            ),
+          }));
+        },
         peekPendingOps: () => {
           const ops = get().pendingOps;
 
@@ -472,6 +651,7 @@ function createMindmapStore({
 export {
   createMindmapStore,
   createNodeDataPatch,
+  createSeededGraphStateFromServer,
   deriveLeveledNodes,
   deriveNodesMap,
   type MindmapStore,

@@ -20,16 +20,9 @@ import { cn } from "@/lib/utils";
 import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 import { Stack } from "../ui/stack";
 import { SaveMindmap } from "./components/SaveMindmap";
+import { useMindmapLiveSync } from "./hooks/useMindmapLiveSync";
 import { useMindmapNavigation } from "./hooks/useMindmapNavigation";
 import { useMindmapSync } from "./hooks/useMindmapSync";
-import { INITIAL_EDGES, INITIAL_NODES } from "./initialNodesAndEdges";
-import { createFlowEdgeFromPartialBaseFlowEdge } from "./mindmap/createEdge";
-import { createBaseFlowNodeFromPartialBaseFlowNode } from "./mindmap/createNode";
-import {
-  PartialBaseFlowEdge,
-  PartialBaseFlowNode,
-  transformConvexNodesToFlowNodesAndEdges,
-} from "./mindmap/mindmapNodesToFlowNodes";
 import { LeftNode, RightNode, RootNode } from "./nodes";
 import {
   MindmapFlowProvider,
@@ -52,9 +45,10 @@ const nodeTypes: XYNodeTypes = {
   right: RightNode,
 };
 
-/** Mounts autosave only for an editable canvas. */
-function MindmapAutosave() {
+/** Mounts outbound autosave and inbound live reconciliation for an owner. */
+function MindmapSynchronization() {
   useMindmapSync();
+  useMindmapLiveSync();
   return null;
 }
 
@@ -209,7 +203,7 @@ export function MindmapFlow() {
     <Stack className="h-full w-full flex-1">
       {readOnly ? null : (
         <>
-          <MindmapAutosave />
+          <MindmapSynchronization />
           <SaveMindmap />
         </>
       )}
@@ -258,24 +252,6 @@ export default function Flow({
   nodes: MindmapNodeProjection[];
   readOnly?: boolean;
 }) {
-  const initialGraph = useMemo(
-    () => transformConvexNodesToFlowNodesAndEdges(nodes),
-    [nodes]
-  );
-  const initialNodes = useMemo(
-    () =>
-      initialGraph.nodes.map((node) =>
-        createBaseFlowNodeFromPartialBaseFlowNode(node as PartialBaseFlowNode)
-      ),
-    [initialGraph.nodes]
-  );
-
-  const initialEdges = useMemo(() => {
-    return initialGraph.edges.map((edge) =>
-      createFlowEdgeFromPartialBaseFlowEdge(edge as PartialBaseFlowEdge)
-    );
-  }, [initialGraph.edges]);
-
   return (
     <ReactFlowProvider>
       {/* This key remounts the prop-seeded store when client navigation loads another mindmap. */}
@@ -283,8 +259,7 @@ export default function Flow({
         key={mindmapDB._id}
         readOnly={readOnly}
         mindmapDB={mindmapDB}
-        initialNodes={initialNodes.length ? initialNodes : INITIAL_NODES}
-        initialEdges={initialEdges.length ? initialEdges : INITIAL_EDGES}
+        serverNodes={nodes}
       >
         {/* Only an owner can edit, so only an owner gets the AI panel; a
             read-only canvas keeps the full width it had before P8. */}

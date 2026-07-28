@@ -215,6 +215,10 @@ function useMindmapSync(): void {
           schedulePending();
         }
 
+        // A live result observed while this batch was in flight was held back
+        // so local state stayed ahead. Apply it only after the queue drains.
+        store.getState().actions.applyPendingServerState();
+
         return !state.desyncedSinceRejection;
       } finally {
         if (isDisposed) {

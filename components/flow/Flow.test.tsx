@@ -42,6 +42,10 @@ vi.mock("./hooks/useMindmapSync", () => ({
   useMindmapSync: () => {},
 }));
 
+vi.mock("./hooks/useMindmapLiveSync", () => ({
+  useMindmapLiveSync: () => {},
+}));
+
 vi.mock("@xyflow/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@xyflow/react")>();
 
@@ -159,6 +163,37 @@ describe("Flow", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("blooms an AI-created node after the server reseed mounts it", () => {
+    const view = render(
+      <Flow
+        mindmap={{ ...MINDMAP, isOwner: true }}
+        nodes={NODES}
+        readOnly={false}
+      />
+    );
+
+    act(() => {
+      store
+        .getState()
+        .actions.setAiTouchedNodeIdsAfterReseed(["l-ai-created"], 1);
+      store.getState().actions.reseedFromServer({
+        updatedAt: 2,
+        nodes: [
+          ...NODES,
+          {
+            nodeId: "l-ai-created",
+            parentId: "root",
+            type: "left",
+            title: "AI created",
+            order: 0,
+          },
+        ],
+      });
+    });
+
+    expect(view.getByTestId("bloomed-nodes").textContent).toBe("l-ai-created");
   });
 });
 
