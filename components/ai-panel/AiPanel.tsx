@@ -260,7 +260,7 @@ function AiPanel({ onCollapse }: { onCollapse: () => void }) {
           >
             <p className="font-medium text-foreground">AI is not configured</p>
             <p className="mt-1 text-xs leading-relaxed">
-              Set <code>ANTHROPIC_OAUTH_TOKEN</code> as described in{" "}
+              Set <code>CLAUDE_CODE_OAUTH_TOKEN</code> as described in{" "}
               <code>docs/ENV.md</code>, then reload.
             </p>
           </div>

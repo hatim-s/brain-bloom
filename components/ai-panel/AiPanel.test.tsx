@@ -313,7 +313,7 @@ describe("AiPanel", () => {
     renderPanel();
 
     expect(screen.getAllByText("AI is not configured")).toHaveLength(2);
-    expect(screen.getByText("ANTHROPIC_OAUTH_TOKEN")).toBeDefined();
+    expect(screen.getByText("CLAUDE_CODE_OAUTH_TOKEN")).toBeDefined();
     expect(screen.getByText("docs/ENV.md")).toBeDefined();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();

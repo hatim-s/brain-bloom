@@ -1,6 +1,5 @@
 "use server";
 
-import { generateText, Output } from "ai";
 import { fetchMutation } from "convex/nextjs";
 import { ConvexError } from "convex/values";
 
@@ -21,11 +20,12 @@ import {
   type AIActionErrorCode,
   getAIActionErrorCode,
 } from "@/lib/ai/actionErrors";
+import { AIConfigurationError } from "@/lib/ai/errors";
 import {
   generatedMindmapSchema,
   type GeneratedTreeNode,
 } from "@/lib/ai/generatedTree";
-import { AIConfigurationError, getAnthropicModel } from "@/lib/anthropic";
+import { generateClaudeStructured } from "@/lib/claude-agent";
 import { getConvexAuthToken } from "@/lib/convex-server";
 import { AIMindmap } from "@/types/AI";
 
@@ -76,26 +76,21 @@ function flattenGeneratedMindmap(
   ];
 }
 
-/** Generates and validates a strict nested mindmap with Anthropic OAuth. */
+/** Generates and validates a strict nested mindmap with the Claude Agent SDK. */
 async function generateAIMindmap(userPrompt: string) {
   if (!userPrompt) {
     throw new Error("User prompt is required");
   }
 
   try {
-    const result = await generateText({
-      model: getAnthropicModel(),
+    const result = await generateClaudeStructured({
       instructions: MINDMAP_GENERATION_INSTRUCTIONS,
       prompt: userPrompt,
-      output: Output.object({
-        schema: generatedMindmapSchema,
-        name: "mindmap",
-        description: "A map name and nested tree of mindmap nodes.",
-      }),
+      schema: generatedMindmapSchema,
     });
 
     return {
-      rawOutput: result.text,
+      rawOutput: result.rawOutput,
       mindmap: flattenGeneratedMindmap(result.output.name, result.output.nodes),
     };
   } catch (error) {
