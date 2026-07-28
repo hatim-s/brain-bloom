@@ -28,29 +28,31 @@ export default async function Layout({
   children: React.ReactNode;
 }) {
   return (
-    <main className="relative flex h-svh w-full items-center justify-center overflow-y-auto px-6 py-12">
+    <main className="relative h-svh w-full overflow-hidden">
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0"
         style={dotFieldStyle}
       />
-      <div className="relative flex w-full max-w-md flex-col gap-8">
-        <div className="flex flex-col items-center gap-1.5">
-          <span className="flex items-center gap-2.5 font-mono text-sm uppercase tracking-[0.28em] text-foreground">
-            <span
-              aria-hidden="true"
-              className="size-1.5 rounded-full bg-primary"
-            />
-            {/* The negative margin eats the trailing letter-space so the
-                wordmark optically centres against the tagline below it. */}
-            <span className="-mr-[0.28em]">Sprig</span>
-          </span>
-          <p className="text-center text-sm text-muted-foreground">
-            Grow and organize ideas.
-          </p>
-        </div>
-        <div className="rounded-lg border border-line-strong bg-card p-8 text-card-foreground">
-          {children}
+      <div className="relative flex h-full w-full justify-center overflow-y-auto px-6 py-12">
+        <div className="my-auto flex w-full max-w-md flex-col gap-8">
+          <div className="flex flex-col items-center gap-1.5">
+            <span className="flex items-center gap-2.5 font-mono text-sm uppercase tracking-[0.28em] text-foreground">
+              <span
+                aria-hidden="true"
+                className="size-1.5 rounded-full bg-primary"
+              />
+              {/* The negative margin eats the trailing letter-space so the
+                  wordmark optically centres against the tagline below it. */}
+              <span className="-mr-[0.28em]">Sprig</span>
+            </span>
+            <p className="text-center text-sm text-muted-foreground">
+              Grow and organize ideas.
+            </p>
+          </div>
+          <div className="rounded-lg border border-line-strong bg-card p-8 text-card-foreground">
+            {children}
+          </div>
         </div>
       </div>
     </main>

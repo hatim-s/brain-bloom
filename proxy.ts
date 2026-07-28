@@ -1,16 +1,32 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { clerkMiddleware } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
 
-// "/" stays protected until P7 ships a real landing page — its current content
-// is the authenticated dashboard, which fetches user data.
-const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);
+import { acceptsJsonOverHtml, isPublicPath } from "@/lib/auth-routing";
 
 const proxy = clerkMiddleware(async (auth, request) => {
-  if (!isPublicRoute(request)) {
-    // Clerk requires an absolute URL here; a bare path throws ERR_INVALID_URL.
-    await auth.protect({
-      unauthenticatedUrl: new URL("/sign-in", request.url).toString(),
-    });
+  // "/" stays protected until P7 ships a real landing page — its current
+  // content is the authenticated dashboard, which fetches user data.
+  if (isPublicPath(request.nextUrl.pathname)) {
+    return;
   }
+
+  const { userId } = await auth();
+  if (userId) {
+    return;
+  }
+
+  if (
+    request.nextUrl.pathname.startsWith("/api") ||
+    acceptsJsonOverHtml(request.headers.get("accept"))
+  ) {
+    return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
+  }
+
+  const destination = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+  const unauthenticatedUrl = new URL("/sign-in", request.url);
+  unauthenticatedUrl.searchParams.set("redirect_url", destination);
+
+  return NextResponse.redirect(unauthenticatedUrl);
 });
 
 // Next parses `config` statically at compile time, so it must be exported inline —

@@ -5,7 +5,7 @@
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk's browser provider. | Not required in keyless development; production-only in P9. | Configure the production Clerk application in P9. |
 | `CLERK_SECRET_KEY` | Clerk's server SDK and request proxy. | Not required in keyless development; production-only in P9. | Configure the production Clerk application in P9. |
 | `NEXT_PUBLIC_ENABLE_OAUTH` | `app/(auth-pages)/oauth-buttons.tsx` renders the Google and GitHub buttons on `/sign-in` and `/sign-up` only when this is exactly `"true"`. | Optional; leave unset in keyless development. | Set to `true` once P9 claims the Clerk instance and enables the Google and GitHub social connections in the Clerk dashboard. |
-| `CLERK_JWT_ISSUER_DOMAIN` | `convex/auth.config.ts` uses this issuer to validate Clerk JWTs. | Supplied by the orchestrator after keyless provisioning; production is configured in P9. | In keyless development, use the Clerk frontend API URL written to `.env.local`; it doubles as the issuer domain. |
+| `CLERK_JWT_ISSUER_DOMAIN` | `convex/auth.config.ts` uses this issuer to validate Clerk JWTs when it is configured. | Optional in keyless/local runs; required in the Convex deployment environment after Clerk is claimed in P9. | Use the claimed Clerk instance's JWT issuer domain. |
 | `CONVEX_DEPLOYMENT` | The Convex CLI uses this deployment identifier for schema generation and local backend commands. | Required for Convex development commands. | Created by the anonymous local Convex setup and stored in `.env.local`. Production deployment values arrive in P9. |
 | `GROQ_API_KEY` | The AI generation and AI editing server actions in `actions/ai-gen.ts` and `actions/ai-edit.ts`. | Required when using AI generation or editing. | Create an API key in the Groq console. |
 | `NEXT_PUBLIC_CONVEX_URL` | `providers/ConvexClientProvider.tsx` uses this deployment URL for browser queries and mutations. | Optional at build time; required at runtime once the frontend uses Convex data in P6. | Created by the anonymous local Convex setup and stored in `.env.local`. Production deployment values arrive in P9. |
@@ -20,6 +20,11 @@ Clerk keyless development requires no `CLERK_*` variables before the first
 `next dev` run. Clerk self-provisions and writes local artifacts at that point.
 Keep the generated `.clerk/` directory gitignored. The production publishable
 and secret keys are intentionally deferred to P9.
+
+With `CLERK_JWT_ISSUER_DOMAIN` unset, the Convex auth provider list is empty so
+local and keyless schema pushes still work. Convex authentication is inactive in
+that state, and every `requireUser` call rejects. Set the issuer in the Convex
+deployment environment when the Clerk instance is claimed in P9.
 
 Social sign-in is gated behind `NEXT_PUBLIC_ENABLE_OAUTH` for the same reason: a
 keyless instance has no OAuth credentials, so the buttons stay out of the markup

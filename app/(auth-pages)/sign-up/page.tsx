@@ -1,41 +1,97 @@
 "use client";
 
 import { useSignUp } from "@clerk/nextjs";
+import type { SignUpField } from "@clerk/nextjs/types";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useState } from "react";
 
 import { FormMessage } from "@/components/form-message";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { buildAuthPageUrl, sanitizeRedirectUrl } from "@/lib/auth-routing";
 
 import { type AuthOAuthStrategy, OAuthButtons } from "../oauth-buttons";
 
-/** Provides the minimal password and email-code Clerk Core 3 sign-up flow. */
-export default function Signup() {
+type SignUpStep = "form" | "verification" | "finalize";
+
+const SIGN_UP_FIELD_LABELS: Partial<Record<SignUpField, string>> = {
+  email_address: "email address",
+  email_address_or_phone_number: "email address or phone number",
+  first_name: "first name",
+  last_name: "last name",
+  legal_accepted: "legal acceptance",
+  password: "password",
+  phone_number: "phone number",
+  protect_check: "additional verification",
+  username: "username",
+  web3_wallet: "Web3 wallet",
+};
+
+/** Turns Clerk's field identifiers into an explicit, readable requirement list. */
+function formatRequirements(fields: SignUpField[]): string {
+  return fields
+    .map(
+      (field) =>
+        SIGN_UP_FIELD_LABELS[field] ?? field.replaceAll("_", " ").trim()
+    )
+    .join(", ");
+}
+
+/** Provides the password and email-code Clerk Core 3 sign-up flow. */
+function Signup() {
   const { signUp, fetchStatus } = useSignUp();
   const router = useRouter();
-  const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const searchParams = useSearchParams();
+  const redirectUrl = sanitizeRedirectUrl(searchParams.get("redirect_url"));
+  const signInUrl = buildAuthPageUrl("/sign-in", redirectUrl);
+  const signUpCallbackUrl = buildAuthPageUrl("/sign-up", redirectUrl);
+  const [step, setStep] = useState<SignUpStep>("form");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [resendMessage, setResendMessage] = useState<string | null>(null);
   const isSubmitting = fetchStatus === "fetching";
 
-  /** Activates a completed Clerk sign-up and enters the application. */
+  /** Names everything Clerk still requires before this sign-up can complete. */
+  function getMissingRequirementsMessage(): string {
+    const requirements = [...signUp.missingFields, ...signUp.unverifiedFields];
+
+    if (requirements.length > 0) {
+      return `Clerk still requires: ${formatRequirements(requirements)}.`;
+    }
+
+    if (signUp.status === "abandoned") {
+      return "Clerk marked this sign-up attempt as abandoned. Use a different email to start again.";
+    }
+
+    return `Clerk cannot finish this sign-up while its status is "${signUp.status}".`;
+  }
+
+  /** Activates a completed Clerk sign-up and enters the requested destination. */
   async function finalizeSignUp() {
+    if (isSubmitting) {
+      return;
+    }
+    setErrorMessage(null);
+
     const { error } = await signUp.finalize();
     if (error) {
       setErrorMessage(error.longMessage ?? error.message);
       return;
     }
 
-    router.push("/");
+    router.push(redirectUrl);
     router.refresh();
   }
 
-  /** Creates a Clerk sign-up and sends its email verification code. */
+  /** Creates a fresh Clerk sign-up and sends its email verification code. */
   async function handleSignUp(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSubmitting) {
+      return;
+    }
     setErrorMessage(null);
+    setResendMessage(null);
 
     const formData = new FormData(event.currentTarget);
     const emailAddress = formData.get("emailAddress")?.toString() ?? "";
@@ -48,12 +104,13 @@ export default function Signup() {
     }
 
     if (signUp.status === "complete") {
+      setStep("finalize");
       await finalizeSignUp();
       return;
     }
 
     if (!signUp.unverifiedFields.includes("email_address")) {
-      setErrorMessage("Additional account details are required to sign up.");
+      setErrorMessage(getMissingRequirementsMessage());
       return;
     }
 
@@ -66,13 +123,17 @@ export default function Signup() {
       return;
     }
 
-    setAwaitingVerification(true);
+    setStep("verification");
   }
 
-  /** Verifies the emailed code and finalizes the resulting session. */
+  /** Verifies the emailed code, then finalizes only a complete sign-up. */
   async function handleVerification(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSubmitting) {
+      return;
+    }
     setErrorMessage(null);
+    setResendMessage(null);
 
     const formData = new FormData(event.currentTarget);
     const code = formData.get("code")?.toString() ?? "";
@@ -84,26 +145,60 @@ export default function Signup() {
     }
 
     if (signUp.status !== "complete") {
-      setErrorMessage("Email verification is not complete yet.");
+      setErrorMessage(getMissingRequirementsMessage());
       return;
     }
 
+    // The email code is consumed now. A finalize failure moves to a dedicated
+    // retry step so the code is never submitted a second time.
+    setStep("finalize");
     await finalizeSignUp();
   }
 
-  /**
-   * Hands the sign-up off to a social provider.
-   *
-   * `sso()` navigates away on success, so the only path back into this
-   * component is the error one. `redirectCallbackUrl` returns the user here
-   * when the provider could not produce a session on its own.
-   */
+  /** Sends a fresh code for the active sign-up attempt. */
+  async function handleResendCode() {
+    if (isSubmitting) {
+      return;
+    }
+    setErrorMessage(null);
+    setResendMessage(null);
+
+    const { error } = await signUp.verifications.sendEmailCode();
+    if (error) {
+      setErrorMessage(error.longMessage ?? error.message);
+      return;
+    }
+
+    setResendMessage("A new verification code was sent.");
+  }
+
+  /** Clears the active attempt so the next submit runs a fresh create call. */
+  async function handleDifferentEmail() {
+    if (isSubmitting) {
+      return;
+    }
+    setErrorMessage(null);
+    setResendMessage(null);
+
+    const { error } = await signUp.reset();
+    if (error) {
+      setErrorMessage(error.longMessage ?? error.message);
+      return;
+    }
+
+    setStep("form");
+  }
+
+  /** Hands sign-up off to a social provider while preserving the deep link. */
   async function handleOAuth(strategy: AuthOAuthStrategy) {
+    if (isSubmitting) {
+      return;
+    }
     setErrorMessage(null);
 
     const { error } = await signUp.sso({
-      redirectCallbackUrl: "/sign-up",
-      redirectUrl: "/",
+      redirectCallbackUrl: signUpCallbackUrl,
+      redirectUrl,
       strategy,
     });
 
@@ -112,7 +207,48 @@ export default function Signup() {
     }
   }
 
-  if (awaitingVerification) {
+  if (step === "finalize") {
+    return (
+      <div className="flex flex-col gap-8">
+        <div className="flex flex-col gap-2">
+          <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+            Account verified
+          </p>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Finish creating your account
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Your email is verified. Retry finishing the account without reusing
+            the verification code.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Already have an account?{" "}
+            <Link
+              className="font-medium text-primary underline underline-offset-4 transition-colors duration-200 ease-organic hover:text-primary/80 motion-reduce:transition-none"
+              href={signInUrl}
+            >
+              Sign in
+            </Link>
+          </p>
+        </div>
+        {errorMessage ? (
+          <div role="alert">
+            <FormMessage message={{ error: errorMessage }} />
+          </div>
+        ) : null}
+        <Button
+          className="w-full"
+          disabled={isSubmitting}
+          onClick={finalizeSignUp}
+          type="button"
+        >
+          {isSubmitting ? "Finishing..." : "Retry finishing sign up"}
+        </Button>
+      </div>
+    );
+  }
+
+  if (step === "verification") {
     return (
       <div className="flex flex-col gap-8">
         <div className="flex flex-col gap-2">
@@ -125,6 +261,15 @@ export default function Signup() {
           <p className="text-sm text-muted-foreground">
             We sent a code to your email address. Enter it below to finish
             setting up your account.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Already have an account?{" "}
+            <Link
+              className="font-medium text-primary underline underline-offset-4 transition-colors duration-200 ease-organic hover:text-primary/80 motion-reduce:transition-none"
+              href={signInUrl}
+            >
+              Sign in
+            </Link>
           </p>
         </div>
 
@@ -145,10 +290,34 @@ export default function Signup() {
               <FormMessage message={{ error: errorMessage }} />
             </div>
           ) : null}
+          {resendMessage ? (
+            <div role="status">
+              <FormMessage message={{ success: resendMessage }} />
+            </div>
+          ) : null}
           <Button className="w-full" disabled={isSubmitting} type="submit">
             {isSubmitting ? "Verifying..." : "Verify email"}
           </Button>
         </form>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <button
+            className="text-sm font-medium text-primary underline underline-offset-4 transition-colors duration-200 ease-organic hover:text-primary/80 motion-reduce:transition-none"
+            disabled={isSubmitting}
+            onClick={handleResendCode}
+            type="button"
+          >
+            Resend code
+          </button>
+          <button
+            className="text-sm font-medium text-muted-foreground underline underline-offset-4 transition-colors duration-200 ease-organic hover:text-foreground motion-reduce:transition-none"
+            disabled={isSubmitting}
+            onClick={handleDifferentEmail}
+            type="button"
+          >
+            Use a different email
+          </button>
+        </div>
       </div>
     );
   }
@@ -166,7 +335,7 @@ export default function Signup() {
           Already have an account?{" "}
           <Link
             className="font-medium text-primary underline underline-offset-4 transition-colors duration-200 ease-organic hover:text-primary/80 motion-reduce:transition-none"
-            href="/sign-in"
+            href={signInUrl}
           >
             Sign in
           </Link>
@@ -215,3 +384,5 @@ export default function Signup() {
     </div>
   );
 }
+
+export { Signup as default };

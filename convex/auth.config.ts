@@ -1,18 +1,14 @@
 /**
  * Connects Convex to Clerk's JWT issuer.
  *
- * Keyless development has no dashboard configuration: Clerk writes its
- * frontend API URL (which also acts as the issuer) to .env.local when it
- * provisions. The orchestrator supplies that value here; P9 adds production
- * configuration.
+ * Keyless/local runs have no issuer configured, so Convex auth remains
+ * inactive and every `requireUser` call rejects. Set the issuer in the Convex
+ * deployment environment when the Clerk instance is claimed in P9.
  */
+const domain = process.env.CLERK_JWT_ISSUER_DOMAIN;
+
 const authConfig = {
-  providers: [
-    {
-      domain: process.env.CLERK_JWT_ISSUER_DOMAIN,
-      applicationID: "convex",
-    },
-  ],
+  providers: domain ? [{ domain, applicationID: "convex" }] : [],
 };
 
 export default authConfig;

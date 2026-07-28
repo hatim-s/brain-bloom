@@ -20,13 +20,14 @@ import { Typography } from "./ui/typography";
  */
 export function Header({ mindmap }: { mindmap: MindmapDB }) {
   const { signOut } = useClerk();
-  const { user } = useUser();
+  const { isLoaded, user } = useUser();
   const { open } = useSidebar();
-  const identity =
-    user?.primaryEmailAddress?.emailAddress ?? user?.fullName ?? "Account";
+  const identity = isLoaded
+    ? (user?.primaryEmailAddress?.emailAddress ?? user?.fullName ?? null)
+    : null;
   // A letter, not an avatar image: the header is a hairline-and-type surface,
   // and a remote photo would be the only bitmap on it.
-  const initial = identity.slice(0, 1).toUpperCase();
+  const initial = identity?.slice(0, 1).toUpperCase();
 
   return (
     <header
@@ -52,21 +53,40 @@ export function Header({ mindmap }: { mindmap: MindmapDB }) {
       <Typography className="text-sm font-medium" variant="p">
         {mindmap.name}
       </Typography>
-      {/* 68px of right padding clears the floating theme switcher (36px wide,
-          24px from the viewport edge) plus one gap. */}
-      <div className="ml-auto flex min-w-0 items-center gap-2 pr-[68px]">
-        <span
-          aria-hidden="true"
-          className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line-strong bg-secondary font-mono text-[11px] font-medium text-secondary-foreground"
-        >
-          {initial}
-        </span>
-        <span
-          className="max-w-[22ch] truncate text-sm text-muted-foreground"
-          title={identity}
-        >
-          {identity}
-        </span>
+      {/* This shares --theme-switcher-inset with ThemeSwitcher; its own 36px
+          width and an 8px gap make the remaining 2.75rem of clearance. */}
+      <div className="ml-auto flex min-w-0 items-center gap-2 pr-[calc(var(--theme-switcher-inset)+2.75rem)]">
+        {identity ? (
+          <>
+            <span
+              aria-hidden="true"
+              className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line-strong bg-secondary font-mono text-[11px] font-medium text-secondary-foreground"
+            >
+              {initial}
+            </span>
+            <span
+              className="max-w-[22ch] truncate text-sm text-muted-foreground"
+              title={identity}
+            >
+              {identity}
+            </span>
+          </>
+        ) : (
+          <span
+            aria-label="Loading account"
+            className="flex items-center gap-2"
+            role="status"
+          >
+            <span
+              aria-hidden="true"
+              className="size-7 shrink-0 rounded-full border border-border bg-muted"
+            />
+            <span
+              aria-hidden="true"
+              className="h-3.5 w-20 rounded-sm bg-muted"
+            />
+          </span>
+        )}
         <Separator orientation="vertical" className="mx-1 h-4 bg-border" />
         <Button
           className="text-muted-foreground hover:text-foreground"
