@@ -1,15 +1,17 @@
-import { graphlib } from "@dagrejs/dagre";
+import { EdgeLabel, GraphLabel, graphlib, NodeLabel } from "@dagrejs/dagre";
 import { ReactFlowProps } from "@xyflow/react";
 
 import { MindmapDB } from "@/types/Mindmap";
 
 import { FlowEdge, FlowNode, MindmapNode, NodeTypes } from "../types";
 
+type DagreGraph = graphlib.Graph<GraphLabel, NodeLabel, EdgeLabel>;
+
 // todo: add documentation for the context
 export type MindmapFlowContext = {
   layout: {
-    leftGraph: graphlib.Graph<object>;
-    rightGraph: graphlib.Graph<object>;
+    leftGraph: DagreGraph;
+    rightGraph: DagreGraph;
   };
   nodes: FlowNode[];
   edges: FlowEdge[];

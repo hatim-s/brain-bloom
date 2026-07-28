@@ -1,4 +1,4 @@
-import { graphlib } from "@dagrejs/dagre";
+import { EdgeLabel, GraphLabel, graphlib, NodeLabel } from "@dagrejs/dagre";
 import { Dispatch, SetStateAction, useCallback, useRef } from "react";
 
 import { ROOT_NODE_ID } from "../../const";
@@ -16,6 +16,8 @@ import { transformMindmapNodesToFlowNodesAndEdges } from "../../mindmap/mindmapN
 import { FlowEdge, FlowNode, MindmapNode, NodeTypes } from "../../types";
 import { MindmapFlowContext as MindmapFlowContextType } from "../types";
 
+type DagreGraph = graphlib.Graph<GraphLabel, NodeLabel, EdgeLabel>;
+
 type UseCreateMindmapActionsProps = {
   nodes: FlowNode[];
   edges: FlowEdge[];
@@ -25,8 +27,8 @@ type UseCreateMindmapActionsProps = {
   mindmapNodesMap: Record<string, MindmapNode>;
   setMindmapNodesMap: Dispatch<SetStateAction<Record<string, MindmapNode>>>;
   graphs: {
-    leftGraph: graphlib.Graph<object>;
-    rightGraph: graphlib.Graph<object>;
+    leftGraph: DagreGraph;
+    rightGraph: DagreGraph;
   };
 };
 
@@ -103,8 +105,8 @@ export function useCreateMindmapActions({
           return {
             ...node,
             position: {
-              x: newGraph.node(node.id).x - newRootNode.x,
-              y: newGraph.node(node.id).y - newRootNode.y,
+              x: newGraph.node(node.id).x! - newRootNode.x!,
+              y: newGraph.node(node.id).y! - newRootNode.y!,
             },
           };
         }
@@ -114,8 +116,8 @@ export function useCreateMindmapActions({
             ...node,
             // leave the position of the node in the old graph as is
             position: {
-              x: oldGraph.node(node.id).x - oldGraph.node(ROOT_NODE_ID).x,
-              y: oldGraph.node(node.id).y - oldGraph.node(ROOT_NODE_ID).y,
+              x: oldGraph.node(node.id).x! - oldGraph.node(ROOT_NODE_ID).x!,
+              y: oldGraph.node(node.id).y! - oldGraph.node(ROOT_NODE_ID).y!,
             },
           };
         }
@@ -124,8 +126,8 @@ export function useCreateMindmapActions({
           ...node,
           selected: node.id === parentNodeId, // when adding a node, the parentNode is the activeNode
           position: {
-            x: newGraph.node(node.id).x - newRootNode.x,
-            y: newGraph.node(node.id).y - newRootNode.y,
+            x: newGraph.node(node.id).x! - newRootNode.x!,
+            y: newGraph.node(node.id).y! - newRootNode.y!,
           },
         };
       });
