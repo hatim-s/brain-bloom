@@ -254,7 +254,7 @@ function LoginForm() {
               </div>
             ) : null}
             <Button className="w-full" disabled={isSubmitting} type="submit">
-              {isSubmitting ? "Sending code..." : "Send reset code"}
+              {isSubmitting ? "Sending code…" : "Send reset code"}
             </Button>
           </form>
         ) : null}
@@ -281,7 +281,7 @@ function LoginForm() {
               </div>
             ) : null}
             <Button className="w-full" disabled={isSubmitting} type="submit">
-              {isSubmitting ? "Verifying..." : "Verify code"}
+              {isSubmitting ? "Verifying…" : "Verify code"}
             </Button>
           </form>
         ) : null}
@@ -316,7 +316,7 @@ function LoginForm() {
               </div>
             ) : null}
             <Button className="w-full" disabled={isSubmitting} type="submit">
-              {isSubmitting ? "Saving password..." : "Save new password"}
+              {isSubmitting ? "Saving password…" : "Save new password"}
             </Button>
           </form>
         ) : null}
@@ -395,7 +395,7 @@ function LoginForm() {
           </div>
         ) : null}
         <Button className="w-full" disabled={isSubmitting} type="submit">
-          {isSubmitting ? "Signing in..." : "Sign in"}
+          {isSubmitting ? "Signing in…" : "Sign in"}
         </Button>
       </form>
     </div>

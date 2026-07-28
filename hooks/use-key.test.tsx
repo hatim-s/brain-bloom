@@ -79,6 +79,121 @@ describe("useKey", () => {
     expect(callback).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      "button",
+      <button key="button" type="button">
+        Action
+      </button>,
+    ],
+    [
+      "link",
+      <a href="https://example.com" key="link">
+        Example
+      </a>,
+    ],
+    [
+      "select",
+      <select aria-label="Map" key="select">
+        <option>One</option>
+      </select>,
+    ],
+    [
+      "menu",
+      <div key="menu" role="menu">
+        Menu
+      </div>,
+    ],
+    [
+      "menu item",
+      <div key="menuitem" role="menuitem">
+        Item
+      </div>,
+    ],
+    [
+      "radio menu item",
+      <div aria-checked="false" key="menuitemradio" role="menuitemradio">
+        Item
+      </div>,
+    ],
+    [
+      "switch",
+      <div aria-checked="false" key="switch" role="switch">
+        Sharing
+      </div>,
+    ],
+    [
+      "dialog",
+      <div key="dialog" role="dialog">
+        Editor
+      </div>,
+    ],
+    [
+      "Radix popper content",
+      <div data-radix-popper-content-wrapper="" key="radix">
+        Popover
+      </div>,
+    ],
+  ])("leaves a modifier-free binding native on a %s", (_label, element) => {
+    const callback = vi.fn();
+    const view = render(element);
+    const target = view.container.firstElementChild!;
+    renderHook(() => useKey("Enter", callback));
+
+    const event = dispatchKeyOn(target, { key: "Enter" });
+
+    expect(callback).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("guards content nested inside an interactive ancestor", () => {
+    const callback = vi.fn();
+    const view = render(
+      <button type="button">
+        <span>Action label</span>
+      </button>
+    );
+    const target = view.getByText("Action label");
+    renderHook(() => useKey("Enter", callback));
+
+    const event = dispatchKeyOn(target, { key: "Enter" });
+
+    expect(callback).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("allows an opted-in Escape binding from an input inside a dialog", () => {
+    const callback = vi.fn();
+    const view = render(
+      <div role="dialog">
+        <input aria-label="Title" />
+      </div>
+    );
+    const input = view.getByRole("textbox");
+    renderHook(() => useKey("Escape", callback, { allowWhenTyping: true }));
+
+    const event = dispatchKeyOn(input, { key: "Escape" });
+
+    expect(callback).toHaveBeenCalledOnce();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("bails when an upstream listener already prevented the event", () => {
+    const callback = vi.fn();
+    renderHook(() => useKey("k", callback));
+    const event = new KeyboardEvent("keydown", {
+      cancelable: true,
+      key: "k",
+    });
+    event.preventDefault();
+
+    act(() => {
+      window.dispatchEvent(event);
+    });
+
+    expect(callback).not.toHaveBeenCalled();
+  });
+
   it("does not fire a plain binding when shift is held", () => {
     const callback = vi.fn();
     renderHook(() => useKey("k", callback));
@@ -148,14 +263,19 @@ function dispatchKey(init: KeyboardEventInit): void {
 }
 
 /** Dispatches a bubbling keydown from an element so window sees its real target. */
-function dispatchKeyOn(target: Element, init: KeyboardEventInit): void {
-  act(() => {
-    target.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        ...init,
-        bubbles: true,
-        cancelable: true,
-      })
-    );
+function dispatchKeyOn(
+  target: Element,
+  init: KeyboardEventInit
+): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    ...init,
+    bubbles: true,
+    cancelable: true,
   });
+
+  act(() => {
+    target.dispatchEvent(event);
+  });
+
+  return event;
 }

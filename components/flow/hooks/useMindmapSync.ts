@@ -159,12 +159,17 @@ function useMindmapSync(): void {
       try {
         for (const run of groupPendingOpsBySource(batch.ops)) {
           try {
-            await applyOps({
+            const result = await applyOps({
               mindmapId: store.getState().mindmapDB._id,
               ops: toWireOps(run.ops),
               description: describePendingOps(run.ops),
               source: run.source,
             });
+
+            if (isDisposed) return false;
+            store
+              .getState()
+              .actions.commitFlushedOps(run.count, result.updatedAt);
           } catch (error) {
             if (isDisposed) return false;
 
@@ -193,9 +198,6 @@ function useMindmapSync(): void {
             return false;
           }
 
-          if (isDisposed) return false;
-
-          store.getState().actions.commitFlushedOps(run.count);
           consecutiveFailures = 0;
         }
 
@@ -214,6 +216,10 @@ function useMindmapSync(): void {
           state.actions.markSyncState("dirty");
           schedulePending();
         }
+
+        // A live result observed while this batch was in flight was held back
+        // so local state stayed ahead. Apply it only after the queue drains.
+        store.getState().actions.applyPendingServerState();
 
         return !state.desyncedSinceRejection;
       } finally {

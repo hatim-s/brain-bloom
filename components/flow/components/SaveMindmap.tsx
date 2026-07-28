@@ -41,6 +41,8 @@ const PILL_CLASS_NAME = [
 /**
  * Ambient autosave status with an explicit retry control only after failure.
  *
+ * Positioning belongs to the canvas right rail, not to this pill, so the share
+ * control and the status stay on one row however long the error copy runs.
  * The live-region wrapper announces the concise state copy. The error button
  * remains focusable so Radix exposes the server detail to keyboard users too,
  * without making that described trigger a second status live region.
@@ -58,11 +60,7 @@ const SaveMindmap = () => {
     : TRANSIENT_ERROR_COPY;
 
   return (
-    <div
-      className="absolute top-16 right-[var(--theme-switcher-inset)] z-10"
-      data-sync-state={isError ? "error" : syncState}
-      role="status"
-    >
+    <div data-sync-state={isError ? "error" : syncState} role="status">
       {isError ? (
         <Tooltip>
           <TooltipTrigger asChild>

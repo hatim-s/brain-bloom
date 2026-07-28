@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import * as React from "react";
 
@@ -24,13 +25,6 @@ import { TypographyWithTooltip } from "../ui/typography-with-tooltip";
 import { NewMindmapButton } from "./new-mindmap-btn";
 
 /**
- * Navigation panel listing every mindmap the signed-in user owns.
- *
- * A floating panel laid over the canvas: card surface, hairline boundary, no
- * elevation. Identity is carried by the wordmark and the moss rail on the
- * active row, not by an icon.
- */
-/**
  * Live wrapper: reads the route param to highlight the active map. Kept apart
  * from FloatingSidebar so the Suspense fallback can render the same shell
  * without touching request-time data (useParams breaks static prerender).
@@ -46,6 +40,13 @@ function ActiveFloatingSidebar({
   );
 }
 
+/**
+ * Navigation panel listing every map the signed-in user owns.
+ *
+ * A floating panel laid over the canvas: card surface, hairline boundary, no
+ * elevation. Identity is carried by the wordmark and the moss rail on the
+ * active row, not by an icon.
+ */
 export function FloatingSidebar({
   mindmaps,
   activePublicId,
@@ -82,9 +83,7 @@ export function FloatingSidebar({
 
       <SidebarContent>
         <SidebarGroup className="px-3 py-3">
-          <SidebarGroupLabel className="px-2.5">
-            Your mindmaps
-          </SidebarGroupLabel>
+          <SidebarGroupLabel className="px-2.5">Your maps</SidebarGroupLabel>
           <SidebarMenu>
             <SidebarMenuItem>
               {mindmaps.length ? (
@@ -95,14 +94,16 @@ export function FloatingSidebar({
                         asChild
                         isActive={mindmap.publicId === publicId}
                       >
-                        <a href={`/maps/${mindmap.publicId}`}>
+                        {/* Client navigation, so switching maps keeps this
+                            panel mounted instead of reloading the document. */}
+                        <Link href={`/maps/${mindmap.publicId}`}>
                           <TypographyWithTooltip
                             className="text-sm"
                             variant="p"
                           >
                             {mindmap.name}
                           </TypographyWithTooltip>
-                        </a>
+                        </Link>
                       </SidebarMenuSubButton>
                     </SidebarMenuSubItem>
                   ))}
@@ -112,7 +113,7 @@ export function FloatingSidebar({
                   className="px-2.5 py-2 text-sm text-muted-foreground"
                   variant="p"
                 >
-                  Nothing here yet. Start one and it will show up in this list.
+                  Nothing growing yet. Start a map and it will show up here.
                 </Typography>
               )}
             </SidebarMenuItem>

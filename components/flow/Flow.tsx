@@ -20,16 +20,10 @@ import { cn } from "@/lib/utils";
 import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 import { Stack } from "../ui/stack";
 import { SaveMindmap } from "./components/SaveMindmap";
+import { ShareMindmap } from "./components/ShareMindmap";
+import { useMindmapLiveSync } from "./hooks/useMindmapLiveSync";
 import { useMindmapNavigation } from "./hooks/useMindmapNavigation";
 import { useMindmapSync } from "./hooks/useMindmapSync";
-import { INITIAL_EDGES, INITIAL_NODES } from "./initialNodesAndEdges";
-import { createFlowEdgeFromPartialBaseFlowEdge } from "./mindmap/createEdge";
-import { createBaseFlowNodeFromPartialBaseFlowNode } from "./mindmap/createNode";
-import {
-  PartialBaseFlowEdge,
-  PartialBaseFlowNode,
-  transformConvexNodesToFlowNodesAndEdges,
-} from "./mindmap/mindmapNodesToFlowNodes";
 import { LeftNode, RightNode, RootNode } from "./nodes";
 import {
   MindmapFlowProvider,
@@ -52,9 +46,10 @@ const nodeTypes: XYNodeTypes = {
   right: RightNode,
 };
 
-/** Mounts autosave only for an editable canvas. */
-function MindmapAutosave() {
+/** Mounts outbound autosave and inbound live reconciliation for an owner. */
+function MindmapSynchronization() {
   useMindmapSync();
+  useMindmapLiveSync();
   return null;
 }
 
@@ -65,6 +60,7 @@ export function MindmapFlow() {
   const mindmapNodesMap = useMindmapFlow((state) => state.mindmapNodesMap);
   const leveledNodes = useMindmapFlow((state) => state.leveledNodes);
   const activeNode = useMindmapFlow((state) => state.activeNode);
+  const reseedCount = useMindmapFlow((state) => state.reseedCount);
   const setActiveNode = useMindmapFlow((state) => state.setActiveNode);
   const selectedNode = useMindmapFlow((state) => state.selectedNode);
   const aiEditNode = useMindmapFlow((state) => state.aiEditNode);
@@ -156,6 +152,12 @@ export function MindmapFlow() {
 
   const reactflowInstance = useReactFlow();
 
+  // Server reseeds replace every XYFlow node object, including its transient
+  // selected flag. Forget the prior dispatch so the active node is reselected.
+  useEffect(() => {
+    prevActiveNode.current = null;
+  }, [reseedCount]);
+
   // sync active node with the flow
   useEffect(() => {
     if (activeNode) {
@@ -203,14 +205,20 @@ export function MindmapFlow() {
           selected: false,
         },
       ]);
-  }, [activeNode, handleNodeChange, reactflowInstance]);
+  }, [activeNode, handleNodeChange, reactflowInstance, reseedCount]);
 
   return (
     <Stack className="h-full w-full flex-1">
       {readOnly ? null : (
         <>
-          <MindmapAutosave />
-          <SaveMindmap />
+          <MindmapSynchronization />
+          {/* One right rail below the floating header: sharing is an action,
+              the save pill is ambient status, and they share a row so neither
+              can drift as the pill's copy changes length. */}
+          <div className="absolute top-16 right-[var(--theme-switcher-inset)] z-10 flex items-center gap-2">
+            <ShareMindmap />
+            <SaveMindmap />
+          </div>
         </>
       )}
       <ReactFlow
@@ -258,24 +266,6 @@ export default function Flow({
   nodes: MindmapNodeProjection[];
   readOnly?: boolean;
 }) {
-  const initialGraph = useMemo(
-    () => transformConvexNodesToFlowNodesAndEdges(nodes),
-    [nodes]
-  );
-  const initialNodes = useMemo(
-    () =>
-      initialGraph.nodes.map((node) =>
-        createBaseFlowNodeFromPartialBaseFlowNode(node as PartialBaseFlowNode)
-      ),
-    [initialGraph.nodes]
-  );
-
-  const initialEdges = useMemo(() => {
-    return initialGraph.edges.map((edge) =>
-      createFlowEdgeFromPartialBaseFlowEdge(edge as PartialBaseFlowEdge)
-    );
-  }, [initialGraph.edges]);
-
   return (
     <ReactFlowProvider>
       {/* This key remounts the prop-seeded store when client navigation loads another mindmap. */}
@@ -283,8 +273,7 @@ export default function Flow({
         key={mindmapDB._id}
         readOnly={readOnly}
         mindmapDB={mindmapDB}
-        initialNodes={initialNodes.length ? initialNodes : INITIAL_NODES}
-        initialEdges={initialEdges.length ? initialEdges : INITIAL_EDGES}
+        serverNodes={nodes}
       >
         {/* Only an owner can edit, so only an owner gets the AI panel; a
             read-only canvas keeps the full width it had before P8. */}

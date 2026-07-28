@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,6 +7,12 @@ import { Stack } from "@/components/ui/stack";
 import { Textarea } from "@/components/ui/textarea";
 
 import { useMindmapFlow } from "../../providers/MindmapFlowProvider";
+
+type NodeFormData = {
+  title: string;
+  description: string;
+  link: string;
+};
 
 function NodeDataInputForm({
   title: _title,
@@ -19,12 +25,66 @@ function NodeDataInputForm({
   link?: string;
   nodeId: string;
 }) {
-  const [title, setTitle] = useState(_title);
-  const [description, setDescription] = useState(_description ?? "");
-  const [link, setLink] = useState(_link ?? "");
+  const sourceData = useMemo<NodeFormData>(
+    () => ({
+      title: _title,
+      description: _description ?? "",
+      link: _link ?? "",
+    }),
+    [_description, _link, _title]
+  );
+  const seededDataRef = useRef<NodeFormData>(sourceData);
+  const [title, setTitle] = useState(sourceData.title);
+  const [description, setDescription] = useState(sourceData.description);
+  const [link, setLink] = useState(sourceData.link);
+  const [conflictedFields, setConflictedFields] = useState<
+    Set<keyof NodeFormData>
+  >(new Set());
 
   const setSelectedNode = useMindmapFlow((state) => state.setSelectedNode);
   const onUpdateNode = useMindmapFlow((state) => state.actions.onUpdateNode);
+
+  useEffect(() => {
+    const seededData = seededDataRef.current;
+    const currentData = { title, description, link };
+    const nextConflictedFields = new Set(conflictedFields);
+    let conflictsChanged = false;
+
+    /**
+     * Advances one field's server baseline without overwriting local work.
+     */
+    function mergeField(
+      field: keyof NodeFormData,
+      updateValue: (value: string) => void
+    ): void {
+      if (sourceData[field] === seededData[field]) {
+        return;
+      }
+
+      if (currentData[field] === seededData[field]) {
+        updateValue(sourceData[field]);
+        if (nextConflictedFields.delete(field)) {
+          conflictsChanged = true;
+        }
+      } else if (currentData[field] !== sourceData[field]) {
+        if (!nextConflictedFields.has(field)) {
+          nextConflictedFields.add(field);
+          conflictsChanged = true;
+        }
+      } else if (nextConflictedFields.delete(field)) {
+        conflictsChanged = true;
+      }
+    }
+
+    mergeField("title", setTitle);
+    mergeField("description", setDescription);
+    mergeField("link", setLink);
+    seededDataRef.current = sourceData;
+
+    if (conflictsChanged) {
+      setConflictedFields(nextConflictedFields);
+    }
+  }, [conflictedFields, description, link, sourceData, title]);
 
   const handleSave = useCallback(() => {
     setSelectedNode(null);
@@ -117,12 +177,20 @@ function NodeDataInputForm({
         />
       </Stack>
 
-      <Button onClick={handleSave}>Save</Button>
+      {conflictedFields.size > 0 ? (
+        <p className="text-xs text-muted-foreground" role="status">
+          This node changed elsewhere — saving will overwrite.
+        </p>
+      ) : null}
+
+      <Button onClick={handleSave} type="button">
+        Save
+      </Button>
     </form>
   );
 }
 
-export default function NodeDataInput() {
+function NodeDataInput() {
   const selectedNode = useMindmapFlow((state) => state.selectedNode);
   const nodesMap = useMindmapFlow((state) => state.nodesMap);
 
@@ -136,9 +204,12 @@ export default function NodeDataInput() {
       <NodeDataInputForm
         title={node.data.title}
         description={node.data.description}
+        key={node.id}
         link={node.data.link}
         nodeId={node.id}
       />
     </Stack>
   );
 }
+
+export { NodeDataInput };

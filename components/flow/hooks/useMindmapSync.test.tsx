@@ -35,7 +35,11 @@ afterEach(() => {
 
 describe("useMindmapSync", () => {
   it("flushes one coalesced batch after a burst's trailing debounce", async () => {
-    mutationMock.mockResolvedValue({ operationId: "operation-1", seq: 1 });
+    mutationMock.mockResolvedValue({
+      operationId: "operation-1",
+      seq: 1,
+      updatedAt: 2,
+    });
     renderSyncHarness();
 
     act(() => {
@@ -78,10 +82,15 @@ describe("useMindmapSync", () => {
     const firstMutation = createDeferred<{
       operationId: string;
       seq: number;
+      updatedAt: number;
     }>();
     mutationMock
       .mockReturnValueOnce(firstMutation.promise)
-      .mockResolvedValueOnce({ operationId: "operation-2", seq: 2 });
+      .mockResolvedValueOnce({
+        operationId: "operation-2",
+        seq: 2,
+        updatedAt: 3,
+      });
     renderSyncHarness();
 
     act(() => {
@@ -107,7 +116,11 @@ describe("useMindmapSync", () => {
     expect(mutationMock).toHaveBeenCalledOnce();
 
     await act(async () => {
-      firstMutation.resolve({ operationId: "operation-1", seq: 1 });
+      firstMutation.resolve({
+        operationId: "operation-1",
+        seq: 1,
+        updatedAt: 2,
+      });
       await firstMutation.promise;
     });
 
@@ -130,7 +143,11 @@ describe("useMindmapSync", () => {
   });
 
   it("uses one cross-instance mutex for duplicate hook instances", async () => {
-    mutationMock.mockResolvedValue({ operationId: "operation-1", seq: 1 });
+    mutationMock.mockResolvedValue({
+      operationId: "operation-1",
+      seq: 1,
+      updatedAt: 2,
+    });
     renderSyncHarness(2);
 
     act(() => {
@@ -148,6 +165,7 @@ describe("useMindmapSync", () => {
     const pendingMutation = createDeferred<{
       operationId: string;
       seq: number;
+      updatedAt: number;
     }>();
     mutationMock.mockReturnValue(pendingMutation.promise);
     const rendered = renderSyncHarness();
@@ -164,7 +182,11 @@ describe("useMindmapSync", () => {
     rendered.unmount();
 
     await act(async () => {
-      pendingMutation.resolve({ operationId: "operation-1", seq: 1 });
+      pendingMutation.resolve({
+        operationId: "operation-1",
+        seq: 1,
+        updatedAt: 2,
+      });
       await pendingMutation.promise;
     });
 
@@ -235,7 +257,11 @@ describe("useMindmapSync", () => {
   it("retrySync bypasses backoff and flushes immediately", async () => {
     mutationMock
       .mockRejectedValueOnce(new Error("Offline"))
-      .mockResolvedValueOnce({ operationId: "operation-2", seq: 2 });
+      .mockResolvedValueOnce({
+        operationId: "operation-2",
+        seq: 2,
+        updatedAt: 2,
+      });
     renderSyncHarness();
 
     act(() => {
@@ -256,7 +282,11 @@ describe("useMindmapSync", () => {
   });
 
   it("flushNow drains a dirty queue and reports whether it is safe to navigate", async () => {
-    mutationMock.mockResolvedValue({ operationId: "operation-1", seq: 1 });
+    mutationMock.mockResolvedValue({
+      operationId: "operation-1",
+      seq: 1,
+      updatedAt: 2,
+    });
     renderSyncHarness();
 
     act(() => {
@@ -277,7 +307,11 @@ describe("useMindmapSync", () => {
   });
 
   it("restores persisted pages from queue truth and re-arms saving", async () => {
-    mutationMock.mockResolvedValue({ operationId: "operation-1", seq: 1 });
+    mutationMock.mockResolvedValue({
+      operationId: "operation-1",
+      seq: 1,
+      updatedAt: 2,
+    });
     renderSyncHarness();
 
     act(() => {
@@ -293,7 +327,11 @@ describe("useMindmapSync", () => {
   });
 
   it("fires a final peeked mutation when unmounting with a dirty queue", async () => {
-    mutationMock.mockResolvedValue({ operationId: "operation-1", seq: 1 });
+    mutationMock.mockResolvedValue({
+      operationId: "operation-1",
+      seq: 1,
+      updatedAt: 2,
+    });
     const rendered = renderSyncHarness();
 
     act(() => {
@@ -321,8 +359,16 @@ describe("useMindmapSync", () => {
 
   it("preserves order while splitting consecutive user and AI runs", async () => {
     mutationMock
-      .mockResolvedValueOnce({ operationId: "operation-1", seq: 1 })
-      .mockResolvedValueOnce({ operationId: "operation-2", seq: 2 });
+      .mockResolvedValueOnce({
+        operationId: "operation-1",
+        seq: 1,
+        updatedAt: 2,
+      })
+      .mockResolvedValueOnce({
+        operationId: "operation-2",
+        seq: 2,
+        updatedAt: 3,
+      });
     renderSyncHarness();
 
     act(() => {

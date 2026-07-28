@@ -1,14 +1,22 @@
 import { EdgeLabel, GraphLabel, graphlib, NodeLabel } from "@dagrejs/dagre";
 import { ReactFlowProps } from "@xyflow/react";
 
-import { MindmapDB } from "@/types/Mindmap";
+import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 
 import { NodeOp, PendingOpSource } from "../mindmap/pendingOps";
 import { FlowEdge, FlowNode, MindmapNode, NodeTypes } from "../types";
 
 type DagreGraph = graphlib.Graph<GraphLabel, NodeLabel, EdgeLabel>;
 
-// todo: add documentation for the context
+/** A versioned server graph waiting for the local operation queue to drain. */
+type ServerMindmapState = {
+  name: string;
+  nodes: MindmapNodeProjection[];
+  updatedAt: number;
+  visibility: MindmapDB["visibility"];
+};
+
+/** All mutable and derived state owned by one canvas provider. */
 type MindmapFlowContext = {
   readOnly: boolean;
   layout: {
@@ -40,8 +48,13 @@ type MindmapFlowContext = {
    */
   aiTouchedNodeIds: string[];
   setAiTouchedNodeIds: (nodeIds: string[]) => void;
+  pendingAiTouchedNodeIds: string[];
 
   mindmapDB: MindmapDB;
+  acknowledgedServerVersion: number;
+  reseedCount: number;
+  seededUpdatedAt: number;
+  pendingServerState: ServerMindmapState | null;
   pendingOps: NodeOp[];
   flushedWatermark: number;
   lastSyncError: string | null;
@@ -65,11 +78,18 @@ type MindmapFlowContext = {
       data: FlowNode["data"],
       options?: { source?: PendingOpSource }
     ) => void;
+    reseedFromServer: (serverState: ServerMindmapState) => boolean;
+    reconcileServerState: (serverState: ServerMindmapState) => void;
+    applyPendingServerState: () => boolean;
+    setAiTouchedNodeIdsAfterReseed: (
+      nodeIds: string[],
+      seededUpdatedAtAtTurnStart: number
+    ) => void;
     peekPendingOps: () => {
       ops: NodeOp[];
       count: number;
     } | null;
-    commitFlushedOps: (count: number) => void;
+    commitFlushedOps: (count: number, acknowledgedUpdatedAt?: number) => void;
     releaseFlushedOps: () => void;
     retrySync: () => void;
     flushNow: () => Promise<boolean>;
@@ -82,4 +102,4 @@ type MindmapFlowContext = {
   };
 };
 
-export { type MindmapFlowContext };
+export { type MindmapFlowContext, type ServerMindmapState };

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation } from "convex/react";
-import { PanelRightClose, RotateCw, Sprout } from "lucide-react";
+import { PanelRightClose, Sprout } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -17,16 +17,25 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useEventCallback } from "@/hooks/use-event-callback";
 
-import { useMindmapFlow } from "../flow/providers/MindmapFlowProvider";
+import {
+  useMindmapFlow,
+  useMindmapStoreApi,
+} from "../flow/providers/MindmapFlowProvider";
 import { AiChatInput } from "./AiChatInput";
 import { AiMessage } from "./AiMessage";
-import {
-  collectTouchedNodeIds,
-  getToolParts,
-  getUndoOperationId,
-} from "./messages";
+import { collectTouchedNodeIds, getToolParts } from "./messages";
 import { SelectedNodeChip } from "./SelectedNodeChip";
-import { useSprigChat } from "./useSprigChat";
+import { ThreadSwitcher } from "./ThreadSwitcher";
+import { type SprigThreadSummary, useSprigChat } from "./useSprigChat";
+
+const AI_NOT_CONFIGURED_MESSAGE = "AI is not configured";
+
+/**
+ * Detects the route's known 503 body in the error text exposed by the AI SDK.
+ */
+function isAIConfigurationError(error: Error | undefined): boolean {
+  return error?.message.includes(AI_NOT_CONFIGURED_MESSAGE) ?? false;
+}
 
 /**
  * The Sprig conversation surface.
@@ -35,48 +44,38 @@ import { useSprigChat } from "./useSprigChat";
  * on the left, mono for anything the machine says about itself, and the bloom
  * accent reserved for the single moment the model is actually working.
  */
-function AiPanel({
-  onCollapse,
-  onReload = () => window.location.reload(),
-}: {
-  onCollapse: () => void;
-  onReload?: () => void;
-}) {
+function AiPanel({ onCollapse }: { onCollapse: () => void }) {
   const router = useRouter();
+  const store = useMindmapStoreApi();
   const mindmapId = useMindmapFlow((state) => state.mindmapDB._id);
   const activeNode = useMindmapFlow((state) => state.activeNode);
   const mindmapNodesMap = useMindmapFlow((state) => state.mindmapNodesMap);
-  const setAiTouchedNodeIds = useMindmapFlow(
-    (state) => state.setAiTouchedNodeIds
-  );
   const pendingOpsLength = useMindmapFlow((state) => state.pendingOps.length);
   const syncState = useMindmapFlow((state) => state.syncState);
   const flushNow = useMindmapFlow((state) => state.actions.flushNow);
   const undoTo = useMutation(api.ops.undoTo);
 
-  // The canvas store is seeded from server props at mount and has no live
-  // subscription, so a server-side edit is announced rather than applied.
-  const [isCanvasStale, setIsCanvasStale] = useState(false);
   const [dismissedNodeId, setDismissedNodeId] = useState<string | null>(null);
-  const [reloadError, setReloadError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const wasStreamingRef = useRef(false);
+  const aiTurnSeededUpdatedAtRef = useRef(store.getState().seededUpdatedAt);
 
   const ensureCanvasEditsSaved = useEventCallback(async () => {
     if (pendingOpsLength === 0 && syncState === "idle") {
-      setReloadError(null);
+      setRefreshError(null);
       return true;
     }
 
     const saved = await flushNow();
     if (saved) {
-      setReloadError(null);
+      setRefreshError(null);
       return true;
     }
 
     const message =
-      "Couldn't save your latest canvas edits — resolve saving before reloading.";
-    setReloadError(message);
+      "Couldn't save your latest canvas edits — resolve saving before refreshing.";
+    setRefreshError(message);
     setAnnouncement(message);
     return false;
   });
@@ -86,11 +85,12 @@ function AiPanel({
       const touchedNodeIds = collectTouchedNodeIds(message);
 
       if (touchedNodeIds.length > 0) {
-        setAiTouchedNodeIds(touchedNodeIds);
-      }
-
-      if (getUndoOperationId(message) !== null) {
-        setIsCanvasStale(true);
+        store
+          .getState()
+          .actions.setAiTouchedNodeIdsAfterReseed(
+            touchedNodeIds,
+            aiTurnSeededUpdatedAtRef.current
+          );
       }
 
       const renamedMindmap = getToolParts(message).some(
@@ -108,6 +108,7 @@ function AiPanel({
   );
 
   const chat = useSprigChat({ mindmapId, onTurnFinished: handleTurnFinished });
+  const hasAIConfigurationError = isAIConfigurationError(chat.error);
 
   const activeNodeTitle =
     activeNode === null
@@ -135,7 +136,11 @@ function AiPanel({
 
   useEffect(() => {
     if (chat.error !== undefined) {
-      setAnnouncement("Sprig could not finish that. Try again.");
+      setAnnouncement(
+        isAIConfigurationError(chat.error)
+          ? "AI is not configured"
+          : "Sprig could not finish that. Try again."
+      );
     }
   }, [chat.error]);
 
@@ -146,7 +151,6 @@ function AiPanel({
       }
 
       await undoTo({ operationId: operationId as Id<"operations"> });
-      setIsCanvasStale(true);
       setAnnouncement("Change undone");
 
       if (shouldRefresh && (await ensureCanvasEditsSaved())) {
@@ -156,13 +160,21 @@ function AiPanel({
     [ensureCanvasEditsSaved, router, undoTo]
   );
 
-  const handleSubmit = useEventCallback((text: string) =>
-    chat.sendPrompt(text, selectedNodeId)
-  );
+  const handleSubmit = useEventCallback((text: string) => {
+    aiTurnSeededUpdatedAtRef.current = store.getState().seededUpdatedAt;
+    return chat.sendPrompt(text, selectedNodeId);
+  });
 
-  const handleReload = useEventCallback(async () => {
-    if (await ensureCanvasEditsSaved()) {
-      onReload();
+  const handleRegenerate = useEventCallback(() => {
+    aiTurnSeededUpdatedAtRef.current = store.getState().seededUpdatedAt;
+    return chat.regenerate();
+  });
+
+  const handleSelectThread = useEventCallback((thread: SprigThreadSummary) => {
+    // The transcript is replaced without moving focus, so the switch has to be
+    // announced or a screen reader user gets no confirmation it happened.
+    if (chat.selectThread(thread._id)) {
+      setAnnouncement(`Opened conversation: ${thread.title}`);
     }
   });
 
@@ -183,26 +195,34 @@ function AiPanel({
         {chat.isStreaming ? (
           <span aria-hidden="true" className="sprig-bloom-dot" />
         ) : null}
-        <Button
-          className="ml-auto h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-          disabled={chat.isStreaming || chat.messages.length === 0}
-          onClick={chat.startNewConversation}
-          size="sm"
-          type="button"
-          variant="ghost"
-        >
-          New conversation
-        </Button>
-        <Button
-          aria-label="Collapse Sprig panel"
-          className="size-7 rounded-md text-muted-foreground hover:text-foreground"
-          onClick={onCollapse}
-          size="icon"
-          type="button"
-          variant="ghost"
-        >
-          <PanelRightClose aria-hidden="true" className="!size-4" />
-        </Button>
+        <div className="ml-auto flex items-center gap-1">
+          <ThreadSwitcher
+            activeThreadId={chat.activeThreadId}
+            isStreaming={chat.isStreaming}
+            onSelect={handleSelectThread}
+            threads={chat.threads}
+          />
+          <Button
+            className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+            disabled={chat.isStreaming || chat.messages.length === 0}
+            onClick={chat.startNewConversation}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            New conversation
+          </Button>
+          <Button
+            aria-label="Collapse Sprig panel"
+            className="size-7 rounded-md text-muted-foreground hover:text-foreground"
+            onClick={onCollapse}
+            size="icon"
+            type="button"
+            variant="ghost"
+          >
+            <PanelRightClose aria-hidden="true" className="!size-4" />
+          </Button>
+        </div>
       </div>
 
       <Conversation className="min-h-0 flex-1" aria-label="Conversation">
@@ -233,7 +253,18 @@ function AiPanel({
       </Conversation>
 
       <div className="flex flex-col gap-2 border-t border-border p-3">
-        {chat.error === undefined ? null : (
+        {chat.error === undefined ? null : hasAIConfigurationError ? (
+          <div
+            className="rounded-md border border-line-strong bg-secondary px-2.5 py-2 text-sm text-muted-foreground"
+            role="status"
+          >
+            <p className="font-medium text-foreground">AI is not configured</p>
+            <p className="mt-1 text-xs leading-relaxed">
+              Set <code>ANTHROPIC_OAUTH_TOKEN</code> as described in{" "}
+              <code>docs/ENV.md</code>, then reload.
+            </p>
+          </div>
+        ) : (
           <div
             className="flex items-start gap-2 rounded-md border border-destructive px-2.5 py-2 text-sm font-medium text-destructive"
             role="alert"
@@ -243,7 +274,7 @@ function AiPanel({
             </span>
             <button
               className="font-medium underline underline-offset-2"
-              onClick={() => void chat.regenerate()}
+              onClick={() => void handleRegenerate()}
               type="button"
             >
               Try again
@@ -257,29 +288,12 @@ function AiPanel({
             </button>
           </div>
         )}
-        {reloadError ? (
+        {refreshError ? (
           <div
             className="rounded-md border border-destructive px-2.5 py-2 text-sm font-medium text-destructive"
             role="alert"
           >
-            {reloadError}
-          </div>
-        ) : null}
-        {isCanvasStale ? (
-          <div className="flex items-start gap-2 rounded-md border border-line-strong bg-secondary px-2.5 py-2 text-xs text-muted-foreground">
-            <span className="flex-1">
-              The map changed on the server. Reload to see it on the canvas.
-            </span>
-            <Button
-              className="h-6 gap-1 px-2 text-[11px]"
-              onClick={() => void handleReload()}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              <RotateCw aria-hidden="true" className="!size-3" />
-              Reload
-            </Button>
+            {refreshError}
           </div>
         ) : null}
         {isChipVisible ? (
@@ -299,4 +313,4 @@ function AiPanel({
   );
 }
 
-export { AiPanel };
+export { AiPanel, isAIConfigurationError };

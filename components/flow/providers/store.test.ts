@@ -3,7 +3,7 @@
 import { Edge } from "@xyflow/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { MindmapDB } from "@/types/Mindmap";
+import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 
 import { ROOT_NODE_ID } from "../const";
 import { initGraphs, initLayout } from "../layout/init";
@@ -263,6 +263,97 @@ describe("createMindmapStore", () => {
     expectDerivedStateInvariant(store.getState());
   });
 
+  it("reseeds every derived graph while preserving valid UI and sync state", () => {
+    const store = createFixtureStore();
+    const previousLayout = store.getState().layout;
+
+    store.getState().setActiveNode("l-child");
+    store.getState().setSelectedNode("r-child");
+    store.getState().setAiEditNode("l-child");
+    store.getState().setAiTouchedNodeIds(["l-child"]);
+    store
+      .getState()
+      .actions.onUpdateNode("r-child", { title: "Unsaved local edit" });
+    store.getState().actions.markSyncState("saving");
+
+    const reseeded = store.getState().actions.reseedFromServer({
+      name: "Server fixture",
+      nodes: createServerNodes(),
+      updatedAt: 2,
+      visibility: "shared",
+    });
+    const state = store.getState();
+
+    expect(reseeded).toBe(true);
+    expect(state.layout).not.toBe(previousLayout);
+    expect(state.layout.rightGraph.hasNode("r-server")).toBe(true);
+    expect(state.nodesMap["r-server"].data.title).toBe("Server child");
+    expect(state.mindmapNodesMap["root"].children.has("r-server")).toBe(true);
+    expect(state.activeNode).toBe("l-child");
+    expect(state.selectedNode).toBeNull();
+    expect(state.aiEditNode).toBe("l-child");
+    expect(state.aiTouchedNodeIds).toEqual(["l-child"]);
+    expect(state.pendingOps).toEqual([
+      {
+        kind: "update",
+        source: "user",
+        nodeId: "r-child",
+        patch: { title: "Unsaved local edit" },
+      },
+    ]);
+    expect(state.syncState).toBe("saving");
+    expect(state.mindmapDB.name).toBe("Server fixture");
+    expect(state.mindmapDB.visibility).toBe("shared");
+    expect(state.reseedCount).toBe(1);
+    expect(state.seededUpdatedAt).toBe(2);
+    expectDerivedStateInvariant(state);
+  });
+
+  it("does not reseed a read-only store", () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const store = createMindmapStore({
+      ...createStoreFixture(),
+      readOnly: true,
+    });
+    const previousNodes = store.getState().nodes;
+
+    const reseeded = store.getState().actions.reseedFromServer({
+      name: "Server fixture",
+      nodes: createServerNodes(),
+      updatedAt: 2,
+      visibility: "shared",
+    });
+
+    expect(reseeded).toBe(false);
+    expect(store.getState().nodes).toBe(previousNodes);
+    expect(store.getState().seededUpdatedAt).toBe(1);
+    expect(warning).toHaveBeenCalledWith(
+      "[MindmapFlowProvider] ignored reseedFromServer in read-only mode"
+    );
+    warning.mockRestore();
+  });
+
+  it("ignores a queued snapshot older than the acknowledged flush", () => {
+    const store = createFixtureStore();
+
+    store.getState().actions.onUpdateNode("r-child", { title: "Local edit" });
+    const batch = store.getState().actions.peekPendingOps()!;
+    store.getState().actions.reconcileServerState({
+      name: "Stale server fixture",
+      nodes: createServerNodes(),
+      updatedAt: 2,
+      visibility: "shared",
+    });
+
+    store.getState().actions.commitFlushedOps(batch.count, 3);
+
+    expect(store.getState().acknowledgedServerVersion).toBe(3);
+    expect(store.getState().pendingServerState).toBeNull();
+    expect(store.getState().actions.applyPendingServerState()).toBe(false);
+    expect(store.getState().mindmapDB.name).toBe("Store fixture");
+    expect(store.getState().mindmapDB.visibility).toBe("private");
+  });
+
   it("rejects mutation actions when seeded read-only", () => {
     const fixture = createStoreFixture();
     const store = createMindmapStore({ ...fixture, readOnly: true });
@@ -412,6 +503,33 @@ function createStoreFixture(): {
   };
 
   return { mindmapDB, initialNodes, initialEdges };
+}
+
+/** Creates a newer server projection with one retained and one created node. */
+function createServerNodes(): MindmapNodeProjection[] {
+  return [
+    {
+      nodeId: ROOT_NODE_ID,
+      parentId: null,
+      type: "root",
+      title: "Server root",
+      order: 0,
+    },
+    {
+      nodeId: "l-child",
+      parentId: ROOT_NODE_ID,
+      type: "left",
+      title: "Left child from server",
+      order: 0,
+    },
+    {
+      nodeId: "r-server",
+      parentId: ROOT_NODE_ID,
+      type: "right",
+      title: "Server child",
+      order: 0,
+    },
+  ];
 }
 
 /** Checks that every source node appears in exactly one non-empty derived level. */

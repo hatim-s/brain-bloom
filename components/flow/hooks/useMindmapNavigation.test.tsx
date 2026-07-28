@@ -148,6 +148,23 @@ describe("useMindmapNavigation", () => {
     expect(fixture.setAiEditNode).toHaveBeenCalledWith(null);
   });
 
+  it("leaves button activation and focus traversal native with canvas bindings mounted", () => {
+    const fixture = createNavigationFixture("left-a");
+    const view = render(<NavigationWithButton fixture={fixture} />);
+    const button = view.getByRole("button", { name: "Plain action" });
+    button.focus();
+
+    // Component-isolated keyboard tests hid an entire bug class: the real
+    // window-level canvas bindings coexist with every control on the page.
+    const enterEvent = dispatchKeyOn(button, { key: "Enter" });
+    const tabEvent = dispatchKeyOn(button, { key: "Tab" });
+
+    expect(fixture.setSelectedNode).not.toHaveBeenCalled();
+    expect(fixture.onAddNode).not.toHaveBeenCalled();
+    expect(enterEvent.defaultPrevented).toBe(false);
+    expect(tabEvent.defaultPrevented).toBe(false);
+  });
+
   it("keeps navigation but does not bind mutation keys in read-only mode", () => {
     const fixture = renderNavigationHook("left-a", true);
 
@@ -168,6 +185,15 @@ describe("useMindmapNavigation", () => {
  * Renders the navigation hook with a fresh mindmap and independently observable callbacks.
  */
 function renderNavigationHook(activeNode: string | null, readOnly = false) {
+  const fixture = createNavigationFixture(activeNode, readOnly);
+
+  renderHook(() => useMindmapNavigation(fixture));
+
+  return fixture;
+}
+
+/** Builds observable navigation inputs shared by hook and integration tests. */
+function createNavigationFixture(activeNode: string | null, readOnly = false) {
   const { leveledNodes, nodesMap } = buildMindmapFixture();
   const setActiveNode = vi.fn<(nodeId: string | null) => void>();
   const onAddNode =
@@ -175,25 +201,26 @@ function renderNavigationHook(activeNode: string | null, readOnly = false) {
   const setSelectedNode = vi.fn<(nodeId: string | null) => void>();
   const setAiEditNode = vi.fn<(nodeId: string | null) => void>();
 
-  renderHook(() =>
-    useMindmapNavigation({
-      readOnly,
-      activeNode,
-      setActiveNode,
-      mindmapNodesMap: nodesMap,
-      leveledNodes,
-      onAddNode,
-      setSelectedNode,
-      setAiEditNode,
-    })
-  );
-
   return {
+    readOnly,
+    activeNode,
+    mindmapNodesMap: nodesMap,
+    leveledNodes,
     setActiveNode,
     onAddNode,
     setSelectedNode,
     setAiEditNode,
   };
+}
+
+/** Mounts the real canvas bindings beside an ordinary page control. */
+function NavigationWithButton({
+  fixture,
+}: {
+  fixture: ReturnType<typeof createNavigationFixture>;
+}) {
+  useMindmapNavigation(fixture);
+  return <button type="button">Plain action</button>;
 }
 
 /** Dispatches a cancelable keydown event through the hook's real window listeners. */
@@ -206,14 +233,19 @@ function dispatchKey(init: KeyboardEventInit): void {
 }
 
 /** Dispatches a bubbling keydown from an element so window sees its real target. */
-function dispatchKeyOn(target: Element, init: KeyboardEventInit): void {
-  act(() => {
-    target.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        ...init,
-        bubbles: true,
-        cancelable: true,
-      })
-    );
+function dispatchKeyOn(
+  target: Element,
+  init: KeyboardEventInit
+): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    ...init,
+    bubbles: true,
+    cancelable: true,
   });
+
+  act(() => {
+    target.dispatchEvent(event);
+  });
+
+  return event;
 }

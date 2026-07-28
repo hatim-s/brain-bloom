@@ -37,9 +37,18 @@ vi.mock("@/components/ai-panel/AiPanelLayout", () => ({
   ),
 }));
 
-// Autosave owns a Convex mutation that this suite has no client for.
+// Autosave and the share control own Convex mutations that this suite has no
+// client for; the canvas behaviour under test does not depend on either.
+vi.mock("convex/react", () => ({
+  useMutation: () => vi.fn(),
+}));
+
 vi.mock("./hooks/useMindmapSync", () => ({
   useMindmapSync: () => {},
+}));
+
+vi.mock("./hooks/useMindmapLiveSync", () => ({
+  useMindmapLiveSync: () => {},
 }));
 
 vi.mock("@xyflow/react", async (importOriginal) => {
@@ -159,6 +168,67 @@ describe("Flow", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("blooms an AI-created node after the server reseed mounts it", () => {
+    const view = render(
+      <Flow
+        mindmap={{ ...MINDMAP, isOwner: true }}
+        nodes={NODES}
+        readOnly={false}
+      />
+    );
+
+    act(() => {
+      store
+        .getState()
+        .actions.setAiTouchedNodeIdsAfterReseed(["l-ai-created"], 1);
+      store.getState().actions.reseedFromServer({
+        name: MINDMAP.name,
+        updatedAt: 2,
+        visibility: MINDMAP.visibility,
+        nodes: [
+          ...NODES,
+          {
+            nodeId: "l-ai-created",
+            parentId: "root",
+            type: "left",
+            title: "AI created",
+            order: 0,
+          },
+        ],
+      });
+    });
+
+    expect(view.getByTestId("bloomed-nodes").textContent).toBe("l-ai-created");
+  });
+
+  it("re-dispatches the active selection after a server reseed", () => {
+    const view = render(
+      <Flow
+        mindmap={{ ...MINDMAP, isOwner: true }}
+        nodes={NODES}
+        readOnly={false}
+      />
+    );
+
+    act(() => store.getState().setActiveNode("left-child"));
+    expect(view.getByTestId("selected-count").textContent).toBe("1");
+
+    act(() => {
+      store.getState().actions.reseedFromServer({
+        name: MINDMAP.name,
+        nodes: NODES.map((node) =>
+          node.nodeId === "left-child"
+            ? { ...node, title: "Server title" }
+            : node
+        ),
+        updatedAt: 2,
+        visibility: MINDMAP.visibility,
+      });
+    });
+
+    expect(view.getByTestId("selected-count").textContent).toBe("1");
   });
 });
 

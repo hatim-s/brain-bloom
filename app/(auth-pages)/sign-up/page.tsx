@@ -242,7 +242,7 @@ function SignupForm() {
           onClick={finalizeSignUp}
           type="button"
         >
-          {isSubmitting ? "Finishing..." : "Retry finishing sign up"}
+          {isSubmitting ? "Finishing…" : "Retry finishing sign up"}
         </Button>
       </div>
     );
@@ -296,7 +296,7 @@ function SignupForm() {
             </div>
           ) : null}
           <Button className="w-full" disabled={isSubmitting} type="submit">
-            {isSubmitting ? "Verifying..." : "Verify email"}
+            {isSubmitting ? "Verifying…" : "Verify email"}
           </Button>
         </form>
 
@@ -378,7 +378,7 @@ function SignupForm() {
           </div>
         ) : null}
         <Button className="w-full" disabled={isSubmitting} type="submit">
-          {isSubmitting ? "Signing up..." : "Sign up"}
+          {isSubmitting ? "Signing up…" : "Sign up"}
         </Button>
       </form>
     </div>

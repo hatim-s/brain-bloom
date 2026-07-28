@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useState } from "react";
 import { StoreApi, useStore } from "zustand";
 
 import { useKey } from "@/hooks/use-key";
-import { MindmapDB } from "@/types/Mindmap";
+import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 
 import { BaseFlowNode } from "../types";
 import { createMindmapStore, MindmapStore } from "./store";
@@ -34,28 +34,45 @@ function useMindmapStoreApi(): StoreApi<MindmapStore> {
   return store;
 }
 
-type MindmapFlowProviderProps = {
+type MindmapFlowProviderBaseProps = {
   children: React.ReactNode;
   readOnly?: boolean;
   mindmapDB: MindmapDB;
-  initialNodes: BaseFlowNode[];
-  initialEdges: Edge[];
 };
+
+type MindmapFlowProviderProps =
+  | (MindmapFlowProviderBaseProps & {
+      serverNodes: MindmapNodeProjection[];
+    })
+  | (MindmapFlowProviderBaseProps & {
+      initialNodes: BaseFlowNode[];
+      initialEdges: Edge[];
+    });
 
 /**
  * Provides one isolated mindmap store initialized from the supplied mindmap.
  */
-const MindmapFlowProvider = ({
-  children,
-  readOnly = false,
-  mindmapDB,
-  initialNodes,
-  initialEdges,
-}: MindmapFlowProviderProps) => {
+const MindmapFlowProvider = (props: MindmapFlowProviderProps) => {
+  const { children, mindmapDB } = props;
+  const readOnly = props.readOnly ?? false;
+
   // A lazy state initializer guarantees one prop-seeded store per provider.
-  const [store] = useState(() =>
-    createMindmapStore({ readOnly, mindmapDB, initialNodes, initialEdges })
-  );
+  const [store] = useState(() => {
+    if ("serverNodes" in props) {
+      return createMindmapStore({
+        readOnly,
+        mindmapDB,
+        serverNodes: props.serverNodes,
+      });
+    }
+
+    return createMindmapStore({
+      readOnly,
+      mindmapDB,
+      initialNodes: props.initialNodes,
+      initialEdges: props.initialEdges,
+    });
+  });
 
   const debugLogger = useCallback(() => {
     // eslint-disable-next-line no-console -- needed for debug logging

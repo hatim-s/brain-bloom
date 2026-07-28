@@ -1,4 +1,3 @@
-// import { ThemeSwitcher } from "@/components/theme-switcher";
 // eslint-disable-next-line simple-import-sort/imports
 import "./globals.css";
 

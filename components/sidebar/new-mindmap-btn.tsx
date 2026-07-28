@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
-/** Starts a new mindmap. Sits in the sidebar header, next to the wordmark. */
+/** Starts a new map. Sits in the sidebar header, next to the wordmark. */
 export function NewMindmapButton() {
   const router = useRouter();
 
@@ -22,12 +22,13 @@ export function NewMindmapButton() {
           variant="ghost"
           size="icon"
           onClick={handleNewMindmap}
+          type="button"
         >
           <Plus />
-          <span className="sr-only">New mindmap</span>
+          <span className="sr-only">New map</span>
         </Button>
       </TooltipTrigger>
-      <TooltipContent>New mindmap</TooltipContent>
+      <TooltipContent>New map</TooltipContent>
     </Tooltip>
   );
 }

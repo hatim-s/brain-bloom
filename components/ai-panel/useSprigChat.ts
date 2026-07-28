@@ -3,7 +3,7 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useQuery } from "convex/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -22,14 +22,27 @@ type UseSprigChatOptions = {
   onTurnFinished: (message: SprigUIMessage) => void;
 };
 
+/** The fields of a persisted thread the switcher needs to list it. */
+type SprigThreadSummary = {
+  _id: Id<"threads">;
+  _creationTime: number;
+  title: string;
+};
+
 type UseSprigChat = {
   messages: SprigUIMessage[];
   status: ReturnType<typeof useChat<SprigUIMessage>>["status"];
   error: Error | undefined;
   isStreaming: boolean;
   isHistoryLoading: boolean;
+  /** Every thread on this map, newest first; `undefined` until Convex answers. */
+  threads: SprigThreadSummary[] | undefined;
+  /** The thread the panel is addressing, or `null` for an unsent fresh one. */
+  activeThreadId: Id<"threads"> | null;
   clearError: () => void;
   regenerate: () => Promise<boolean>;
+  /** Returns `false` when the switch was refused (mid-stream, or a no-op). */
+  selectThread: (threadId: Id<"threads">) => boolean;
   sendPrompt: (text: string, selectedNodeId: string | null) => Promise<boolean>;
   startNewConversation: () => void;
   stop: () => void;
@@ -54,6 +67,13 @@ function useSprigChat({
   const pendingResultRef = useRef<((succeeded: boolean) => void) | null>(null);
   const lastRequestBodyRef = useRef<Record<string, string>>({ mindmapId });
 
+  // `undefined` means "not resolved yet"; `null` means "no thread is addressed".
+  // Declared above the transport because the fetch seam below adopts the id the
+  // route minted for a brand-new conversation.
+  const [historyThreadId, setHistoryThreadId] = useState<
+    Id<"threads"> | null | undefined
+  >(undefined);
+
   const [transport] = useState(
     () =>
       new DefaultChatTransport<SprigUIMessage>({
@@ -69,6 +89,12 @@ function useSprigChat({
           if (threadId !== null && threadId.length > 0) {
             threadIdRef.current = threadId;
             freshThreadIntentRef.current = false;
+            // A fresh conversation only learns its thread id here, so adopt it
+            // as the active one — without ever overwriting a thread the reader
+            // has explicitly opened.
+            setHistoryThreadId(
+              (current) => current ?? (threadId as Id<"threads">)
+            );
           }
 
           return response;
@@ -112,10 +138,6 @@ function useSprigChat({
   });
   const { setMessages } = chat;
 
-  // `undefined` means "not resolved yet"; `null` means "this map has no thread".
-  const [historyThreadId, setHistoryThreadId] = useState<
-    Id<"threads"> | null | undefined
-  >(undefined);
   const threads = useQuery(api.threads.listThreads, { mindmapId });
   const historyMessages = useQuery(
     api.threads.listMessages,
@@ -164,6 +186,15 @@ function useSprigChat({
   const isHistoryLoading =
     !hasReplayedHistoryRef.current &&
     (historyThreadId === undefined || historyMessages === undefined);
+
+  // Convex lists threads oldest-first; the switcher reads most-recent-first.
+  const orderedThreads = useMemo(
+    () =>
+      threads === undefined
+        ? undefined
+        : [...(threads as SprigThreadSummary[])].reverse(),
+    [threads]
+  );
 
   const sendPrompt = useEventCallback(
     async (text: string, selectedNodeId: string | null) => {
@@ -235,6 +266,31 @@ function useSprigChat({
     return result;
   });
 
+  /**
+   * Points the panel at another persisted thread and replays it.
+   *
+   * Switching mid-stream is refused rather than queued: the in-flight turn is
+   * still addressed to the previous thread and would land in the wrong
+   * conversation, so the caller is told the switch did not happen.
+   */
+  const selectThread = useEventCallback((threadId: Id<"threads">) => {
+    if (isActiveStreamRef.current || threadId === historyThreadId) {
+      return false;
+    }
+
+    // Replay is allowed once per conversation, so re-arming it is what makes
+    // the next `listMessages` result land in the transcript.
+    hasReplayedHistoryRef.current = false;
+    freshThreadIntentRef.current = false;
+    threadIdRef.current = threadId;
+    lastRequestBodyRef.current = { mindmapId };
+    chat.clearError();
+    setMessages([]);
+    setHistoryThreadId(threadId);
+
+    return true;
+  });
+
   const startNewConversation = useEventCallback(() => {
     // Nothing is deleted: the previous thread stays in Convex, this panel just
     // stops addressing it. P9 owns the thread switcher that can return to it.
@@ -260,12 +316,15 @@ function useSprigChat({
     error: chat.error,
     isStreaming,
     isHistoryLoading,
+    threads: orderedThreads,
+    activeThreadId: historyThreadId ?? null,
     clearError: chat.clearError,
     regenerate,
+    selectThread,
     sendPrompt,
     startNewConversation,
     stop,
   };
 }
 
-export { type UseSprigChat, useSprigChat };
+export { type SprigThreadSummary, type UseSprigChat, useSprigChat };

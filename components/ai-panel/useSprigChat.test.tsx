@@ -124,6 +124,90 @@ describe("useSprigChat", () => {
     await expect(sendResult).resolves.toBe(true);
   });
 
+  it("replays a chosen thread and refuses to switch mid-stream", async () => {
+    mocks.threads = [
+      { _id: "threads:old", mindmapId: "mindmaps:1", title: "Old" },
+      { _id: "threads:new", mindmapId: "mindmaps:1", title: "New" },
+    ];
+    mocks.history = [
+      {
+        _id: "messages:new",
+        role: "assistant",
+        content: [{ type: "text", text: "Newest reply" }],
+      },
+    ];
+
+    const { result } = renderHook(() =>
+      useSprigChat({
+        mindmapId: "mindmaps:1" as Id<"mindmaps">,
+        onTurnFinished: vi.fn(),
+      })
+    );
+
+    await waitFor(() => expect(result.current.isHistoryLoading).toBe(false));
+
+    // Convex lists oldest-first; the switcher reads the reverse.
+    expect(result.current.threads?.map((thread) => thread.title)).toEqual([
+      "New",
+      "Old",
+    ]);
+    expect(result.current.activeThreadId).toBe("threads:new");
+
+    let didSwitch: boolean | undefined;
+    let sendResult!: Promise<boolean>;
+    act(() => {
+      sendResult = result.current.sendPrompt("Keep going", null);
+    });
+    act(() => {
+      didSwitch = result.current.selectThread("threads:old" as Id<"threads">);
+    });
+
+    expect(didSwitch).toBe(false);
+    expect(result.current.activeThreadId).toBe("threads:new");
+
+    act(() => {
+      mocks.finish?.({
+        message: {
+          id: "assistant:new",
+          role: "assistant",
+          parts: [{ type: "text", text: "Fresh reply" }],
+        },
+        isAbort: false,
+        isError: false,
+      });
+    });
+    await expect(sendResult).resolves.toBe(true);
+
+    mocks.chat.setMessages.mockClear();
+    mocks.history = [
+      {
+        _id: "messages:old",
+        role: "assistant",
+        content: [{ type: "text", text: "Older reply" }],
+      },
+    ];
+    act(() => {
+      didSwitch = result.current.selectThread("threads:old" as Id<"threads">);
+    });
+
+    expect(didSwitch).toBe(true);
+    expect(result.current.activeThreadId).toBe("threads:old");
+    // The transcript is emptied at once so the previous thread never lingers
+    // under the new one's loading state.
+    expect(mocks.chat.setMessages).toHaveBeenNthCalledWith(1, []);
+    await waitFor(() =>
+      expect(mocks.chat.setMessages.mock.lastCall?.[0]).toMatchObject([
+        { parts: [{ text: "Older reply" }] },
+      ])
+    );
+
+    // Re-selecting the open thread is a no-op rather than a wasted replay.
+    act(() => {
+      didSwitch = result.current.selectThread("threads:old" as Id<"threads">);
+    });
+    expect(didSwitch).toBe(false);
+  });
+
   it("truncates older messages in the client transport body", () => {
     renderHook(() =>
       useSprigChat({
