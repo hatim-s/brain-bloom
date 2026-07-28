@@ -263,6 +263,37 @@ describe("createMindmapStore", () => {
     expectDerivedStateInvariant(store.getState());
   });
 
+  it("rejects mutation actions when seeded read-only", () => {
+    const fixture = createStoreFixture();
+    const store = createMindmapStore({ ...fixture, readOnly: true });
+    const initialState = store.getState();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const addedNode = initialState.actions.onAddNode(
+      NodeTypes.LEFT,
+      "l-child",
+      "blocked-child"
+    );
+    initialState.actions.onUpdateNode("l-child", { title: "Blocked edit" });
+    initialState.actions.onNodesChange([{ id: "l-child", type: "remove" }]);
+    initialState.setSelectedNode("l-child");
+    initialState.setAiEditNode("l-child");
+
+    const state = store.getState();
+    expect(addedNode).toBeNull();
+    expect(state.nodesMap["blocked-child"]).toBeUndefined();
+    expect(state.nodesMap["l-child"].data.title).toBe("Left child");
+    expect(state.pendingOps).toEqual([]);
+    expect(state.selectedNode).toBeNull();
+    expect(state.aiEditNode).toBeNull();
+    expect(warning.mock.calls).toEqual([
+      ["[MindmapFlowProvider] ignored onAddNode in read-only mode"],
+      ["[MindmapFlowProvider] ignored onUpdateNode in read-only mode"],
+      ["[MindmapFlowProvider] ignored onNodesChange remove in read-only mode"],
+    ]);
+    warning.mockRestore();
+  });
+
   it("keeps derived state synchronized after every node action", () => {
     const store = createFixtureStore();
 

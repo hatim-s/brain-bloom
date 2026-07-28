@@ -30,12 +30,32 @@ import { NewMindmapButton } from "./new-mindmap-btn";
  * elevation. Identity is carried by the wordmark and the moss rail on the
  * active row, not by an icon.
  */
-export function FloatingSidebar({
+/**
+ * Live wrapper: reads the route param to highlight the active map. Kept apart
+ * from FloatingSidebar so the Suspense fallback can render the same shell
+ * without touching request-time data (useParams breaks static prerender).
+ */
+function ActiveFloatingSidebar({
   mindmaps,
   ...props
 }: React.ComponentProps<typeof Sidebar> & { mindmaps: MindmapDB[] }) {
   const params = useParams();
-  const mindmapSlug = params.mindmapSlug as string;
+  const publicId = params.publicId as string | undefined;
+  return (
+    <FloatingSidebar activePublicId={publicId} mindmaps={mindmaps} {...props} />
+  );
+}
+
+export function FloatingSidebar({
+  mindmaps,
+  activePublicId,
+  ...props
+}: React.ComponentProps<typeof Sidebar> & {
+  mindmaps: MindmapDB[];
+  /** publicId of the currently open map; undefined in the static fallback. */
+  activePublicId?: string;
+}) {
+  const publicId = activePublicId;
 
   return (
     <Sidebar variant="floating" {...props}>
@@ -73,9 +93,9 @@ export function FloatingSidebar({
                     <SidebarMenuSubItem key={mindmap._id}>
                       <SidebarMenuSubButton
                         asChild
-                        isActive={mindmap.publicId === mindmapSlug}
+                        isActive={mindmap.publicId === publicId}
                       >
-                        <a href={`/${mindmap.publicId}`}>
+                        <a href={`/maps/${mindmap.publicId}`}>
                           <TypographyWithTooltip
                             className="text-sm"
                             variant="p"
@@ -102,3 +122,5 @@ export function FloatingSidebar({
     </Sidebar>
   );
 }
+
+export { ActiveFloatingSidebar };

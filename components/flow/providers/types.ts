@@ -10,6 +10,7 @@ type DagreGraph = graphlib.Graph<GraphLabel, NodeLabel, EdgeLabel>;
 
 // todo: add documentation for the context
 type MindmapFlowContext = {
+  readOnly: boolean;
   layout: {
     leftGraph: DagreGraph;
     rightGraph: DagreGraph;

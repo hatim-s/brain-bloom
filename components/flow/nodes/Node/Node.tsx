@@ -106,9 +106,14 @@ const BaseNode = (props: NodeProps & { direction: "left" | "right" }) => {
 
   const selectedNode = useMindmapFlow((state) => state.selectedNode);
   const isAiEditing = useMindmapFlow((state) => state.aiEditNode);
+  const readOnly = useMindmapFlow((state) => state.readOnly);
 
   return (
-    <Popover open={selectedNode === props.id || isAiEditing === props.id}>
+    <Popover
+      open={
+        !readOnly && (selectedNode === props.id || isAiEditing === props.id)
+      }
+    >
       <PopoverTrigger
         className={clsx({ "focus-visible:outline-bloom": isSelected })}
       >
@@ -121,20 +126,24 @@ const BaseNode = (props: NodeProps & { direction: "left" | "right" }) => {
         <Handle type="source" position={sourcePosition} />
         <Handle type="target" position={targetPosition} />
       </PopoverTrigger>
-      <PopoverContent
-        className={!selectedNode ? "hidden" : ""}
-        side="bottom"
-        sideOffset={10}
-      >
-        <NodeDataInput />
-      </PopoverContent>
-      <PopoverContent
-        className={clsx("!p-0 w-[400px]", { hidden: !isAiEditing })}
-        side="right"
-        sideOffset={20}
-      >
-        <NodeAiEdit />
-      </PopoverContent>
+      {readOnly ? null : (
+        <>
+          <PopoverContent
+            className={!selectedNode ? "hidden" : ""}
+            side="bottom"
+            sideOffset={10}
+          >
+            <NodeDataInput />
+          </PopoverContent>
+          <PopoverContent
+            className={clsx("!p-0 w-[400px]", { hidden: !isAiEditing })}
+            side="right"
+            sideOffset={20}
+          >
+            <NodeAiEdit />
+          </PopoverContent>
+        </>
+      )}
     </Popover>
   );
 };

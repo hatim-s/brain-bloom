@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { requireOwner, requireReadable, requireUser } from "./lib/access";
@@ -13,6 +13,7 @@ const PUBLIC_ID_LENGTH = 10;
 const PURGE_BATCH_SIZE = 200;
 /** Bounds generated trees so one atomic apply operation remains predictable. */
 const MAX_GENERATED_NODE_COUNT = 200;
+const visibilityValidator = v.union(v.literal("private"), v.literal("shared"));
 const nodeSnapshotValidator = v.object({
   nodeId: v.string(),
   parentId: v.union(v.string(), v.null()),
@@ -78,7 +79,7 @@ function projectMindmap(
     visibility: "private" | "shared";
     updatedAt: number;
   },
-  subject: string
+  subject: string | null
 ) {
   return {
     _id: mindmap._id,
@@ -89,6 +90,26 @@ function projectMindmap(
     isOwner: subject === mindmap.ownerId,
   };
 }
+
+/** Keeps public node reads limited to fields the canvas can render. */
+function projectRenderableNode(node: Doc<"nodes">): NodeSnapshot {
+  return {
+    nodeId: node.nodeId,
+    parentId: node.parentId,
+    type: node.type,
+    title: node.title,
+    ...(node.description === undefined
+      ? {}
+      : { description: node.description }),
+    ...(node.link === undefined ? {} : { link: node.link }),
+    order: node.order,
+  };
+}
+
+type SharedMindmapResult = {
+  mindmap: ReturnType<typeof projectMindmap>;
+  nodes: NodeSnapshot[];
+};
 
 /**
  * Inserts one private mindmap and its canonical root for an authenticated owner.
@@ -258,6 +279,34 @@ export const getByPublicId = query({
 });
 
 /**
+ * Resolves a shared public route without reading authentication state.
+ */
+export const getShared = query({
+  args: { publicId: v.string() },
+  handler: async (ctx, args): Promise<SharedMindmapResult> => {
+    const resolvedMindmap = await ctx.db
+      .query("mindmaps")
+      .withIndex("by_publicId", (q) => q.eq("publicId", args.publicId))
+      .unique();
+
+    // Shared and absent IDs deliberately have one indistinguishable failure.
+    if (resolvedMindmap === null || resolvedMindmap.visibility !== "shared") {
+      throw new ConvexError("Not found");
+    }
+
+    const nodes = await ctx.db
+      .query("nodes")
+      .withIndex("by_mindmap", (q) => q.eq("mindmapId", resolvedMindmap._id))
+      .collect();
+
+    return {
+      mindmap: projectMindmap(resolvedMindmap, null),
+      nodes: sortNodesByParentAndOrder(nodes.map(projectRenderableNode)),
+    };
+  },
+});
+
+/**
  * Lists the current user's mindmaps with the most recently changed first.
  */
 export const listMine = query({
@@ -293,6 +342,21 @@ export const rename = mutation({
     });
     await ctx.db.patch("mindmaps", args.mindmapId, {
       name: args.name,
+    });
+  },
+});
+
+/** Changes sharing visibility for an owned mindmap. */
+export const setVisibility = mutation({
+  args: {
+    mindmapId: v.id("mindmaps"),
+    visibility: visibilityValidator,
+  },
+  handler: async (ctx, args) => {
+    await requireOwner(ctx, args.mindmapId);
+    await ctx.db.patch("mindmaps", args.mindmapId, {
+      visibility: args.visibility,
+      updatedAt: Date.now(),
     });
   },
 });

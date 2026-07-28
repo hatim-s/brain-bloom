@@ -30,6 +30,7 @@ import { MindmapFlowContext } from "./types";
 type MindmapStore = MindmapFlowContext;
 
 type MindmapStoreSeed = {
+  readOnly?: boolean;
   mindmapDB: MindmapDB;
   initialNodes: BaseFlowNode[];
   initialEdges: Edge[];
@@ -72,6 +73,14 @@ function createNodeDataPatch(
   return patch;
 }
 
+/** Reports an ignored read-only mutation during local development. */
+function warnReadOnlyMutation(action: string): void {
+  if (process.env.NODE_ENV !== "production") {
+    // eslint-disable-next-line no-console -- read-only violations should be visible during development
+    console.warn(`[MindmapFlowProvider] ignored ${action} in read-only mode`);
+  }
+}
+
 /**
  * Creates an isolated mindmap store seeded from one provider instance.
  *
@@ -79,6 +88,7 @@ function createNodeDataPatch(
  * every derived view affected by that write.
  */
 function createMindmapStore({
+  readOnly = false,
   mindmapDB,
   initialNodes,
   initialEdges,
@@ -96,9 +106,21 @@ function createMindmapStore({
     const onNodesChange: MindmapFlowContext["actions"]["onNodesChange"] = (
       changes
     ) => {
+      const applicableChanges = readOnly
+        ? changes.filter((change) => change.type !== "remove")
+        : changes;
+
+      if (applicableChanges.length !== changes.length) {
+        warnReadOnlyMutation("onNodesChange remove");
+      }
+
+      if (applicableChanges.length === 0) {
+        return;
+      }
+
       set((state) => {
         const updatedNodes = applyNodeChanges(
-          changes,
+          applicableChanges,
           state.nodes
         ) as FlowNode[];
 
@@ -118,6 +140,11 @@ function createMindmapStore({
       data,
       options
     ) => {
+      if (readOnly) {
+        warnReadOnlyMutation("onAddNode");
+        return null;
+      }
+
       const currentMindmapNodesMap = get().mindmapNodesMap;
 
       if (!currentMindmapNodesMap[parentNodeId]) {
@@ -255,6 +282,11 @@ function createMindmapStore({
       data,
       options
     ) => {
+      if (readOnly) {
+        warnReadOnlyMutation("onUpdateNode");
+        return;
+      }
+
       set((state) => {
         const currentNode = state.nodesMap[nodeId];
 
@@ -316,6 +348,7 @@ function createMindmapStore({
     };
 
     return {
+      readOnly,
       layout,
       nodes,
       edges,
@@ -325,9 +358,17 @@ function createMindmapStore({
       activeNode: ROOT_NODE_ID,
       setActiveNode: (activeNode) => set({ activeNode }),
       selectedNode: null,
-      setSelectedNode: (selectedNode) => set({ selectedNode }),
+      setSelectedNode: (selectedNode) => {
+        if (!readOnly) {
+          set({ selectedNode });
+        }
+      },
       aiEditNode: null,
-      setAiEditNode: (aiEditNode) => set({ aiEditNode }),
+      setAiEditNode: (aiEditNode) => {
+        if (!readOnly) {
+          set({ aiEditNode });
+        }
+      },
       mindmapDB,
       pendingOps: [],
       flushedWatermark: 0,

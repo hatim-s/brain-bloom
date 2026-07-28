@@ -20,6 +20,24 @@ function createHarness() {
   };
 }
 
+/** Requires the complete application error message, avoiding substring oracles. */
+async function expectErrorMessage(
+  promise: Promise<unknown>,
+  expectedMessage: string
+): Promise<void> {
+  const error = await promise.then(
+    () => null,
+    (caught: unknown) => caught
+  );
+
+  expect(error).toBeInstanceOf(Error);
+  if (!(error instanceof Error)) {
+    return;
+  }
+
+  expect(error.message).toBe(expectedMessage);
+}
+
 describe("mindmaps", () => {
   it("creates a private mindmap with a URL-safe public id and root node", async () => {
     const { asAlice } = createHarness();
@@ -130,7 +148,7 @@ describe("mindmaps", () => {
         nodes,
       })
     ).resolves.toBeDefined();
-    await expect(
+    await expectErrorMessage(
       asAlice.mutation(api.mindmaps.createWithNodes, {
         name: "Above the limit",
         nodes: [
@@ -143,14 +161,15 @@ describe("mindmaps", () => {
             order: 199,
           },
         ],
-      })
-    ).rejects.toThrow("Invalid op: too many nodes");
+      }),
+      "Invalid op: too many nodes"
+    );
   });
 
   it("rolls back the mindmap when generated nodes are rejected", async () => {
     const { t, asAlice } = createHarness();
 
-    await expect(
+    await expectErrorMessage(
       asAlice.mutation(api.mindmaps.createWithNodes, {
         name: "Invalid generated plan",
         nodes: [
@@ -169,8 +188,9 @@ describe("mindmaps", () => {
             order: 0,
           },
         ],
-      })
-    ).rejects.toThrow("parent is on another side");
+      }),
+      "Invalid op: parent is on another side"
+    );
 
     const rows = await t.run(async (ctx) => ({
       mindmaps: await ctx.db.query("mindmaps").collect(),
@@ -195,6 +215,79 @@ describe("mindmaps", () => {
     expect(result.mindmap.isOwner).toBe(true);
     expect(result.mindmap).not.toHaveProperty("ownerId");
     expect(result.nodes.map((node) => node.nodeId)).toEqual(["root"]);
+  });
+
+  it("exposes only shared maps through the unauthenticated public query", async () => {
+    const { t, asAlice } = createHarness();
+    const shared = await asAlice.mutation(api.mindmaps.create, {
+      name: "Shared route",
+    });
+    const privateMap = await asAlice.mutation(api.mindmaps.create, {
+      name: "Private route",
+    });
+    await asAlice.mutation(api.mindmaps.setVisibility, {
+      mindmapId: shared.mindmapId,
+      visibility: "shared",
+    });
+
+    const result = await t.query(api.mindmaps.getShared, {
+      publicId: shared.publicId,
+    });
+
+    expect(result.mindmap).toMatchObject({
+      _id: shared.mindmapId,
+      publicId: shared.publicId,
+      visibility: "shared",
+      isOwner: false,
+    });
+    expect(result.mindmap).not.toHaveProperty("ownerId");
+    expect(result.nodes.map((node) => node.nodeId)).toEqual(["root"]);
+    expect(result.nodes[0]).not.toHaveProperty("_id");
+    expect(result.nodes[0]).not.toHaveProperty("_creationTime");
+    expect(result.nodes[0]).not.toHaveProperty("mindmapId");
+    await expectErrorMessage(
+      t.query(api.mindmaps.getShared, { publicId: privateMap.publicId }),
+      "Not found"
+    );
+    await expectErrorMessage(
+      t.query(api.mindmaps.getShared, { publicId: "unknown000" }),
+      "Not found"
+    );
+  });
+
+  it("allows only the owner to change visibility", async () => {
+    const { asAlice, asBob } = createHarness();
+    const created = await asAlice.mutation(api.mindmaps.create, {
+      name: "Visibility control",
+    });
+
+    await asAlice.mutation(api.mindmaps.setVisibility, {
+      mindmapId: created.mindmapId,
+      visibility: "shared",
+    });
+    const shared = await asAlice.query(api.mindmaps.get, {
+      mindmapId: created.mindmapId,
+    });
+
+    expect(shared.mindmap.visibility).toBe("shared");
+    await expectErrorMessage(
+      asBob.mutation(api.mindmaps.setVisibility, {
+        mindmapId: created.mindmapId,
+        visibility: "private",
+      }),
+      "Forbidden"
+    );
+
+    await asAlice.mutation(api.mindmaps.setVisibility, {
+      mindmapId: created.mindmapId,
+      visibility: "private",
+    });
+    await expectErrorMessage(
+      asBob.query(api.mindmaps.getByPublicId, {
+        publicId: created.publicId,
+      }),
+      "Not found"
+    );
   });
 
   it("lists only the owner's mindmaps newest-updated first", async () => {
@@ -280,15 +373,18 @@ describe("mindmaps", () => {
       name: "Private",
     });
 
-    await expect(
-      t.query(api.mindmaps.get, { mindmapId: created.mindmapId })
-    ).rejects.toThrow("Unauthenticated");
-    await expect(t.query(api.mindmaps.listMine, {})).rejects.toThrow(
+    await expectErrorMessage(
+      t.query(api.mindmaps.get, { mindmapId: created.mindmapId }),
       "Unauthenticated"
     );
-    await expect(
-      t.mutation(api.mindmaps.create, { name: "Anonymous" })
-    ).rejects.toThrow("Unauthenticated");
+    await expectErrorMessage(
+      t.query(api.mindmaps.listMine, {}),
+      "Unauthenticated"
+    );
+    await expectErrorMessage(
+      t.mutation(api.mindmaps.create, { name: "Anonymous" }),
+      "Unauthenticated"
+    );
   });
 
   it("forbids a non-owner from reading or mutating a private mindmap", async () => {
@@ -297,20 +393,23 @@ describe("mindmaps", () => {
       name: "Private",
     });
 
-    await expect(
-      asBob.query(api.mindmaps.get, { mindmapId: created.mindmapId })
-    ).rejects.toThrow("Forbidden");
-    await expect(
+    await expectErrorMessage(
+      asBob.query(api.mindmaps.get, { mindmapId: created.mindmapId }),
+      "Forbidden"
+    );
+    await expectErrorMessage(
       asBob.mutation(api.mindmaps.rename, {
         mindmapId: created.mindmapId,
         name: "Hijacked",
-      })
-    ).rejects.toThrow("Forbidden");
-    await expect(
+      }),
+      "Forbidden"
+    );
+    await expectErrorMessage(
       asBob.mutation(api.mindmaps.remove, {
         mindmapId: created.mindmapId,
-      })
-    ).rejects.toThrow("Forbidden");
+      }),
+      "Forbidden"
+    );
   });
 
   it("allows authenticated shared reads but still forbids non-owner writes", async () => {
@@ -337,12 +436,13 @@ describe("mindmaps", () => {
     expect(byPublicId.mindmap.isOwner).toBe(false);
     expect(byId.mindmap).not.toHaveProperty("ownerId");
     expect(byPublicId.mindmap).not.toHaveProperty("ownerId");
-    await expect(
+    await expectErrorMessage(
       asBob.mutation(api.mindmaps.rename, {
         mindmapId: created.mindmapId,
         name: "Not allowed",
-      })
-    ).rejects.toThrow("Forbidden");
+      }),
+      "Forbidden"
+    );
   });
 
   it("hides private public-id existence from non-owners", async () => {
@@ -351,16 +451,18 @@ describe("mindmaps", () => {
       name: "Private route",
     });
 
-    await expect(
+    await expectErrorMessage(
       asBob.query(api.mindmaps.getByPublicId, {
         publicId: created.publicId,
-      })
-    ).rejects.toThrow("Not found");
-    await expect(
+      }),
+      "Not found"
+    );
+    await expectErrorMessage(
       asBob.query(api.mindmaps.getByPublicId, {
         publicId: "unknown000",
-      })
-    ).rejects.toThrow("Not found");
+      }),
+      "Not found"
+    );
   });
 
   it("sorts sibling nodes by order for both canvas read paths", async () => {
@@ -481,11 +583,12 @@ describe("mindmaps", () => {
       mindmapId: created.mindmapId,
     });
 
-    await expect(
+    await expectErrorMessage(
       asAlice.query(api.mindmaps.get, {
         mindmapId: created.mindmapId,
-      })
-    ).rejects.toThrow("Not found");
+      }),
+      "Not found"
+    );
 
     const beforePurge = await t.run(async (ctx) => ({
       node: await ctx.db.get("nodes", nodeIds[0]),

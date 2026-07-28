@@ -147,12 +147,27 @@ describe("useMindmapNavigation", () => {
     expect(fixture.setSelectedNode).toHaveBeenCalledWith(null);
     expect(fixture.setAiEditNode).toHaveBeenCalledWith(null);
   });
+
+  it("keeps navigation but does not bind mutation keys in read-only mode", () => {
+    const fixture = renderNavigationHook("left-a", true);
+
+    dispatchKey({ key: "ArrowRight" });
+    dispatchKey({ key: "Tab" });
+    dispatchKey({ key: "Enter" });
+    dispatchKey({ key: " " });
+    dispatchKey({ key: "k", metaKey: true });
+
+    expect(fixture.setActiveNode).toHaveBeenCalled();
+    expect(fixture.onAddNode).not.toHaveBeenCalled();
+    expect(fixture.setSelectedNode).not.toHaveBeenCalled();
+    expect(fixture.setAiEditNode).not.toHaveBeenCalled();
+  });
 });
 
 /**
  * Renders the navigation hook with a fresh mindmap and independently observable callbacks.
  */
-function renderNavigationHook(activeNode: string | null) {
+function renderNavigationHook(activeNode: string | null, readOnly = false) {
   const { leveledNodes, nodesMap } = buildMindmapFixture();
   const setActiveNode = vi.fn<(nodeId: string | null) => void>();
   const onAddNode =
@@ -162,6 +177,7 @@ function renderNavigationHook(activeNode: string | null) {
 
   renderHook(() =>
     useMindmapNavigation({
+      readOnly,
       activeNode,
       setActiveNode,
       mindmapNodesMap: nodesMap,
