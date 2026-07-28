@@ -174,7 +174,10 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
         return false;
       }
 
-      if (serverState.updatedAt <= current.seededUpdatedAt) {
+      if (
+        serverState.updatedAt <= current.seededUpdatedAt ||
+        serverState.updatedAt < current.acknowledgedServerVersion
+      ) {
         return false;
       }
 
@@ -200,8 +203,11 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
             : null,
         mindmapDB: {
           ...state.mindmapDB,
+          name: serverState.name,
           updatedAt: serverState.updatedAt,
+          visibility: serverState.visibility,
         },
+        reseedCount: state.reseedCount + 1,
         seededUpdatedAt: serverState.updatedAt,
         pendingServerState:
           state.pendingServerState !== null &&
@@ -497,6 +503,8 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
         set({ aiTouchedNodeIds: nodeIds });
       },
       mindmapDB,
+      acknowledgedServerVersion: mindmapDB.updatedAt,
+      reseedCount: 0,
       seededUpdatedAt: mindmapDB.updatedAt,
       pendingServerState: null,
       pendingOps: [],
@@ -513,7 +521,11 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
         reconcileServerState: (serverState) => {
           const state = get();
 
-          if (readOnly || serverState.updatedAt <= state.seededUpdatedAt) {
+          if (
+            readOnly ||
+            serverState.updatedAt <= state.seededUpdatedAt ||
+            serverState.updatedAt < state.acknowledgedServerVersion
+          ) {
             return;
           }
 
@@ -537,6 +549,13 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
             state.pendingOps.length > 0 ||
             state.syncState === "saving"
           ) {
+            return false;
+          }
+
+          if (
+            state.pendingServerState.updatedAt < state.acknowledgedServerVersion
+          ) {
+            set({ pendingServerState: null });
             return false;
           }
 
@@ -580,7 +599,7 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
           set({ flushedWatermark: ops.length });
           return { ops: [...ops], count: ops.length };
         },
-        commitFlushedOps: (count) => {
+        commitFlushedOps: (count, acknowledgedUpdatedAt) => {
           set((state) => {
             if (
               count < 0 ||
@@ -590,9 +609,23 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
               throw new Error("Cannot commit outside the flushed prefix");
             }
 
+            const acknowledgedServerVersion =
+              acknowledgedUpdatedAt === undefined
+                ? state.acknowledgedServerVersion
+                : Math.max(
+                    state.acknowledgedServerVersion,
+                    acknowledgedUpdatedAt
+                  );
+
             return {
+              acknowledgedServerVersion,
               pendingOps: state.pendingOps.slice(count),
               flushedWatermark: state.flushedWatermark - count,
+              pendingServerState:
+                state.pendingServerState !== null &&
+                state.pendingServerState.updatedAt < acknowledgedServerVersion
+                  ? null
+                  : state.pendingServerState,
             };
           });
         },

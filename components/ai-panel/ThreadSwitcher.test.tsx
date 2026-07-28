@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -97,17 +97,20 @@ describe("ThreadSwitcher", () => {
     await user.click(screen.getByRole("button", { name: "Conversations" }));
 
     const items = screen.getAllByRole("menuitemradio");
-    items[0].focus();
+    await waitFor(() => expect(document.activeElement).toBe(items[0]));
+    expect(items.map((item) => item.tabIndex)).toEqual([0, -1]);
     await user.keyboard("{ArrowDown}");
 
     expect(document.activeElement).toBe(items[1]);
+    expect(items.map((item) => item.tabIndex)).toEqual([-1, 0]);
 
     await user.keyboard("{Home}");
 
     expect(document.activeElement).toBe(items[0]);
   });
 
-  it("refuses to open while a turn is streaming", () => {
+  it("keeps the paused trigger focusable and refuses to open", async () => {
+    const user = userEvent.setup();
     render(
       <ThreadSwitcher
         activeThreadId="threads:new"
@@ -121,8 +124,52 @@ describe("ThreadSwitcher", () => {
       name: "Conversations — paused while Sprig is working",
     });
 
-    expect(trigger).toHaveProperty("disabled", true);
+    expect(trigger).toHaveProperty("disabled", false);
+    expect(trigger.getAttribute("aria-disabled")).toBe("true");
+    trigger.focus();
+    await user.click(trigger);
+    expect(document.activeElement).toBe(trigger);
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("closes an open menu and returns focus when streaming starts", async () => {
+    const user = userEvent.setup();
+    const view = render(
+      <ThreadSwitcher
+        activeThreadId="threads:old"
+        isStreaming={false}
+        onSelect={vi.fn()}
+        threads={THREADS}
+      />
+    );
+
+    const trigger = screen.getByRole("button", { name: "Conversations" });
+    await user.click(trigger);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("menuitemradio", {
+          name: "First pass at the outline",
+        })
+      )
+    );
+
+    view.rerender(
+      <ThreadSwitcher
+        activeThreadId="threads:old"
+        isStreaming
+        onSelect={vi.fn()}
+        threads={THREADS}
+      />
+    );
+
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", {
+          name: "Conversations — paused while Sprig is working",
+        })
+      )
+    );
   });
 
   it("invites a first message when nothing has been saved yet", async () => {

@@ -2,8 +2,11 @@
 
 Everything below is **human-in-the-loop**: no agent or script performs these
 steps. Each stage lists its unlock and its verification. Local development
-needs none of this — the zero-key setup (anonymous Convex, keyless Clerk,
-Claude-subscription OAuth token) keeps working unchanged.
+can run the UI with keyless Clerk and anonymous Convex, but Convex auth is
+deliberately fail-closed until a Clerk issuer is configured. Authenticated data
+flows therefore need steps 1 and 2; without them, the UI shell runs while map
+data remains inert. Sprig also remains unavailable without its dev-local
+Claude-subscription OAuth token.
 
 ## 0. Current state (end of P9)
 
@@ -11,7 +14,8 @@ Claude-subscription OAuth token) keeps working unchanged.
   backend on 127.0.0.1:3211). Schema, functions, and codegen are committed.
 - Clerk: keyless dev instance. Claim URL is printed on every `pnpm dev`
   start. Custom sign-in/up flows work; OAuth buttons are flag-gated off;
-  the Convex JWT bridge is written but inert (no issuer configured).
+  the Convex JWT bridge is written but deliberately rejects data access until
+  an issuer is configured.
 - AI: `ANTHROPIC_OAUTH_TOKEN` (personal Claude-subscription token) — dev
   only. No API-key path exists in `lib/anthropic.ts` yet.
 - Data: legacy Supabase project still holds pre-overhaul mindmaps;
@@ -62,8 +66,8 @@ Options, pick one before launch:
 ## 4. Migrate legacy data
 
 1. Ensure `.env.local` (or the shell) has the legacy
-   `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` (they were
-   removed from the app env; the script reads them explicitly).
+   `SUPABASE_URL` / `SUPABASE_API_KEY` (operator-only inputs read explicitly
+   by the migration script).
 2. Dry run against prod Convex: `CONVEX_DEPLOYMENT=<prod> pnpm
    migrate:supabase` — review the per-map diff report (adds/changes/
    removes, rejected maps with reasons).
@@ -84,7 +88,7 @@ Set for Production (and Preview if desired):
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | step 1.4 |
 | `CLERK_SECRET_KEY` | step 1.4 |
 | `NEXT_PUBLIC_ENABLE_OAUTH` | `true` once step 1.3 is done |
-| `ANTHROPIC_API_KEY` or `ANTHROPIC_OAUTH_TOKEN` | step 3 |
+| `ANTHROPIC_API_KEY` | step 3 option A only; omit when shipping option B |
 | `SPRIG_AI_MODEL` | optional override (default `claude-sonnet-5`) |
 
 The build itself needs no env vars (verified in CI every merge).
@@ -99,7 +103,8 @@ The build itself needs no env vars (verified in CI every merge).
 - [ ] AI panel: create nodes via chat; bloom flash; "Undo to here"
       reverses the turn; canvas updates live without reload.
 - [ ] Share: set a map shared (UI from P9b), open `/share/<publicId>` in a
-      private window; read-only enforced; revoke → link 404s content-wise.
+      private window; read-only enforced; revoke → the owner UI reflects the
+      private server state via live reseed and the link 404s content-wise.
 - [ ] `robots.txt`, `sitemap.xml` public; deep link → sign-in → returns to
       the deep link.
 

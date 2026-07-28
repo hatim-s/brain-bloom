@@ -277,8 +277,10 @@ describe("createMindmapStore", () => {
     store.getState().actions.markSyncState("saving");
 
     const reseeded = store.getState().actions.reseedFromServer({
+      name: "Server fixture",
       nodes: createServerNodes(),
       updatedAt: 2,
+      visibility: "shared",
     });
     const state = store.getState();
 
@@ -300,6 +302,9 @@ describe("createMindmapStore", () => {
       },
     ]);
     expect(state.syncState).toBe("saving");
+    expect(state.mindmapDB.name).toBe("Server fixture");
+    expect(state.mindmapDB.visibility).toBe("shared");
+    expect(state.reseedCount).toBe(1);
     expect(state.seededUpdatedAt).toBe(2);
     expectDerivedStateInvariant(state);
   });
@@ -313,8 +318,10 @@ describe("createMindmapStore", () => {
     const previousNodes = store.getState().nodes;
 
     const reseeded = store.getState().actions.reseedFromServer({
+      name: "Server fixture",
       nodes: createServerNodes(),
       updatedAt: 2,
+      visibility: "shared",
     });
 
     expect(reseeded).toBe(false);
@@ -324,6 +331,27 @@ describe("createMindmapStore", () => {
       "[MindmapFlowProvider] ignored reseedFromServer in read-only mode"
     );
     warning.mockRestore();
+  });
+
+  it("ignores a queued snapshot older than the acknowledged flush", () => {
+    const store = createFixtureStore();
+
+    store.getState().actions.onUpdateNode("r-child", { title: "Local edit" });
+    const batch = store.getState().actions.peekPendingOps()!;
+    store.getState().actions.reconcileServerState({
+      name: "Stale server fixture",
+      nodes: createServerNodes(),
+      updatedAt: 2,
+      visibility: "shared",
+    });
+
+    store.getState().actions.commitFlushedOps(batch.count, 3);
+
+    expect(store.getState().acknowledgedServerVersion).toBe(3);
+    expect(store.getState().pendingServerState).toBeNull();
+    expect(store.getState().actions.applyPendingServerState()).toBe(false);
+    expect(store.getState().mindmapDB.name).toBe("Store fixture");
+    expect(store.getState().mindmapDB.visibility).toBe("private");
   });
 
   it("rejects mutation actions when seeded read-only", () => {

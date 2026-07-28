@@ -304,6 +304,21 @@ describe("AiPanel", () => {
     expect(clearError).toHaveBeenCalled();
   });
 
+  it("surfaces the AI configuration failure without offering retry", () => {
+    mocks.chat.current = createChat({
+      error: new Error('{"error":"AI is not configured"}'),
+      status: "error",
+    });
+
+    renderPanel();
+
+    expect(screen.getAllByText("AI is not configured")).toHaveLength(2);
+    expect(screen.getByText("ANTHROPIC_OAUTH_TOKEN")).toBeDefined();
+    expect(screen.getByText("docs/ENV.md")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("queues an AI-created id to bloom after the next server reseed", async () => {
     renderPanel();
 
@@ -321,7 +336,9 @@ describe("AiPanel", () => {
 
     act(() => {
       panelStore.getState().actions.reseedFromServer({
+        name: "Panel fixture",
         updatedAt: 2,
+        visibility: "private",
         nodes: [
           {
             nodeId: ROOT_NODE_ID,

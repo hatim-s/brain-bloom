@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, MessagesSquare } from "lucide-react";
-import { type KeyboardEvent, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -39,11 +39,39 @@ function ThreadSwitcher({
   threads,
 }: ThreadSwitcherProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [rovingThreadId, setRovingThreadId] = useState<string | null>(
+    activeThreadId
+  );
   const listRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   const triggerLabel = isStreaming
     ? "Conversations — paused while Sprig is working"
     : "Conversations";
+
+  useEffect(() => {
+    if (!isStreaming || !isOpen) {
+      return;
+    }
+
+    setIsOpen(false);
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  }, [isOpen, isStreaming]);
+
+  useEffect(() => {
+    if (!isOpen || threads === undefined || threads.length === 0) {
+      return;
+    }
+
+    const initialThread =
+      threads.find((thread) => thread._id === activeThreadId) ?? threads[0];
+    setRovingThreadId(initialThread._id);
+    listRef.current
+      ?.querySelector<HTMLButtonElement>(
+        `[data-thread-id="${initialThread._id}"]`
+      )
+      ?.focus();
+  }, [activeThreadId, isOpen, threads]);
 
   /** Moves focus between rows without letting the popover scroll under it. */
   function handleListKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -76,22 +104,45 @@ function ThreadSwitcher({
             ? (currentIndex + 1) % items.length
             : (currentIndex - 1 + items.length) % items.length;
 
+    setRovingThreadId(items[nextIndex]?.dataset.threadId ?? null);
     items[nextIndex]?.focus();
   }
 
   /** Closes first so focus returns to the trigger, then hands off the choice. */
   function handleSelect(thread: SprigThreadSummary) {
+    if (isStreaming) {
+      return;
+    }
+
     setIsOpen(false);
     onSelect(thread);
   }
 
+  /** Keeps the controlled popover closed while the active turn owns the panel. */
+  function handleOpenChange(nextIsOpen: boolean): void {
+    if (nextIsOpen && isStreaming) {
+      return;
+    }
+
+    setIsOpen(nextIsOpen);
+  }
+
   return (
-    <Popover onOpenChange={setIsOpen} open={isOpen}>
+    <Popover onOpenChange={handleOpenChange} open={isOpen}>
       <PopoverTrigger asChild>
         <Button
+          aria-disabled={isStreaming}
           aria-label={triggerLabel}
-          className="size-7 rounded-md text-muted-foreground hover:text-foreground"
-          disabled={isStreaming}
+          className={cn(
+            "size-7 rounded-md text-muted-foreground hover:text-foreground",
+            isStreaming && "cursor-not-allowed opacity-60"
+          )}
+          onClick={(event) => {
+            if (isStreaming) {
+              event.preventDefault();
+            }
+          }}
+          ref={triggerRef}
           size="icon"
           title={triggerLabel}
           type="button"
@@ -133,9 +184,11 @@ function ThreadSwitcher({
                     "hover:bg-accent hover:text-accent-foreground",
                     isActive ? "text-foreground" : "text-muted-foreground"
                   )}
+                  data-thread-id={thread._id}
                   key={thread._id}
                   onClick={() => handleSelect(thread)}
                   role="menuitemradio"
+                  tabIndex={thread._id === rovingThreadId ? 0 : -1}
                   title={thread.title}
                   type="button"
                 >

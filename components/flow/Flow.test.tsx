@@ -184,7 +184,9 @@ describe("Flow", () => {
         .getState()
         .actions.setAiTouchedNodeIdsAfterReseed(["l-ai-created"], 1);
       store.getState().actions.reseedFromServer({
+        name: MINDMAP.name,
         updatedAt: 2,
+        visibility: MINDMAP.visibility,
         nodes: [
           ...NODES,
           {
@@ -199,6 +201,34 @@ describe("Flow", () => {
     });
 
     expect(view.getByTestId("bloomed-nodes").textContent).toBe("l-ai-created");
+  });
+
+  it("re-dispatches the active selection after a server reseed", () => {
+    const view = render(
+      <Flow
+        mindmap={{ ...MINDMAP, isOwner: true }}
+        nodes={NODES}
+        readOnly={false}
+      />
+    );
+
+    act(() => store.getState().setActiveNode("left-child"));
+    expect(view.getByTestId("selected-count").textContent).toBe("1");
+
+    act(() => {
+      store.getState().actions.reseedFromServer({
+        name: MINDMAP.name,
+        nodes: NODES.map((node) =>
+          node.nodeId === "left-child"
+            ? { ...node, title: "Server title" }
+            : node
+        ),
+        updatedAt: 2,
+        visibility: MINDMAP.visibility,
+      });
+    });
+
+    expect(view.getByTestId("selected-count").textContent).toBe("1");
   });
 });
 

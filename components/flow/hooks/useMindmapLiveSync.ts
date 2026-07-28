@@ -28,8 +28,10 @@ function useMindmapLiveSync(): void {
     }
 
     reconcileServerState({
+      name: serverState.mindmap.name,
       nodes: serverState.nodes as MindmapNodeProjection[],
       updatedAt: serverState.mindmap.updatedAt,
+      visibility: serverState.mindmap.visibility,
     });
   }, [reconcileServerState, serverState]);
 }

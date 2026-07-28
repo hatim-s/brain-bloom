@@ -67,7 +67,11 @@ describe("useMindmapLiveSync", () => {
   });
 
   it("defers a live result during a flush and applies it when the queue drains", async () => {
-    const mutation = createDeferred<{ operationId: string; seq: number }>();
+    const mutation = createDeferred<{
+      operationId: string;
+      seq: number;
+      updatedAt: number;
+    }>();
     mocks.mutation.mockReturnValue(mutation.promise);
     const view = renderLiveHarness({ withAutosave: true });
 
@@ -89,14 +93,52 @@ describe("useMindmapLiveSync", () => {
     expect(store.getState().pendingServerState?.updatedAt).toBe(2);
 
     await act(async () => {
-      mutation.resolve({ operationId: "operations:1", seq: 1 });
+      mutation.resolve({
+        operationId: "operations:1",
+        seq: 1,
+        updatedAt: 3,
+      });
       await mutation.promise;
     });
 
     expect(store.getState().pendingOps).toEqual([]);
     expect(store.getState().syncState).toBe("idle");
     expect(store.getState().pendingServerState).toBeNull();
-    expect(store.getState().seededUpdatedAt).toBe(2);
+    expect(store.getState().acknowledgedServerVersion).toBe(3);
+    expect(store.getState().seededUpdatedAt).toBe(1);
+    expect(store.getState().nodesMap["l-ai-created"]).toBeUndefined();
+  });
+
+  it("applies a deferred snapshot at or above the flush watermark", async () => {
+    const mutation = createDeferred<{
+      operationId: string;
+      seq: number;
+      updatedAt: number;
+    }>();
+    mocks.mutation.mockReturnValue(mutation.promise);
+    const view = renderLiveHarness({ withAutosave: true });
+
+    act(() => {
+      store
+        .getState()
+        .actions.onUpdateNode("right-child", { title: "Local edit" });
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+
+    mocks.query.current = createServerState(3, true);
+    view.rerender(createLiveHarness({ withAutosave: true }));
+
+    await act(async () => {
+      mutation.resolve({
+        operationId: "operations:1",
+        seq: 1,
+        updatedAt: 3,
+      });
+      await mutation.promise;
+    });
+
+    expect(store.getState().pendingServerState).toBeNull();
+    expect(store.getState().seededUpdatedAt).toBe(3);
     expect(store.getState().nodesMap["l-ai-created"]).toBeDefined();
   });
 

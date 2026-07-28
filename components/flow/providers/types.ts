@@ -10,8 +10,10 @@ type DagreGraph = graphlib.Graph<GraphLabel, NodeLabel, EdgeLabel>;
 
 /** A versioned server graph waiting for the local operation queue to drain. */
 type ServerMindmapState = {
+  name: string;
   nodes: MindmapNodeProjection[];
   updatedAt: number;
+  visibility: MindmapDB["visibility"];
 };
 
 /** All mutable and derived state owned by one canvas provider. */
@@ -49,6 +51,8 @@ type MindmapFlowContext = {
   pendingAiTouchedNodeIds: string[];
 
   mindmapDB: MindmapDB;
+  acknowledgedServerVersion: number;
+  reseedCount: number;
   seededUpdatedAt: number;
   pendingServerState: ServerMindmapState | null;
   pendingOps: NodeOp[];
@@ -85,7 +89,7 @@ type MindmapFlowContext = {
       ops: NodeOp[];
       count: number;
     } | null;
-    commitFlushedOps: (count: number) => void;
+    commitFlushedOps: (count: number, acknowledgedUpdatedAt?: number) => void;
     releaseFlushedOps: () => void;
     retrySync: () => void;
     flushNow: () => Promise<boolean>;

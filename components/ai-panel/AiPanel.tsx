@@ -28,6 +28,15 @@ import { SelectedNodeChip } from "./SelectedNodeChip";
 import { ThreadSwitcher } from "./ThreadSwitcher";
 import { type SprigThreadSummary, useSprigChat } from "./useSprigChat";
 
+const AI_NOT_CONFIGURED_MESSAGE = "AI is not configured";
+
+/**
+ * Detects the route's known 503 body in the error text exposed by the AI SDK.
+ */
+function isAIConfigurationError(error: Error | undefined): boolean {
+  return error?.message.includes(AI_NOT_CONFIGURED_MESSAGE) ?? false;
+}
+
 /**
  * The Sprig conversation surface.
  *
@@ -99,6 +108,7 @@ function AiPanel({ onCollapse }: { onCollapse: () => void }) {
   );
 
   const chat = useSprigChat({ mindmapId, onTurnFinished: handleTurnFinished });
+  const hasAIConfigurationError = isAIConfigurationError(chat.error);
 
   const activeNodeTitle =
     activeNode === null
@@ -126,7 +136,11 @@ function AiPanel({ onCollapse }: { onCollapse: () => void }) {
 
   useEffect(() => {
     if (chat.error !== undefined) {
-      setAnnouncement("Sprig could not finish that. Try again.");
+      setAnnouncement(
+        isAIConfigurationError(chat.error)
+          ? "AI is not configured"
+          : "Sprig could not finish that. Try again."
+      );
     }
   }, [chat.error]);
 
@@ -239,7 +253,18 @@ function AiPanel({ onCollapse }: { onCollapse: () => void }) {
       </Conversation>
 
       <div className="flex flex-col gap-2 border-t border-border p-3">
-        {chat.error === undefined ? null : (
+        {chat.error === undefined ? null : hasAIConfigurationError ? (
+          <div
+            className="rounded-md border border-line-strong bg-secondary px-2.5 py-2 text-sm text-muted-foreground"
+            role="status"
+          >
+            <p className="font-medium text-foreground">AI is not configured</p>
+            <p className="mt-1 text-xs leading-relaxed">
+              Set <code>ANTHROPIC_OAUTH_TOKEN</code> as described in{" "}
+              <code>docs/ENV.md</code>, then reload.
+            </p>
+          </div>
+        ) : (
           <div
             className="flex items-start gap-2 rounded-md border border-destructive px-2.5 py-2 text-sm font-medium text-destructive"
             role="alert"
@@ -288,4 +313,4 @@ function AiPanel({ onCollapse }: { onCollapse: () => void }) {
   );
 }
 
-export { AiPanel };
+export { AiPanel, isAIConfigurationError };

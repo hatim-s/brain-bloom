@@ -599,7 +599,11 @@ function deserializeInverseOps(value: unknown): NodeOp[] {
 export async function applyOps(
   ctx: MutationCtx,
   { mindmapId, ops, actor, description, source }: ApplyOpsArgs
-): Promise<{ operationId: Id<"operations">; seq: number }> {
+): Promise<{
+  operationId: Id<"operations">;
+  seq: number;
+  updatedAt: number;
+}> {
   if (ops.length > MAX_OPS_PER_BATCH) {
     throw new ConvexError("Invalid op: too many operations");
   }
@@ -624,11 +628,10 @@ export async function applyOps(
     actor,
     source,
   });
-  await ctx.db.patch("mindmaps", mindmapId, {
-    updatedAt: Date.now(),
-  });
+  const updatedAt = Date.now();
+  await ctx.db.patch("mindmaps", mindmapId, { updatedAt });
 
-  return { operationId, seq };
+  return { operationId, seq, updatedAt };
 }
 
 /**
@@ -697,11 +700,10 @@ export const undo = mutation({
     await validateOps(ctx, operation.mindmapId, inversePatch);
     await writeOps(ctx, operation.mindmapId, inversePatch);
     await ctx.db.patch("operations", operation._id, { undone: true });
-    await ctx.db.patch("mindmaps", operation.mindmapId, {
-      updatedAt: Date.now(),
-    });
+    const updatedAt = Date.now();
+    await ctx.db.patch("mindmaps", operation.mindmapId, { updatedAt });
 
-    return { seq: operation.seq };
+    return { seq: operation.seq, updatedAt };
   },
 });
 
@@ -749,11 +751,10 @@ export const undoTo = mutation({
       undoneCount += 1;
     }
 
-    await ctx.db.patch("mindmaps", target.mindmapId, {
-      updatedAt: Date.now(),
-    });
+    const updatedAt = Date.now();
+    await ctx.db.patch("mindmaps", target.mindmapId, { updatedAt });
 
-    return { undoneCount, seq: target.seq };
+    return { undoneCount, seq: target.seq, updatedAt };
   },
 });
 

@@ -828,7 +828,15 @@ describe("ops.undo and history", () => {
     });
     const after = await readNodeRows(t, map.mindmapId);
 
-    expect(undone.seq).toBe(changed.seq);
+    expect(undone).toEqual({
+      seq: changed.seq,
+      updatedAt: expect.any(Number),
+    });
+    expect(changed).toEqual({
+      operationId: changed.operationId,
+      seq: 2,
+      updatedAt: expect.any(Number),
+    });
     expect(after).toEqual(before);
   });
 
@@ -1100,7 +1108,11 @@ describe("ops.undo and history", () => {
       mindmapId: map.mindmapId,
     });
 
-    expect(undone).toEqual({ undoneCount: 2, seq: 5 });
+    expect(undone).toEqual({
+      undoneCount: 2,
+      seq: 5,
+      updatedAt: expect.any(Number),
+    });
     expect(result.nodes.map((node) => node.nodeId)).toEqual(["root"]);
   });
 
@@ -1188,7 +1200,11 @@ describe("ops.undo and history", () => {
       operationId: target.operationId,
     });
 
-    expect(result).toEqual({ undoneCount: 3, seq: 1 });
+    expect(result).toEqual({
+      undoneCount: 3,
+      seq: 1,
+      updatedAt: expect.any(Number),
+    });
     expect(
       (
         await asAlice.query(api.mindmaps.get, {

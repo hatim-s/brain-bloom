@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 
 import { useMindmapFlow } from "../../providers/MindmapFlowProvider";
 import { NodeAiEdit } from "./NodeAiEdit";
-import NodeDataInput from "./NodeDataInput";
+import { NodeDataInput } from "./NodeDataInput";
 
 /**
  * The card that every mindmap node renders into.

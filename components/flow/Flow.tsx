@@ -60,6 +60,7 @@ export function MindmapFlow() {
   const mindmapNodesMap = useMindmapFlow((state) => state.mindmapNodesMap);
   const leveledNodes = useMindmapFlow((state) => state.leveledNodes);
   const activeNode = useMindmapFlow((state) => state.activeNode);
+  const reseedCount = useMindmapFlow((state) => state.reseedCount);
   const setActiveNode = useMindmapFlow((state) => state.setActiveNode);
   const selectedNode = useMindmapFlow((state) => state.selectedNode);
   const aiEditNode = useMindmapFlow((state) => state.aiEditNode);
@@ -151,6 +152,12 @@ export function MindmapFlow() {
 
   const reactflowInstance = useReactFlow();
 
+  // Server reseeds replace every XYFlow node object, including its transient
+  // selected flag. Forget the prior dispatch so the active node is reselected.
+  useEffect(() => {
+    prevActiveNode.current = null;
+  }, [reseedCount]);
+
   // sync active node with the flow
   useEffect(() => {
     if (activeNode) {
@@ -198,7 +205,7 @@ export function MindmapFlow() {
           selected: false,
         },
       ]);
-  }, [activeNode, handleNodeChange, reactflowInstance]);
+  }, [activeNode, handleNodeChange, reactflowInstance, reseedCount]);
 
   return (
     <Stack className="h-full w-full flex-1">

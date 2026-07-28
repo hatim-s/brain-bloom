@@ -159,12 +159,17 @@ function useMindmapSync(): void {
       try {
         for (const run of groupPendingOpsBySource(batch.ops)) {
           try {
-            await applyOps({
+            const result = await applyOps({
               mindmapId: store.getState().mindmapDB._id,
               ops: toWireOps(run.ops),
               description: describePendingOps(run.ops),
               source: run.source,
             });
+
+            if (isDisposed) return false;
+            store
+              .getState()
+              .actions.commitFlushedOps(run.count, result.updatedAt);
           } catch (error) {
             if (isDisposed) return false;
 
@@ -193,9 +198,6 @@ function useMindmapSync(): void {
             return false;
           }
 
-          if (isDisposed) return false;
-
-          store.getState().actions.commitFlushedOps(run.count);
           consecutiveFailures = 0;
         }
 
