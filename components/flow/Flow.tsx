@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 import { Stack } from "../ui/stack";
 import { SaveMindmap } from "./components/SaveMindmap";
+import { ShareMindmap } from "./components/ShareMindmap";
 import { useMindmapLiveSync } from "./hooks/useMindmapLiveSync";
 import { useMindmapNavigation } from "./hooks/useMindmapNavigation";
 import { useMindmapSync } from "./hooks/useMindmapSync";
@@ -204,7 +205,13 @@ export function MindmapFlow() {
       {readOnly ? null : (
         <>
           <MindmapSynchronization />
-          <SaveMindmap />
+          {/* One right rail below the floating header: sharing is an action,
+              the save pill is ambient status, and they share a row so neither
+              can drift as the pill's copy changes length. */}
+          <div className="absolute top-16 right-[var(--theme-switcher-inset)] z-10 flex items-center gap-2">
+            <ShareMindmap />
+            <SaveMindmap />
+          </div>
         </>
       )}
       <ReactFlow

@@ -49,7 +49,7 @@ const BaseNodeContent = (props: {
       className={cn(
         "w-[300px] py-3 px-5 items-start text-left",
         "rounded-lg border border-line-strong bg-card text-card-foreground",
-        "transition-[border-color,box-shadow] duration-200 ease-organic",
+        "transition-[border-color,box-shadow] duration-200 ease-organic motion-reduce:transition-none",
         {
           "border-primary shadow-[0_0_0_2px_var(--background),0_0_0_4px_var(--primary)]":
             isSelected,

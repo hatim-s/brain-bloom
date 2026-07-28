@@ -25,7 +25,8 @@ import { AiChatInput } from "./AiChatInput";
 import { AiMessage } from "./AiMessage";
 import { collectTouchedNodeIds, getToolParts } from "./messages";
 import { SelectedNodeChip } from "./SelectedNodeChip";
-import { useSprigChat } from "./useSprigChat";
+import { ThreadSwitcher } from "./ThreadSwitcher";
+import { type SprigThreadSummary, useSprigChat } from "./useSprigChat";
 
 /**
  * The Sprig conversation surface.
@@ -155,6 +156,14 @@ function AiPanel({ onCollapse }: { onCollapse: () => void }) {
     return chat.regenerate();
   });
 
+  const handleSelectThread = useEventCallback((thread: SprigThreadSummary) => {
+    // The transcript is replaced without moving focus, so the switch has to be
+    // announced or a screen reader user gets no confirmation it happened.
+    if (chat.selectThread(thread._id)) {
+      setAnnouncement(`Opened conversation: ${thread.title}`);
+    }
+  });
+
   return (
     <section
       aria-label="Sprig assistant"
@@ -172,26 +181,34 @@ function AiPanel({ onCollapse }: { onCollapse: () => void }) {
         {chat.isStreaming ? (
           <span aria-hidden="true" className="sprig-bloom-dot" />
         ) : null}
-        <Button
-          className="ml-auto h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-          disabled={chat.isStreaming || chat.messages.length === 0}
-          onClick={chat.startNewConversation}
-          size="sm"
-          type="button"
-          variant="ghost"
-        >
-          New conversation
-        </Button>
-        <Button
-          aria-label="Collapse Sprig panel"
-          className="size-7 rounded-md text-muted-foreground hover:text-foreground"
-          onClick={onCollapse}
-          size="icon"
-          type="button"
-          variant="ghost"
-        >
-          <PanelRightClose aria-hidden="true" className="!size-4" />
-        </Button>
+        <div className="ml-auto flex items-center gap-1">
+          <ThreadSwitcher
+            activeThreadId={chat.activeThreadId}
+            isStreaming={chat.isStreaming}
+            onSelect={handleSelectThread}
+            threads={chat.threads}
+          />
+          <Button
+            className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+            disabled={chat.isStreaming || chat.messages.length === 0}
+            onClick={chat.startNewConversation}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            New conversation
+          </Button>
+          <Button
+            aria-label="Collapse Sprig panel"
+            className="size-7 rounded-md text-muted-foreground hover:text-foreground"
+            onClick={onCollapse}
+            size="icon"
+            type="button"
+            variant="ghost"
+          >
+            <PanelRightClose aria-hidden="true" className="!size-4" />
+          </Button>
+        </div>
       </div>
 
       <Conversation className="min-h-0 flex-1" aria-label="Conversation">

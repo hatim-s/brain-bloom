@@ -9,6 +9,14 @@ import { useEventCallback } from "@/hooks/use-event-callback";
 
 const THEME_OPTIONS = ["light", "dark", "system"];
 
+/**
+ * The one global theme control: a single button that cycles light → dark →
+ * system rather than a menu, because the choice is small enough that opening
+ * anything would cost more than trying the next option.
+ *
+ * It renders nothing until mounted: the resolved theme is client-only, and a
+ * server-rendered icon would be a guess the first client paint has to undo.
+ */
 const ThemeSwitcher = () => {
   const [mounted, setMounted] = useState(false);
   const { theme, setTheme } = useTheme();
@@ -38,6 +46,8 @@ const ThemeSwitcher = () => {
       className="absolute top-3.5 right-[var(--theme-switcher-inset)] z-10 text-muted-foreground hover:text-foreground"
       aria-label={`Theme: ${theme}. Click to change.`}
       onClick={() => handleThemeChange()}
+      title={`Theme: ${theme}. Click to change.`}
+      type="button"
     >
       {theme === "light" ? (
         <Sun
@@ -60,45 +70,6 @@ const ThemeSwitcher = () => {
       )}
     </Button>
   );
-
-  // return (
-  //   <DropdownMenu>
-  //     <DropdownMenuTrigger asChild>
-  //       <Button
-  //         variant="ghost"
-  //         size="icon"
-  //         className="absolute top-8 right-8 z-10"
-  //       >
-  //         {theme === "light" ? (
-  //           <Sun key="light" size={ICON_SIZE} />
-  //         ) : theme === "dark" ? (
-  //           <Moon key="dark" size={ICON_SIZE} />
-  //         ) : (
-  //           <Laptop key="system" size={ICON_SIZE} />
-  //         )}
-  //       </Button>
-  //     </DropdownMenuTrigger>
-  //     <DropdownMenuContent className="w-content" align="end">
-  //       <DropdownMenuRadioGroup
-  //         value={theme}
-  //         onValueChange={(e) => setTheme(e)}
-  //       >
-  //         <DropdownMenuRadioItem className="flex gap-2" value="light">
-  //           <Sun size={ICON_SIZE} className="text-muted-foreground" />
-  //           <span>Light</span>
-  //         </DropdownMenuRadioItem>
-  //         <DropdownMenuRadioItem className="flex gap-2" value="dark">
-  //           <Moon size={ICON_SIZE} className="text-muted-foreground" />
-  //           <span>Dark</span>
-  //         </DropdownMenuRadioItem>
-  //         <DropdownMenuRadioItem className="flex gap-2" value="system">
-  //           <Laptop size={ICON_SIZE} className="text-muted-foreground" />
-  //           <span>System</span>
-  //         </DropdownMenuRadioItem>
-  //       </DropdownMenuRadioGroup>
-  //     </DropdownMenuContent>
-  //   </DropdownMenu>
-  // );
 };
 
 export { ThemeSwitcher };

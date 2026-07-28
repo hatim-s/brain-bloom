@@ -68,16 +68,19 @@ vi.mock("./useSprigChat", () => ({
 /** Builds the chat surface state the panel renders against. */
 function createChat(overrides: Partial<UseSprigChat> = {}): UseSprigChat {
   return {
+    activeThreadId: null,
     clearError: vi.fn(),
     error: undefined,
     isHistoryLoading: false,
     isStreaming: false,
     messages: [],
     regenerate: vi.fn(async () => true),
+    selectThread: vi.fn(() => true),
     sendPrompt: vi.fn(async () => true),
     startNewConversation: vi.fn(),
     status: "ready",
     stop: vi.fn(),
+    threads: [],
     ...overrides,
   };
 }

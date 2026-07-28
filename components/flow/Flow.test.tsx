@@ -37,7 +37,12 @@ vi.mock("@/components/ai-panel/AiPanelLayout", () => ({
   ),
 }));
 
-// Autosave owns a Convex mutation that this suite has no client for.
+// Autosave and the share control own Convex mutations that this suite has no
+// client for; the canvas behaviour under test does not depend on either.
+vi.mock("convex/react", () => ({
+  useMutation: () => vi.fn(),
+}));
+
 vi.mock("./hooks/useMindmapSync", () => ({
   useMindmapSync: () => {},
 }));
