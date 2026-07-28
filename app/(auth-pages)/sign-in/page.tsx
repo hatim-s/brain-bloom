@@ -1,18 +1,60 @@
-import Link from "next/link";
+"use client";
 
-import { signInAction } from "@/actions/auth";
-import { FormMessage, Message } from "@/components/form-message";
-import { SubmitButton } from "@/components/submit-button";
+import { useSignIn } from "@clerk/nextjs";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { FormEvent, useState } from "react";
+
+import { FormMessage } from "@/components/form-message";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export default async function Login(props: { searchParams: Promise<Message> }) {
-  const searchParams = await props.searchParams;
+/** Provides the minimal password-based Clerk Core 3 sign-in flow. */
+export default function Login() {
+  const { signIn, fetchStatus } = useSignIn();
+  const router = useRouter();
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const isSubmitting = fetchStatus === "fetching";
+
+  /** Creates and finalizes a Clerk password sign-in attempt. */
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setErrorMessage(null);
+
+    const formData = new FormData(event.currentTarget);
+    const identifier = formData.get("identifier")?.toString() ?? "";
+    const password = formData.get("password")?.toString() ?? "";
+    const { error } = await signIn.create({ identifier, password });
+
+    if (error) {
+      setErrorMessage(error.longMessage ?? error.message);
+      return;
+    }
+
+    if (signIn.status !== "complete") {
+      setErrorMessage("Additional verification is required to sign in.");
+      return;
+    }
+
+    const { error: finalizeError } = await signIn.finalize();
+    if (finalizeError) {
+      setErrorMessage(finalizeError.longMessage ?? finalizeError.message);
+      return;
+    }
+
+    router.push("/");
+    router.refresh();
+  }
+
   return (
-    <form className="flex flex-col min-w-[400px] max-w-[400px] mx-auto">
+    <form
+      className="flex flex-col min-w-[400px] max-w-[400px] mx-auto"
+      onSubmit={handleSubmit}
+    >
       <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        Don't have an account?{" "}
+        Don&apos;t have an account?{" "}
         <Link
           className="font-medium text-primary underline underline-offset-4"
           href="/sign-up"
@@ -21,27 +63,30 @@ export default async function Login(props: { searchParams: Promise<Message> }) {
         </Link>
       </p>
       <div className="flex flex-col gap-2 [&>input]:mb-3 mt-8">
-        <Label htmlFor="email">Email</Label>
-        <Input name="email" placeholder="you@example.com" required />
-        <div className="flex justify-between items-center">
-          <Label htmlFor="password">Password</Label>
-          <Link
-            className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
-            href="/forgot-password"
-          >
-            Forgot password?
-          </Link>
-        </div>
+        <Label htmlFor="identifier">Email</Label>
         <Input
-          type="password"
+          autoComplete="email"
+          id="identifier"
+          name="identifier"
+          placeholder="you@example.com"
+          required
+          type="email"
+        />
+        <Label htmlFor="password">Password</Label>
+        <Input
+          autoComplete="current-password"
+          id="password"
           name="password"
           placeholder="Your password"
           required
+          type="password"
         />
-        <SubmitButton pendingText="Signing In..." formAction={signInAction}>
-          Sign in
-        </SubmitButton>
-        <FormMessage message={searchParams} />
+        <Button disabled={isSubmitting} type="submit">
+          {isSubmitting ? "Signing in..." : "Sign in"}
+        </Button>
+        {errorMessage ? (
+          <FormMessage message={{ error: errorMessage }} />
+        ) : null}
       </div>
     </form>
   );

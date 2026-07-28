@@ -1,9 +1,11 @@
 "use client";
 
+import { useClerk, useUser } from "@clerk/nextjs";
 import clsx from "clsx";
 
 import { MindmapDB } from "@/types/Mindmap";
 
+import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
 import { SidebarTrigger, useSidebar } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -17,7 +19,12 @@ import { Typography } from "./ui/typography";
  * curve as the panel itself.
  */
 export function Header({ mindmap }: { mindmap: MindmapDB }) {
+  const { signOut } = useClerk();
+  const { user } = useUser();
   const { open } = useSidebar();
+  const identity =
+    user?.primaryEmailAddress?.emailAddress ?? user?.fullName ?? "Account";
+
   return (
     <header
       className={clsx(
@@ -42,6 +49,17 @@ export function Header({ mindmap }: { mindmap: MindmapDB }) {
       <Typography className="text-sm font-medium" variant="p">
         {mindmap.name}
       </Typography>
+      <div className="ml-auto flex items-center gap-2">
+        <span className="text-sm text-muted-foreground">{identity}</span>
+        <Button
+          onClick={() => signOut({ redirectUrl: "/sign-in" })}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          Sign out
+        </Button>
+      </div>
     </header>
   );
 }
