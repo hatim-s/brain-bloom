@@ -158,7 +158,7 @@ describe("threads", () => {
     ).rejects.toThrow("Forbidden");
   });
 
-  it("allows shared thread reads while preserving owner-only writes", async () => {
+  it("keeps shared-map threads and messages owner-only", async () => {
     const { t, asAlice, asBob } = createHarness();
     const map = await asAlice.mutation(api.mindmaps.create, {
       name: "Shared",
@@ -178,15 +178,16 @@ describe("threads", () => {
       });
     });
 
-    const threads = await asBob.query(api.threads.listThreads, {
-      mindmapId: map.mindmapId,
-    });
-    const messages = await asBob.query(api.threads.listMessages, {
-      threadId,
-    });
-
-    expect(threads.map((thread) => thread._id)).toEqual([threadId]);
-    expect(messages).toHaveLength(1);
+    await expect(
+      asBob.query(api.threads.listThreads, {
+        mindmapId: map.mindmapId,
+      })
+    ).rejects.toThrow("Forbidden");
+    await expect(
+      asBob.query(api.threads.listMessages, {
+        threadId,
+      })
+    ).rejects.toThrow("Forbidden");
     await expect(
       asBob.mutation(api.threads.addMessage, {
         threadId,
@@ -194,5 +195,46 @@ describe("threads", () => {
         content: "Cannot write",
       })
     ).rejects.toThrow("Forbidden");
+  });
+
+  it("validates that a linked operation belongs to the thread mindmap", async () => {
+    const { t, asAlice } = createHarness();
+    const firstMap = await asAlice.mutation(api.mindmaps.create, {
+      name: "First",
+    });
+    const secondMap = await asAlice.mutation(api.mindmaps.create, {
+      name: "Second",
+    });
+    const threadId = await asAlice.mutation(api.threads.createThread, {
+      mindmapId: firstMap.mindmapId,
+      title: "First thread",
+    });
+    const otherOperation = await asAlice.mutation(api.ops.apply, {
+      mindmapId: secondMap.mindmapId,
+      ops: [],
+      description: "Other map",
+      source: "ai",
+    });
+
+    await expect(
+      asAlice.mutation(api.threads.addMessage, {
+        threadId,
+        role: "assistant",
+        content: "Wrong operation",
+        operationId: otherOperation.operationId,
+      })
+    ).rejects.toThrow("Invalid op: operation belongs to another mindmap");
+
+    await t.run(async (ctx) => {
+      await ctx.db.delete("operations", otherOperation.operationId);
+    });
+    await expect(
+      asAlice.mutation(api.threads.addMessage, {
+        threadId,
+        role: "assistant",
+        content: "Missing operation",
+        operationId: otherOperation.operationId,
+      })
+    ).rejects.toThrow("Not found");
   });
 });

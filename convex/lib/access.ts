@@ -3,6 +3,11 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 type AuthenticatedCtx = QueryCtx | MutationCtx;
 
+type AuthorizedMindmap = {
+  mindmap: Doc<"mindmaps">;
+  subject: string;
+};
+
 /**
  * Requires an authenticated Convex identity and returns its stable subject.
  */
@@ -21,9 +26,10 @@ export async function requireUser(ctx: AuthenticatedCtx): Promise<string> {
  */
 export async function requireOwner(
   ctx: AuthenticatedCtx,
-  mindmapId: Id<"mindmaps">
-): Promise<Doc<"mindmaps">> {
-  const subject = await requireUser(ctx);
+  mindmapId: Id<"mindmaps">,
+  authenticatedSubject?: string
+): Promise<AuthorizedMindmap> {
+  const subject = authenticatedSubject ?? (await requireUser(ctx));
   const mindmap = await ctx.db.get("mindmaps", mindmapId);
 
   if (mindmap === null) {
@@ -34,7 +40,7 @@ export async function requireOwner(
     throw new Error("Forbidden");
   }
 
-  return mindmap;
+  return { mindmap, subject };
 }
 
 /**
@@ -42,9 +48,10 @@ export async function requireOwner(
  */
 export async function requireReadable(
   ctx: AuthenticatedCtx,
-  mindmapId: Id<"mindmaps">
-): Promise<Doc<"mindmaps">> {
-  const subject = await requireUser(ctx);
+  mindmapId: Id<"mindmaps">,
+  authenticatedSubject?: string
+): Promise<AuthorizedMindmap> {
+  const subject = authenticatedSubject ?? (await requireUser(ctx));
   const mindmap = await ctx.db.get("mindmaps", mindmapId);
 
   if (mindmap === null) {
@@ -55,5 +62,5 @@ export async function requireReadable(
     throw new Error("Forbidden");
   }
 
-  return mindmap;
+  return { mindmap, subject };
 }

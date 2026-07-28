@@ -19,10 +19,13 @@ export default defineSchema({
     type: v.union(v.literal("root"), v.literal("left"), v.literal("right")),
     title: v.string(),
     description: v.optional(v.string()),
+    link: v.optional(v.string()),
     order: v.number(),
   })
     .index("by_mindmap", ["mindmapId"])
-    .index("by_mindmap_node", ["mindmapId", "nodeId"]),
+    .index("by_mindmap_node", ["mindmapId", "nodeId"])
+    // Reordering is an atomic batch update so sibling order stays unique.
+    .index("by_mindmap_parent", ["mindmapId", "parentId"]),
 
   operations: defineTable({
     mindmapId: v.id("mindmaps"),

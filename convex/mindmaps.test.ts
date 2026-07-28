@@ -1,6 +1,6 @@
 // @vitest-environment edge-runtime
 import { convexTest } from "convex-test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { api } from "./_generated/api";
 import schema from "./schema";
@@ -99,6 +99,9 @@ describe("mindmaps", () => {
     });
 
     expect(after.mindmap.name).toBe("After");
+    expect(after.nodes.find((node) => node.nodeId === "root")?.title).toBe(
+      "After"
+    );
     expect(after.mindmap.updatedAt).toBeGreaterThanOrEqual(
       before.mindmap.updatedAt
     );
@@ -171,6 +174,76 @@ describe("mindmaps", () => {
     ).rejects.toThrow("Forbidden");
   });
 
+  it("hides private public-id existence from non-owners", async () => {
+    const { asAlice, asBob } = createHarness();
+    const created = await asAlice.mutation(api.mindmaps.create, {
+      name: "Private route",
+    });
+
+    await expect(
+      asBob.query(api.mindmaps.getByPublicId, {
+        publicId: created.publicId,
+      })
+    ).rejects.toThrow("Not found");
+    await expect(
+      asBob.query(api.mindmaps.getByPublicId, {
+        publicId: "unknown000",
+      })
+    ).rejects.toThrow("Not found");
+  });
+
+  it("sorts sibling nodes by order for both canvas read paths", async () => {
+    const { asAlice } = createHarness();
+    const created = await asAlice.mutation(api.mindmaps.create, {
+      name: "Ordered",
+    });
+    await asAlice.mutation(api.ops.apply, {
+      mindmapId: created.mindmapId,
+      ops: [
+        {
+          kind: "create",
+          node: {
+            nodeId: "second",
+            parentId: "root",
+            type: "left",
+            title: "Second",
+            order: 1,
+          },
+        },
+        {
+          kind: "create",
+          node: {
+            nodeId: "first",
+            parentId: "root",
+            type: "left",
+            title: "First",
+            order: 0,
+          },
+        },
+      ],
+      description: "Add ordered siblings",
+      source: "user",
+    });
+
+    const byId = await asAlice.query(api.mindmaps.get, {
+      mindmapId: created.mindmapId,
+    });
+    const byPublicId = await asAlice.query(api.mindmaps.getByPublicId, {
+      publicId: created.publicId,
+    });
+
+    expect(
+      byId.nodes
+        .filter((node) => node.parentId === "root")
+        .map((node) => node.nodeId)
+    ).toEqual(["first", "second"]);
+    expect(
+      byPublicId.nodes
+        .filter((node) => node.parentId === "root")
+        .map((node) => node.nodeId)
+    ).toEqual(["first", "second"]);
+  });
+
   it("removes the mindmap and cascades every dependent table", async () => {
     const { t, asAlice } = createHarness();
     const created = await asAlice.mutation(api.mindmaps.create, {
@@ -203,6 +276,16 @@ describe("mindmaps", () => {
       content: [{ type: "text", text: "Done" }],
       operationId: operation.operationId,
     });
+    await t.run(async (ctx) => {
+      // Cross the 200-row cleanup boundary so the rescheduled purge is tested.
+      for (let index = 0; index < 205; index += 1) {
+        await ctx.db.insert("messages", {
+          threadId,
+          role: "assistant",
+          content: `Queued ${index}`,
+        });
+      }
+    });
     const nodeIds = await t.run(async (ctx) => {
       const nodes = await ctx.db
         .query("nodes")
@@ -211,9 +294,30 @@ describe("mindmaps", () => {
       return nodes.map((node) => node._id);
     });
 
+    vi.useFakeTimers();
     await asAlice.mutation(api.mindmaps.remove, {
       mindmapId: created.mindmapId,
     });
+
+    await expect(
+      asAlice.query(api.mindmaps.get, {
+        mindmapId: created.mindmapId,
+      })
+    ).rejects.toThrow("Not found");
+
+    const beforePurge = await t.run(async (ctx) => ({
+      node: await ctx.db.get("nodes", nodeIds[0]),
+      operation: await ctx.db.get("operations", operation.operationId),
+      thread: await ctx.db.get("threads", threadId),
+      message: await ctx.db.get("messages", messageId),
+    }));
+    expect(beforePurge.node).not.toBeNull();
+    expect(beforePurge.operation).not.toBeNull();
+    expect(beforePurge.thread).not.toBeNull();
+    expect(beforePurge.message).not.toBeNull();
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
 
     const remaining = await t.run(async (ctx) => ({
       mindmap: await ctx.db.get("mindmaps", created.mindmapId),
@@ -223,6 +327,12 @@ describe("mindmaps", () => {
       operation: await ctx.db.get("operations", operation.operationId),
       thread: await ctx.db.get("threads", threadId),
       message: await ctx.db.get("messages", messageId),
+      messageCount: (
+        await ctx.db
+          .query("messages")
+          .withIndex("by_thread", (q) => q.eq("threadId", threadId))
+          .collect()
+      ).length,
     }));
     expect(remaining).toEqual({
       mindmap: null,
@@ -230,6 +340,7 @@ describe("mindmaps", () => {
       operation: null,
       thread: null,
       message: null,
+      messageCount: 0,
     });
   });
 });

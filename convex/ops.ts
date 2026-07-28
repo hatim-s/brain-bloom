@@ -1,9 +1,10 @@
+import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
-import { requireOwner, requireReadable } from "./lib/access";
+import { requireOwner, requireUser } from "./lib/access";
 import {
   invertOps,
   type NodeOp,
@@ -19,6 +20,7 @@ type MutableNodeState = {
 const UPDATE_FIELDS = new Set([
   "title",
   "description",
+  "link",
   "parentId",
   "order",
   "type",
@@ -55,6 +57,7 @@ function parseSnapshot(value: unknown): NodeSnapshot {
     typeof value.title !== "string" ||
     (value.description !== undefined &&
       typeof value.description !== "string") ||
+    (value.link !== undefined && typeof value.link !== "string") ||
     typeof value.order !== "number"
   ) {
     return invalidOp("invalid node");
@@ -68,6 +71,7 @@ function parseSnapshot(value: unknown): NodeSnapshot {
     ...(value.description === undefined
       ? {}
       : { description: value.description }),
+    ...(value.link === undefined ? {} : { link: value.link }),
     order: value.order,
   };
 }
@@ -80,7 +84,13 @@ function parseUpdatePatch(value: unknown): NodeUpdatePatch {
     return invalidOp("invalid update patch");
   }
 
-  for (const field of Object.keys(value)) {
+  const fields = Object.keys(value);
+
+  if (fields.length === 0) {
+    return invalidOp("empty patch");
+  }
+
+  for (const field of fields) {
     if (!UPDATE_FIELDS.has(field)) {
       return invalidOp(`unsupported update field ${field}`);
     }
@@ -89,7 +99,11 @@ function parseUpdatePatch(value: unknown): NodeUpdatePatch {
   if (
     (value.title !== undefined && typeof value.title !== "string") ||
     (value.description !== undefined &&
+      value.description !== null &&
       typeof value.description !== "string") ||
+    (value.link !== undefined &&
+      value.link !== null &&
+      typeof value.link !== "string") ||
     (value.parentId !== undefined &&
       typeof value.parentId !== "string" &&
       value.parentId !== null) ||
@@ -102,7 +116,11 @@ function parseUpdatePatch(value: unknown): NodeUpdatePatch {
     return invalidOp("invalid update patch");
   }
 
-  return { ...value } as NodeUpdatePatch;
+  return {
+    ...value,
+    ...(value.description === null ? { description: undefined } : {}),
+    ...(value.link === null ? { link: undefined } : {}),
+  } as NodeUpdatePatch;
 }
 
 /**
@@ -157,50 +175,159 @@ function toSnapshot(node: Doc<"nodes">): NodeSnapshot {
     ...(node.description === undefined
       ? {}
       : { description: node.description }),
+    ...(node.link === undefined ? {} : { link: node.link }),
     order: node.order,
   };
 }
 
 /**
+ * Returns whether an update patch explicitly targets a field.
+ */
+function hasPatchField(
+  patch: NodeUpdatePatch,
+  field: keyof NodeUpdatePatch
+): boolean {
+  return Object.prototype.hasOwnProperty.call(patch, field);
+}
+
+/**
+ * Enforces the integer ordering contract shared by creates and order updates.
+ */
+function validateOrder(order: number): void {
+  if (!Number.isFinite(order) || !Number.isInteger(order) || order < 0) {
+    invalidOp("invalid order");
+  }
+}
+
+/**
  * Validates a batch against the state produced by each preceding operation.
+ *
+ * Reordering siblings is represented by one batch containing every changed
+ * order. Duplicate-order validation therefore runs against the final evolving
+ * state, after all entries in that batch have been composed.
  */
 async function validateOps(
   ctx: MutationCtx,
   mindmapId: Id<"mindmaps">,
   ops: NodeOp[]
 ): Promise<Map<string, NodeSnapshot>> {
-  const referencedNodeIds = Array.from(
-    new Set(ops.flatMap((op) => (op.kind === "create" ? [] : [op.nodeId])))
-  );
-  const referencedNodes = await Promise.all(
-    referencedNodeIds.map((nodeId) =>
-      ctx.db
-        .query("nodes")
-        .withIndex("by_mindmap_node", (q) =>
-          q.eq("mindmapId", mindmapId).eq("nodeId", nodeId)
-        )
-        .unique()
-    )
-  );
-  const existingNodes = await ctx.db
-    .query("nodes")
-    .withIndex("by_mindmap", (q) => q.eq("mindmapId", mindmapId))
-    .collect();
-  const state = new Map<string, MutableNodeState>(
-    existingNodes.map((node) => [
-      node.nodeId,
-      { documentId: node._id, snapshot: toSnapshot(node) },
-    ])
-  );
-  const preImage = new Map(
-    referencedNodes.flatMap((node) =>
-      node === null ? [] : [[node.nodeId, toSnapshot(node)]]
-    )
-  );
+  const state = new Map<string, MutableNodeState>();
+  const missingNodeIds = new Set<string>();
+  const deletedNodeIds = new Set<string>();
+  const preImage = new Map<string, NodeSnapshot>();
+  const affectedParents = new Set<string | null>();
+
+  /**
+   * Loads a node once, while respecting creates, updates, and prior deletes.
+   */
+  const getNode = async (
+    nodeId: string
+  ): Promise<MutableNodeState | undefined> => {
+    if (deletedNodeIds.has(nodeId) || missingNodeIds.has(nodeId)) {
+      return undefined;
+    }
+
+    const cached = state.get(nodeId);
+
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const document = await ctx.db
+      .query("nodes")
+      .withIndex("by_mindmap_node", (q) =>
+        q.eq("mindmapId", mindmapId).eq("nodeId", nodeId)
+      )
+      .unique();
+
+    if (document === null) {
+      missingNodeIds.add(nodeId);
+      return undefined;
+    }
+
+    const snapshot = toSnapshot(document);
+    const loaded = { documentId: document._id, snapshot };
+    state.set(nodeId, loaded);
+    preImage.set(nodeId, { ...snapshot });
+    return loaded;
+  };
+
+  /**
+   * Checks a candidate parent against the current batch state.
+   */
+  const validateParent = async (
+    nodeId: string,
+    nodeType: NodeSnapshot["type"],
+    parentId: string | null
+  ): Promise<void> => {
+    if (parentId === null) {
+      invalidOp("non-root parent cannot be null");
+    }
+
+    const parent = await getNode(parentId);
+
+    if (parent === undefined) {
+      invalidOp("parent does not exist");
+    }
+
+    if (parent.snapshot.type !== "root" && parent.snapshot.type !== nodeType) {
+      invalidOp("parent is on another side");
+    }
+
+    const visited = new Set<string>();
+    let ancestorId: string | null = parentId;
+
+    // Walking parent pointers bounds cycle detection by the current tree depth.
+    while (ancestorId !== null) {
+      if (ancestorId === nodeId || visited.has(ancestorId)) {
+        invalidOp("parent creates cycle");
+      }
+
+      visited.add(ancestorId);
+      const ancestor = await getNode(ancestorId);
+
+      if (ancestor === undefined) {
+        invalidOp("parent does not exist");
+      }
+
+      ancestorId = ancestor.snapshot.parentId;
+    }
+  };
+
+  /**
+   * Finds live children using the parent index plus the batch overlay.
+   */
+  const hasLiveChildren = async (nodeId: string): Promise<boolean> => {
+    const databaseChildren = ctx.db
+      .query("nodes")
+      .withIndex("by_mindmap_parent", (q) =>
+        q.eq("mindmapId", mindmapId).eq("parentId", nodeId)
+      );
+
+    for await (const child of databaseChildren) {
+      if (deletedNodeIds.has(child.nodeId)) {
+        continue;
+      }
+
+      const evolvingChild = state.get(child.nodeId);
+
+      if (
+        evolvingChild === undefined ||
+        evolvingChild.snapshot.parentId === nodeId
+      ) {
+        return true;
+      }
+    }
+
+    return Array.from(state.values()).some(
+      ({ snapshot }) =>
+        !deletedNodeIds.has(snapshot.nodeId) && snapshot.parentId === nodeId
+    );
+  };
 
   for (const op of ops) {
     if (op.kind === "create") {
-      if (state.has(op.node.nodeId)) {
+      if ((await getNode(op.node.nodeId)) !== undefined) {
         invalidOp("node already exists");
       }
 
@@ -208,15 +335,17 @@ async function validateOps(
         invalidOp("cannot create root");
       }
 
-      if (op.node.parentId === null || !state.has(op.node.parentId)) {
-        invalidOp("parent does not exist");
-      }
+      validateOrder(op.node.order);
+      await validateParent(op.node.nodeId, op.node.type, op.node.parentId);
 
+      missingNodeIds.delete(op.node.nodeId);
+      deletedNodeIds.delete(op.node.nodeId);
       state.set(op.node.nodeId, { snapshot: { ...op.node } });
+      affectedParents.add(op.node.parentId);
       continue;
     }
 
-    const existing = state.get(op.nodeId);
+    const existing = await getNode(op.nodeId);
 
     if (existing === undefined) {
       invalidOp("node does not exist");
@@ -227,12 +356,10 @@ async function validateOps(
         op.patch,
         "type"
       );
+      const targetsParent = hasPatchField(op.patch, "parentId");
+      const targetsOrder = hasPatchField(op.patch, "order");
 
-      if (
-        existing.snapshot.type === "root" &&
-        (Object.prototype.hasOwnProperty.call(op.patch, "parentId") ||
-          targetsType)
-      ) {
+      if (existing.snapshot.type === "root" && (targetsParent || targetsType)) {
         invalidOp("cannot update root parentId or type");
       }
 
@@ -240,9 +367,28 @@ async function validateOps(
         invalidOp("unsupported update field type");
       }
 
+      if (targetsOrder) {
+        validateOrder(op.patch.order as number);
+      }
+
+      if (targetsParent) {
+        await validateParent(
+          op.nodeId,
+          existing.snapshot.type,
+          op.patch.parentId as string | null
+        );
+      }
+
+      const nextSnapshot = { ...existing.snapshot, ...op.patch };
+
+      if (targetsOrder || targetsParent) {
+        affectedParents.add(existing.snapshot.parentId);
+        affectedParents.add(nextSnapshot.parentId);
+      }
+
       state.set(op.nodeId, {
         ...existing,
-        snapshot: { ...existing.snapshot, ...op.patch },
+        snapshot: nextSnapshot,
       });
       continue;
     }
@@ -251,15 +397,55 @@ async function validateOps(
       invalidOp("cannot delete root");
     }
 
-    const hasChildren = Array.from(state.values()).some(
-      (node) => node.snapshot.parentId === op.nodeId
-    );
-
-    if (hasChildren) {
+    if (await hasLiveChildren(op.nodeId)) {
       invalidOp("node has children");
     }
 
+    affectedParents.add(existing.snapshot.parentId);
     state.delete(op.nodeId);
+    deletedNodeIds.add(op.nodeId);
+  }
+
+  for (const parentId of Array.from(affectedParents)) {
+    const siblings = new Map<string, NodeSnapshot>();
+    const databaseSiblings = ctx.db
+      .query("nodes")
+      .withIndex("by_mindmap_parent", (q) =>
+        q.eq("mindmapId", mindmapId).eq("parentId", parentId)
+      );
+
+    for await (const document of databaseSiblings) {
+      if (deletedNodeIds.has(document.nodeId)) {
+        continue;
+      }
+
+      const evolving = state.get(document.nodeId);
+      const snapshot = evolving?.snapshot ?? toSnapshot(document);
+
+      if (snapshot.parentId === parentId) {
+        siblings.set(snapshot.nodeId, snapshot);
+      }
+    }
+
+    // Adds batch-created and reparented siblings not present in the DB range.
+    for (const { snapshot } of Array.from(state.values())) {
+      if (
+        !deletedNodeIds.has(snapshot.nodeId) &&
+        snapshot.parentId === parentId
+      ) {
+        siblings.set(snapshot.nodeId, snapshot);
+      }
+    }
+
+    const occupiedOrders = new Set<number>();
+
+    for (const sibling of Array.from(siblings.values())) {
+      if (occupiedOrders.has(sibling.order)) {
+        invalidOp("duplicate order");
+      }
+
+      occupiedOrders.add(sibling.order);
+    }
   }
 
   return preImage;
@@ -273,16 +459,38 @@ async function writeOps(
   mindmapId: Id<"mindmaps">,
   ops: NodeOp[]
 ): Promise<void> {
-  const existingNodes = await ctx.db
-    .query("nodes")
-    .withIndex("by_mindmap", (q) => q.eq("mindmapId", mindmapId))
-    .collect();
-  const state = new Map<string, MutableNodeState>(
-    existingNodes.map((node) => [
-      node.nodeId,
-      { documentId: node._id, snapshot: toSnapshot(node) },
-    ])
-  );
+  const state = new Map<string, MutableNodeState>();
+
+  /**
+   * Loads a write target lazily so large mindmaps do not enter the read set.
+   */
+  const getNode = async (
+    nodeId: string
+  ): Promise<MutableNodeState | undefined> => {
+    const cached = state.get(nodeId);
+
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const document = await ctx.db
+      .query("nodes")
+      .withIndex("by_mindmap_node", (q) =>
+        q.eq("mindmapId", mindmapId).eq("nodeId", nodeId)
+      )
+      .unique();
+
+    if (document === null) {
+      return undefined;
+    }
+
+    const loaded = {
+      documentId: document._id,
+      snapshot: toSnapshot(document),
+    };
+    state.set(nodeId, loaded);
+    return loaded;
+  };
 
   for (const op of ops) {
     if (op.kind === "create") {
@@ -297,7 +505,7 @@ async function writeOps(
       continue;
     }
 
-    const existing = state.get(op.nodeId);
+    const existing = await getNode(op.nodeId);
 
     // validateOps has already established this invariant in the transaction.
     if (existing?.documentId === undefined) {
@@ -319,27 +527,31 @@ async function writeOps(
 }
 
 /**
- * Encodes an undefined description so inverse patches remain Convex values.
+ * Encodes optional-field removals so operation patches remain Convex values.
  */
-function serializeInverseOps(ops: NodeOp[]): unknown[] {
+function serializeOps(ops: NodeOp[]): unknown[] {
   return ops.map((op) => {
-    if (
-      op.kind === "update" &&
-      Object.prototype.hasOwnProperty.call(op.patch, "description") &&
-      op.patch.description === undefined
-    ) {
-      return {
-        ...op,
-        patch: { ...op.patch, description: null },
-      };
+    if (op.kind !== "update") {
+      return op;
     }
 
-    return op;
+    const patch = {
+      ...op.patch,
+      ...(hasPatchField(op.patch, "description") &&
+      op.patch.description === undefined
+        ? { description: null }
+        : {}),
+      ...(hasPatchField(op.patch, "link") && op.patch.link === undefined
+        ? { link: null }
+        : {}),
+    };
+
+    return { ...op, patch };
   });
 }
 
 /**
- * Restores the in-memory undefined description represented in stored inverses.
+ * Restores in-memory undefined removals represented by stored null sentinels.
  */
 function deserializeInverseOps(value: unknown): NodeOp[] {
   if (!Array.isArray(value)) {
@@ -348,19 +560,23 @@ function deserializeInverseOps(value: unknown): NodeOp[] {
 
   const restored = value.map((candidate) => {
     if (
-      isRecord(candidate) &&
-      candidate.kind === "update" &&
-      isRecord(candidate.patch) &&
-      Object.prototype.hasOwnProperty.call(candidate.patch, "description") &&
-      candidate.patch.description === null
+      !isRecord(candidate) ||
+      candidate.kind !== "update" ||
+      !isRecord(candidate.patch)
     ) {
-      return {
-        ...candidate,
-        patch: { ...candidate.patch, description: undefined },
-      };
+      return candidate;
     }
 
-    return candidate;
+    return {
+      ...candidate,
+      patch: {
+        ...candidate.patch,
+        ...(candidate.patch.description === null
+          ? { description: undefined }
+          : {}),
+        ...(candidate.patch.link === null ? { link: undefined } : {}),
+      },
+    };
   });
 
   return parseOps(restored);
@@ -368,6 +584,7 @@ function deserializeInverseOps(value: unknown): NodeOp[] {
 
 /**
  * Applies a validated node-operation batch and records its inverse atomically.
+ * Reorder = batch update: submit every changed sibling order together.
  */
 export const apply = mutation({
   args: {
@@ -377,7 +594,7 @@ export const apply = mutation({
     source: v.union(v.literal("user"), v.literal("ai")),
   },
   handler: async (ctx, args) => {
-    const mindmap = await requireOwner(ctx, args.mindmapId);
+    const { subject } = await requireOwner(ctx, args.mindmapId);
     const ops = parseOps(args.ops);
     const preImage = await validateOps(ctx, args.mindmapId, ops);
     const inversePatch = invertOps(ops, preImage);
@@ -393,10 +610,10 @@ export const apply = mutation({
       mindmapId: args.mindmapId,
       seq,
       description: args.description,
-      patch: ops,
-      inversePatch: serializeInverseOps(inversePatch),
+      patch: serializeOps(ops),
+      inversePatch: serializeOps(inversePatch),
       undone: false,
-      actor: mindmap.ownerId,
+      actor: subject,
       source: args.source,
     });
     await ctx.db.patch("mindmaps", args.mindmapId, {
@@ -413,26 +630,33 @@ export const apply = mutation({
 export const undo = mutation({
   args: { operationId: v.id("operations") },
   handler: async (ctx, args) => {
+    const subject = await requireUser(ctx);
     const operation = await ctx.db.get("operations", args.operationId);
 
     if (operation === null) {
       throw new Error("Not found");
     }
 
-    await requireOwner(ctx, operation.mindmapId);
+    await requireOwner(ctx, operation.mindmapId, subject);
 
     if (operation.undone) {
       throw new Error("Already undone");
     }
 
-    const operations = await ctx.db
+    const operations = ctx.db
       .query("operations")
       .withIndex("by_mindmap_seq", (q) =>
         q.eq("mindmapId", operation.mindmapId)
       )
-      .order("desc")
-      .collect();
-    const latestActive = operations.find((candidate) => !candidate.undone);
+      .order("desc");
+    let latestActive: Doc<"operations"> | undefined;
+
+    for await (const candidate of operations) {
+      if (!candidate.undone) {
+        latestActive = candidate;
+        break;
+      }
+    }
 
     if (latestActive?._id !== operation._id) {
       throw new Error("Undo out of order");
@@ -451,26 +675,79 @@ export const undo = mutation({
 });
 
 /**
- * Returns readable operation history in newest-first sequence order.
+ * Reverses a target operation and every later active operation atomically.
+ */
+export const undoTo = mutation({
+  args: { operationId: v.id("operations") },
+  handler: async (ctx, args) => {
+    const subject = await requireUser(ctx);
+    const target = await ctx.db.get("operations", args.operationId);
+
+    if (target === null) {
+      throw new Error("Not found");
+    }
+
+    await requireOwner(ctx, target.mindmapId, subject);
+
+    if (target.undone) {
+      throw new Error("Already undone");
+    }
+
+    const operations = ctx.db
+      .query("operations")
+      .withIndex("by_mindmap_seq", (q) =>
+        q.eq("mindmapId", target.mindmapId).gte("seq", target.seq)
+      )
+      .order("desc");
+    let undoneCount = 0;
+
+    for await (const operation of operations) {
+      if (operation.undone) {
+        continue;
+      }
+
+      const inversePatch = deserializeInverseOps(operation.inversePatch);
+      await validateOps(ctx, target.mindmapId, inversePatch);
+      await writeOps(ctx, target.mindmapId, inversePatch);
+      await ctx.db.patch("operations", operation._id, { undone: true });
+      undoneCount += 1;
+    }
+
+    await ctx.db.patch("mindmaps", target.mindmapId, {
+      updatedAt: Date.now(),
+    });
+
+    return { undoneCount, seq: target.seq };
+  },
+});
+
+/**
+ * Returns owner-only operation history in newest-first paginated order.
  */
 export const history = query({
-  args: { mindmapId: v.id("mindmaps") },
+  args: {
+    mindmapId: v.id("mindmaps"),
+    paginationOpts: paginationOptsValidator,
+  },
   handler: async (ctx, args) => {
-    await requireReadable(ctx, args.mindmapId);
-    const operations = await ctx.db
+    await requireOwner(ctx, args.mindmapId);
+    const result = await ctx.db
       .query("operations")
       .withIndex("by_mindmap_seq", (q) => q.eq("mindmapId", args.mindmapId))
       .order("desc")
-      .collect();
+      .paginate(args.paginationOpts);
 
-    return operations.map(
-      ({ seq, description, undone, source, _creationTime }) => ({
-        seq,
-        description,
-        undone,
-        source,
-        _creationTime,
-      })
-    );
+    return {
+      ...result,
+      page: result.page.map(
+        ({ seq, description, undone, source, _creationTime }) => ({
+          seq,
+          description,
+          undone,
+          source,
+          _creationTime,
+        })
+      ),
+    };
   },
 });

@@ -167,6 +167,57 @@ describe("invertOps", () => {
     ]);
   });
 
+  it("inverts link additions and removals", () => {
+    const childWithoutLink = { ...child };
+    const childWithLink = {
+      ...child,
+      link: "https://example.com/before",
+    };
+
+    expect(
+      invertOps(
+        [
+          {
+            kind: "update",
+            nodeId: "left-1",
+            patch: { link: "https://example.com/after" },
+          },
+        ],
+        new Map([
+          ["root", root],
+          ["left-1", childWithoutLink],
+        ])
+      )
+    ).toEqual([
+      {
+        kind: "update",
+        nodeId: "left-1",
+        patch: { link: undefined },
+      },
+    ]);
+    expect(
+      invertOps(
+        [
+          {
+            kind: "update",
+            nodeId: "left-1",
+            patch: { link: undefined },
+          },
+        ],
+        new Map([
+          ["root", root],
+          ["left-1", childWithLink],
+        ])
+      )
+    ).toEqual([
+      {
+        kind: "update",
+        nodeId: "left-1",
+        patch: { link: "https://example.com/before" },
+      },
+    ]);
+  });
+
   it("throws for updates and deletes of unknown nodes", () => {
     const preImage = new Map([["root", root]]);
 

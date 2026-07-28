@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 
 import { mutation, query } from "./_generated/server";
-import { requireOwner, requireReadable } from "./lib/access";
+import { requireOwner, requireUser } from "./lib/access";
 
 /**
  * Creates a conversation thread attached to an owned mindmap.
@@ -19,12 +19,12 @@ export const createThread = mutation({
 });
 
 /**
- * Lists all conversation threads for a readable mindmap.
+ * Lists all conversation threads for an owned mindmap.
  */
 export const listThreads = query({
   args: { mindmapId: v.id("mindmaps") },
   handler: async (ctx, args) => {
-    await requireReadable(ctx, args.mindmapId);
+    await requireOwner(ctx, args.mindmapId);
 
     return ctx.db
       .query("threads")
@@ -45,13 +45,26 @@ export const addMessage = mutation({
     operationId: v.optional(v.id("operations")),
   },
   handler: async (ctx, args) => {
+    const subject = await requireUser(ctx);
     const thread = await ctx.db.get("threads", args.threadId);
 
     if (thread === null) {
       throw new Error("Not found");
     }
 
-    await requireOwner(ctx, thread.mindmapId);
+    await requireOwner(ctx, thread.mindmapId, subject);
+
+    if (args.operationId !== undefined) {
+      const operation = await ctx.db.get("operations", args.operationId);
+
+      if (operation === null) {
+        throw new Error("Not found");
+      }
+
+      if (operation.mindmapId !== thread.mindmapId) {
+        throw new Error("Invalid op: operation belongs to another mindmap");
+      }
+    }
 
     return ctx.db.insert("messages", {
       threadId: args.threadId,
@@ -63,18 +76,19 @@ export const addMessage = mutation({
 });
 
 /**
- * Lists messages in creation order for a thread on a readable mindmap.
+ * Lists messages in creation order for a thread on an owned mindmap.
  */
 export const listMessages = query({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
+    const subject = await requireUser(ctx);
     const thread = await ctx.db.get("threads", args.threadId);
 
     if (thread === null) {
       throw new Error("Not found");
     }
 
-    await requireReadable(ctx, thread.mindmapId);
+    await requireOwner(ctx, thread.mindmapId, subject);
 
     return ctx.db
       .query("messages")

@@ -1,16 +1,26 @@
+/**
+ * Complete, transport-independent state for one mindmap node.
+ */
 export type NodeSnapshot = {
   nodeId: string;
   parentId: string | null;
   type: "root" | "left" | "right";
   title: string;
   description?: string;
+  link?: string;
   order: number;
 };
 
+/**
+ * Mutable node fields, where explicit undefined removes an optional value.
+ */
 export type NodeUpdatePatch = Partial<
-  Pick<NodeSnapshot, "title" | "description" | "parentId" | "order">
+  Pick<NodeSnapshot, "title" | "description" | "link" | "parentId" | "order">
 >;
 
+/**
+ * Algebra of atomic node changes accepted by the Convex operation layer.
+ */
 export type NodeOp =
   | { kind: "create"; node: NodeSnapshot }
   | { kind: "update"; nodeId: string; patch: NodeUpdatePatch }
