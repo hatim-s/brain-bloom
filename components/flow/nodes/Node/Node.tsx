@@ -29,7 +29,7 @@ import NodeDataInput from "./NodeDataInput";
  * description lines, 300px wide) to feed dagre. Padding, width and line-heights
  * must not drift or the graph spacing goes wrong.
  */
-export function BaseNodeContent(props: {
+const BaseNodeContent = (props: {
   title: string;
   description?: string | undefined;
   link?: string | undefined;
@@ -38,7 +38,7 @@ export function BaseNodeContent(props: {
     container?: string;
     title?: string;
   };
-}) {
+}) => {
   const { title, description, link, isSelected, classNames } = props;
 
   const { container: containerClassName, title: titleClassName } =
@@ -89,11 +89,10 @@ export function BaseNodeContent(props: {
       ) : null}
     </Stack>
   );
-}
+};
 
-export default function BaseNode(
-  props: NodeProps & { direction: "left" | "right" }
-) {
+/** Renders an editable branch node with source and target flow handles. */
+const BaseNode = (props: NodeProps & { direction: "left" | "right" }) => {
   const title = props.data.title as string | undefined;
   const description = props.data.description as string | undefined;
   const link = props.data.link as string | undefined;
@@ -109,8 +108,9 @@ export default function BaseNode(
 
   return (
     <Popover open={selectedNode === props.id || isAiEditing === props.id}>
-      {/* override the blue border since it looks weird */}
-      <PopoverTrigger className="focus-visible:outline-hidden focus-visible:ring-0">
+      <PopoverTrigger
+        className={clsx({ "focus-visible:outline-bloom": isSelected })}
+      >
         <BaseNodeContent
           title={title ?? "Node"}
           description={description}
@@ -136,4 +136,6 @@ export default function BaseNode(
       </PopoverContent>
     </Popover>
   );
-}
+};
+
+export { BaseNode, BaseNodeContent };

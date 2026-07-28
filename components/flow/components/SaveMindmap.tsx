@@ -13,24 +13,24 @@ import { updateMindmap } from "@/data/update-mindmap";
 
 import { useMindmapFlow } from "../providers/MindmapFlowProvider";
 
-export function SaveMindmap() {
+/** Saves the current mindmap while exposing the full request as a transition. */
+const SaveMindmap = () => {
   const { nodes, edges, mindmapDB } = useMindmapFlow();
 
   const [isPending, startTransition] = useTransition();
 
   const handleSaveMindmap = useCallback(() => {
-    startTransition(() => {
-      updateMindmap({
-        ...mindmapDB,
-        nodes: nodes.map((node) => pick(node, ["id", "type", "data"])),
-        edges: edges.map((edge) => pick(edge, ["id", "source", "target"])),
-      })
-        .then(() => {
-          toast.success("Mindmap saved successfully");
-        })
-        .catch(() => {
-          toast.error("Failed to save mindmap!");
+    startTransition(async () => {
+      try {
+        await updateMindmap({
+          ...mindmapDB,
+          nodes: nodes.map((node) => pick(node, ["id", "type", "data"])),
+          edges: edges.map((edge) => pick(edge, ["id", "source", "target"])),
         });
+        toast.success("Mindmap saved successfully");
+      } catch {
+        toast.error("Failed to save mindmap!");
+      }
     });
   }, [nodes, edges, mindmapDB]);
 
@@ -55,4 +55,6 @@ export function SaveMindmap() {
       <TooltipContent align="center">Save mindmap</TooltipContent>
     </Tooltip>
   );
-}
+};
+
+export { SaveMindmap };

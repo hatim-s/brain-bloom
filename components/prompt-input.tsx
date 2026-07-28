@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -14,49 +14,28 @@ import { Textarea } from "./ui/textarea";
  * The cycling is the point of the component, so under `prefers-reduced-motion`
  * it settles on the first example rather than disappearing.
  */
-export function PromptInput({
+const PromptInput = ({
   placeholders,
   onChange,
 }: {
   placeholders: string[];
   onChange?: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
-}) {
+}) => {
   const [currentPlaceholder, setCurrentPlaceholder] = useState(0);
   const prefersReducedMotion = useReducedMotion();
 
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  const startAnimationFn = useCallback(() => {
-    if (prefersReducedMotion) return;
-
-    intervalRef.current = setInterval(() => {
-      setCurrentPlaceholder((prev) => (prev + 1) % placeholders.length);
-    }, 3000);
-  }, [placeholders, prefersReducedMotion]);
-
-  const startAnimation = useRef(startAnimationFn);
-  startAnimation.current = startAnimationFn;
-
-  // const handleVisibilityChange = () => {
-  //   if (document.visibilityState !== "visible" && intervalRef.current) {
-  //     clearInterval(intervalRef.current); // Clear the interval when the tab is not visible
-  //     intervalRef.current = null;
-  //   } else if (document.visibilityState === "visible") {
-  //     startAnimation.current(); // Restart the interval when the tab becomes visible
-  //   }
-  // };
-
   useEffect(() => {
-    startAnimation.current();
-    // document.addEventListener("visibilitychange", handleVisibilityChange);
+    if (prefersReducedMotion) {
+      setCurrentPlaceholder(0);
+      return;
+    }
 
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-      // document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, []);
+    const interval = setInterval(() => {
+      setCurrentPlaceholder((previous) => (previous + 1) % placeholders.length);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [placeholders.length, prefersReducedMotion]);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [value, setValue] = useState("");
@@ -93,4 +72,6 @@ export function PromptInput({
       </div>
     </Box>
   );
-}
+};
+
+export { PromptInput };
