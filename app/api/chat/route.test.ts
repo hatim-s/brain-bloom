@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai";
+import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "./route";
@@ -9,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   fetchMutation: vi.fn(),
   fetchQuery: vi.fn(),
   getConvexAuthToken: vi.fn(),
+  consumeStream: vi.fn(),
   responseOptions: undefined as
     | {
         headers?: HeadersInit;
@@ -88,6 +90,7 @@ describe("POST /api/chat", () => {
     ]);
     mocks.responseOptions = undefined;
     mocks.streamText.mockReturnValue({
+      consumeStream: mocks.consumeStream,
       toUIMessageStreamResponse: vi.fn((options) => {
         mocks.responseOptions = options;
         return new Response("stream", { headers: options.headers });
@@ -151,6 +154,31 @@ describe("POST /api/chat", () => {
         stopWhen: expect.any(Function),
       })
     );
+    expect(mocks.consumeStream).toHaveBeenCalledOnce();
+  });
+
+  it("returns a 404 JSON response when the mindmap query is not found", async () => {
+    mocks.fetchQuery.mockRejectedValueOnce(new ConvexError("Not found"));
+
+    const response = await POST(
+      createRequest({ mindmapId: "map-1", messages: [userMessage] })
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "Not found" });
+    expect(mocks.streamText).not.toHaveBeenCalled();
+  });
+
+  it("returns a 403 JSON response when Convex rejects access", async () => {
+    mocks.fetchQuery.mockRejectedValueOnce(new ConvexError("Forbidden"));
+
+    const response = await POST(
+      createRequest({ mindmapId: "map-1", messages: [userMessage] })
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "Forbidden" });
+    expect(mocks.streamText).not.toHaveBeenCalled();
   });
 
   it("persists full UI parts and links the earliest applied operation", async () => {

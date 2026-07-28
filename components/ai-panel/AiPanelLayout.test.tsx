@@ -152,6 +152,42 @@ describe("AiPanelLayout", () => {
     expect(window.localStorage.getItem(AI_PANEL_OPEN_STORAGE_KEY)).toBe("true");
   });
 
+  it("does not throw when collapsed before a deferred layout frame runs", async () => {
+    const callbacks = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    const requestAnimationFrame = vi
+      .spyOn(globalThis, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        nextFrame += 1;
+        callbacks.set(nextFrame, callback);
+        return nextFrame;
+      });
+    const cancelAnimationFrame = vi
+      .spyOn(globalThis, "cancelAnimationFrame")
+      .mockImplementation((frame) => callbacks.delete(frame));
+    const user = userEvent.setup();
+
+    try {
+      render(
+        <AiPanelLayout>
+          <div data-testid="canvas" />
+        </AiPanelLayout>
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Collapse Sprig panel" })
+      );
+
+      expect(() => {
+        for (const callback of Array.from(callbacks.values())) {
+          callback(0);
+        }
+      }).not.toThrow();
+    } finally {
+      requestAnimationFrame.mockRestore();
+      cancelAnimationFrame.mockRestore();
+    }
+  });
+
   it("restores a stored collapsed state on mount", async () => {
     window.localStorage.setItem(AI_PANEL_OPEN_STORAGE_KEY, "false");
 

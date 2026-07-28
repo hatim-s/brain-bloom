@@ -162,8 +162,16 @@ function AiPanelLayout({ children }: PropsWithChildren) {
       restoredWidthRef.current
     );
     const frame = requestAnimationFrame(() => {
+      const panel = panelRef.current;
+
+      // The panel can become hidden before this deferred layout frame runs.
+      // Avoid calling an imperative handle that has since unregistered.
+      if (panel === null || !isOpenRef.current) {
+        return;
+      }
+
       try {
-        panelRef.current?.resize(defaultSize);
+        panel.resize(defaultSize);
         hasAppliedWidthRef.current = true;
       } catch {
         // The panel can unregister between this frame and StrictMode cleanup.

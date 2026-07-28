@@ -177,6 +177,19 @@ describe("createMindmapTools", () => {
     ).resolves.toEqual({ error: "Invalid op: node has children" });
   });
 
+  it("rejects a self-parent move before applying any operation", async () => {
+    const convex = createConvexLayer();
+    const tools = createMindmapTools({ mindmapId: "mindmap-1", convex });
+
+    await expect(
+      tools.moveNode.execute(
+        { nodeId: "l-parent", newParentId: "l-parent" },
+        toolExecutionOptions
+      )
+    ).resolves.toEqual({ error: "A node cannot be its own parent" });
+    expect(convex.applyOps).not.toHaveBeenCalled();
+  });
+
   it("passes the operation id through to undoTo", async () => {
     const undoTo = vi.fn(async () => ({ undoneCount: 3, seq: 4 }));
     const tools = createMindmapTools({

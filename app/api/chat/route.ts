@@ -7,6 +7,7 @@ import {
   type UIMessage,
 } from "ai";
 import { fetchMutation, fetchQuery } from "convex/nextjs";
+import { ConvexError, type Value } from "convex/values";
 import { z } from "zod";
 
 import { api } from "@/convex/_generated/api";
@@ -58,6 +59,15 @@ const chatRequestSchema = z.object({
 /** Returns a consistent JSON error response for route-level failures. */
 function jsonError(error: string, status: number): Response {
   return Response.json({ error }, { status });
+}
+
+/** Maps expected Convex request failures to display-safe HTTP JSON errors. */
+function convexErrorResponse(error: ConvexError<Value>): Response {
+  const message = typeof error.data === "string" ? error.data : error.message;
+  const status =
+    message === "Not found" ? 404 : message === "Forbidden" ? 403 : 400;
+
+  return jsonError(message, status);
 }
 
 /** Extracts plain text from the v7 UIMessage text-part representation. */
@@ -216,96 +226,112 @@ async function POST(request: Request): Promise<Response> {
     return jsonError("Invalid request", 400);
   }
 
-  const convex = createConvexLayer(token);
-  const currentMindmap = await convex.getMindmap(mindmapId);
-  let threadId = parsedRequest.data.threadId;
+  try {
+    const convex = createConvexLayer(token);
+    const currentMindmap = await convex.getMindmap(mindmapId);
+    let threadId = parsedRequest.data.threadId;
 
-  if (threadId !== undefined) {
-    try {
-      const thread = await fetchQuery(
-        api.threads.getThread,
-        { threadId: threadId as Id<"threads"> },
+    if (threadId !== undefined) {
+      try {
+        const thread = await fetchQuery(
+          api.threads.getThread,
+          { threadId: threadId as Id<"threads"> },
+          { token }
+        );
+
+        if (thread.mindmapId !== mindmapId) {
+          return jsonError("thread belongs to a different mindmap", 400);
+        }
+      } catch (error) {
+        if (error instanceof ConvexError) {
+          return convexErrorResponse(error);
+        }
+
+        return jsonError("Invalid thread", 400);
+      }
+    } else {
+      threadId = await fetchMutation(
+        api.threads.createThread,
+        {
+          mindmapId: mindmapId as Id<"mindmaps">,
+          title: getThreadTitle(messages),
+        },
         { token }
       );
-
-      if (thread.mindmapId !== mindmapId) {
-        return jsonError("thread belongs to a different mindmap", 400);
-      }
-    } catch {
-      return jsonError("Invalid thread", 400);
     }
-  } else {
-    threadId = await fetchMutation(
-      api.threads.createThread,
-      {
-        mindmapId: mindmapId as Id<"mindmaps">,
-        title: getThreadTitle(messages),
+
+    let firstOperation: AppliedOperation | undefined;
+    const tools = createMindmapTools({
+      mindmapId,
+      convex,
+      onOperationApplied: (operation) => {
+        // undoTo(first) reverses the entire turn, including all later tool ops.
+        if (!firstOperation || operation.seq < firstOperation.seq) {
+          firstOperation = operation;
+        }
       },
-      { token }
-    );
+    });
+    const modelMessages = await convertToModelMessages(messages, { tools });
+    const result = streamText({
+      model: getAnthropicModel(),
+      instructions: createInstructions(
+        serializeMindmap(currentMindmap),
+        selectedNodeId
+      ),
+      messages: modelMessages,
+      tools,
+      stopWhen: stepCountIs(8),
+    });
+
+    // Keep the source stream moving after a client disconnect so onFinish can
+    // preserve completed turns. Its isAborted branch still skips partial turns.
+    void result.consumeStream();
+
+    return result.toUIMessageStreamResponse({
+      originalMessages: messages,
+      headers: {
+        "x-sprig-thread-id": threadId,
+      },
+      onFinish: async ({ responseMessage, isAborted }) => {
+        // Aborted partial turns intentionally vanish from history replay.
+        if (isAborted) {
+          return;
+        }
+
+        await fetchMutation(
+          api.threads.addMessage,
+          {
+            threadId: threadId as Id<"threads">,
+            messageId: lastUserMessage.id,
+            role: "user",
+            content: lastUserMessage.parts,
+          },
+          { token }
+        );
+        await fetchMutation(
+          api.threads.addMessage,
+          {
+            threadId: threadId as Id<"threads">,
+            messageId: responseMessage.id,
+            role: "assistant",
+            content: responseMessage.parts,
+            ...(firstOperation
+              ? {
+                  operationId: firstOperation.operationId as Id<"operations">,
+                }
+              : {}),
+          },
+          { token }
+        );
+      },
+    });
+  } catch (error) {
+    if (error instanceof ConvexError) {
+      return convexErrorResponse(error);
+    }
+
+    return jsonError("Internal server error", 500);
   }
-
-  let firstOperation: AppliedOperation | undefined;
-  const tools = createMindmapTools({
-    mindmapId,
-    convex,
-    onOperationApplied: (operation) => {
-      // undoTo(first) reverses the entire turn, including all later tool ops.
-      if (!firstOperation || operation.seq < firstOperation.seq) {
-        firstOperation = operation;
-      }
-    },
-  });
-  const modelMessages = await convertToModelMessages(messages, { tools });
-  const result = streamText({
-    model: getAnthropicModel(),
-    instructions: createInstructions(
-      serializeMindmap(currentMindmap),
-      selectedNodeId
-    ),
-    messages: modelMessages,
-    tools,
-    stopWhen: stepCountIs(8),
-  });
-
-  return result.toUIMessageStreamResponse({
-    originalMessages: messages,
-    headers: {
-      "x-sprig-thread-id": threadId,
-    },
-    onFinish: async ({ responseMessage, isAborted }) => {
-      // Aborted partial turns intentionally vanish from history replay.
-      if (isAborted) {
-        return;
-      }
-
-      await fetchMutation(
-        api.threads.addMessage,
-        {
-          threadId: threadId as Id<"threads">,
-          messageId: lastUserMessage.id,
-          role: "user",
-          content: lastUserMessage.parts,
-        },
-        { token }
-      );
-      await fetchMutation(
-        api.threads.addMessage,
-        {
-          threadId: threadId as Id<"threads">,
-          messageId: responseMessage.id,
-          role: "assistant",
-          content: responseMessage.parts,
-          ...(firstOperation
-            ? {
-                operationId: firstOperation.operationId as Id<"operations">,
-              }
-            : {}),
-        },
-        { token }
-      );
-    },
-  });
 }
 
 export { POST };

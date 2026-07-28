@@ -315,7 +315,7 @@ function createMindmapTools({
     }),
     moveNode: tool({
       description:
-        "Move a node under an existing parent, optionally to a zero-based sibling position.",
+        "Move a node under an existing parent, optionally to a zero-based sibling position. This tool rejects self-parenting and no-op moves locally; ops.apply enforces deeper cycles on the backend.",
       inputSchema: z.object({
         nodeId: z.string().min(1),
         newParentId: z.string().min(1),
@@ -337,6 +337,17 @@ function createMindmapTools({
 
           if (!newParent) {
             throw new ConvexError(`Parent node does not exist: ${newParentId}`);
+          }
+
+          // Cheap, deterministic invalid requests are rejected before an ops
+          // mutation. Ancestor/descendant cycle detection remains authoritative
+          // in ops.apply because the server owns the complete current graph.
+          if (nodeId === newParentId) {
+            throw new ConvexError("A node cannot be its own parent");
+          }
+
+          if (movingNode.parentId === newParentId) {
+            throw new ConvexError("Node already has this parent");
           }
 
           const destinationSiblings = current.nodes

@@ -46,7 +46,9 @@ function flattenSuggestions(
     {
       ...activeNode,
       nodeId: activeNode.nodeId,
-      childrenNodes,
+      // Suggestions extend the selected branch; they must not erase siblings
+      // already present in the canvas's flat tree.
+      childrenNodes: [...(activeNode.childrenNodes ?? []), ...childrenNodes],
     },
     ...flattened,
   ];
@@ -102,4 +104,4 @@ Current branch: ${JSON.stringify(currentBranch)}`,
   }
 }
 
-export { editAIMindmap };
+export { editAIMindmap, flattenSuggestions };

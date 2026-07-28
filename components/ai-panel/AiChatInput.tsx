@@ -82,6 +82,12 @@ function AiChatInput({
         return;
       }
 
+      // IMEs emit Enter-like keydowns while committing a composition. Never
+      // treat those intermediate values as a completed chat message.
+      if (event.nativeEvent.isComposing || event.key === "Process") {
+        return;
+      }
+
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         handleSubmit();
