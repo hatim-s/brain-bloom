@@ -13,6 +13,7 @@ const PUBLIC_ID_LENGTH = 10;
 const PURGE_BATCH_SIZE = 200;
 /** Bounds generated trees so one atomic apply operation remains predictable. */
 const MAX_GENERATED_NODE_COUNT = 200;
+const visibilityValidator = v.union(v.literal("private"), v.literal("shared"));
 const nodeSnapshotValidator = v.object({
   nodeId: v.string(),
   parentId: v.union(v.string(), v.null()),
@@ -78,7 +79,7 @@ function projectMindmap(
     visibility: "private" | "shared";
     updatedAt: number;
   },
-  subject: string
+  subject: string | null
 ) {
   return {
     _id: mindmap._id,
@@ -258,6 +259,34 @@ export const getByPublicId = query({
 });
 
 /**
+ * Resolves a shared public route without reading authentication state.
+ */
+export const getShared = query({
+  args: { publicId: v.string() },
+  handler: async (ctx, args) => {
+    const resolvedMindmap = await ctx.db
+      .query("mindmaps")
+      .withIndex("by_publicId", (q) => q.eq("publicId", args.publicId))
+      .unique();
+
+    // Shared and absent IDs deliberately have one indistinguishable failure.
+    if (resolvedMindmap === null || resolvedMindmap.visibility !== "shared") {
+      throw new ConvexError("Not found");
+    }
+
+    const nodes = await ctx.db
+      .query("nodes")
+      .withIndex("by_mindmap", (q) => q.eq("mindmapId", resolvedMindmap._id))
+      .collect();
+
+    return {
+      mindmap: projectMindmap(resolvedMindmap, null),
+      nodes: sortNodesByParentAndOrder(nodes),
+    };
+  },
+});
+
+/**
  * Lists the current user's mindmaps with the most recently changed first.
  */
 export const listMine = query({
@@ -293,6 +322,21 @@ export const rename = mutation({
     });
     await ctx.db.patch("mindmaps", args.mindmapId, {
       name: args.name,
+    });
+  },
+});
+
+/** Changes sharing visibility for an owned mindmap. */
+export const setVisibility = mutation({
+  args: {
+    mindmapId: v.id("mindmaps"),
+    visibility: visibilityValidator,
+  },
+  handler: async (ctx, args) => {
+    await requireOwner(ctx, args.mindmapId);
+    await ctx.db.patch("mindmaps", args.mindmapId, {
+      visibility: args.visibility,
+      updatedAt: Date.now(),
     });
   },
 });

@@ -36,6 +36,7 @@ function useMindmapStoreApi(): StoreApi<MindmapStore> {
 
 type MindmapFlowProviderProps = {
   children: React.ReactNode;
+  readOnly?: boolean;
   mindmapDB: MindmapDB;
   initialNodes: BaseFlowNode[];
   initialEdges: Edge[];
@@ -46,13 +47,14 @@ type MindmapFlowProviderProps = {
  */
 const MindmapFlowProvider = ({
   children,
+  readOnly = false,
   mindmapDB,
   initialNodes,
   initialEdges,
 }: MindmapFlowProviderProps) => {
   // A lazy state initializer guarantees one prop-seeded store per provider.
   const [store] = useState(() =>
-    createMindmapStore({ mindmapDB, initialNodes, initialEdges })
+    createMindmapStore({ readOnly, mindmapDB, initialNodes, initialEdges })
   );
 
   const debugLogger = useCallback(() => {

@@ -45,7 +45,7 @@ function AIMindmapInput() {
       try {
         const aiMindmap = await createMindmapFromAI(userPrompt);
         const publicId = aiMindmap.data.publicId;
-        router.push(`/${publicId}`);
+        router.push(`/maps/${publicId}`);
         // Refresh the shared server layout so listMine includes the new map.
         router.refresh();
       } catch (error) {

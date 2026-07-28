@@ -10,8 +10,8 @@ import { Typography } from "./ui/typography";
 export function MindmapNotFound() {
   const router = useRouter();
 
-  const handleGoToHome = () => {
-    router.push("/new");
+  const handleGoToMaps = () => {
+    router.push("/maps");
   };
 
   return (
@@ -27,8 +27,8 @@ export function MindmapNotFound() {
           It may have been deleted, or the link may point at a map on another
           account. Your other maps are still in the sidebar.
         </Typography>
-        <Button className="mt-3" onClick={handleGoToHome}>
-          Start a new map
+        <Button className="mt-3" onClick={handleGoToMaps}>
+          View your maps
         </Button>
       </Stack>
     </Stack>

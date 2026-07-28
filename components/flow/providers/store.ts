@@ -30,6 +30,7 @@ import { MindmapFlowContext } from "./types";
 type MindmapStore = MindmapFlowContext;
 
 type MindmapStoreSeed = {
+  readOnly?: boolean;
   mindmapDB: MindmapDB;
   initialNodes: BaseFlowNode[];
   initialEdges: Edge[];
@@ -79,6 +80,7 @@ function createNodeDataPatch(
  * every derived view affected by that write.
  */
 function createMindmapStore({
+  readOnly = false,
   mindmapDB,
   initialNodes,
   initialEdges,
@@ -118,6 +120,10 @@ function createMindmapStore({
       data,
       options
     ) => {
+      if (readOnly) {
+        return null;
+      }
+
       const currentMindmapNodesMap = get().mindmapNodesMap;
 
       if (!currentMindmapNodesMap[parentNodeId]) {
@@ -255,6 +261,10 @@ function createMindmapStore({
       data,
       options
     ) => {
+      if (readOnly) {
+        return;
+      }
+
       set((state) => {
         const currentNode = state.nodesMap[nodeId];
 
@@ -316,6 +326,7 @@ function createMindmapStore({
     };
 
     return {
+      readOnly,
       layout,
       nodes,
       edges,
@@ -325,9 +336,17 @@ function createMindmapStore({
       activeNode: ROOT_NODE_ID,
       setActiveNode: (activeNode) => set({ activeNode }),
       selectedNode: null,
-      setSelectedNode: (selectedNode) => set({ selectedNode }),
+      setSelectedNode: (selectedNode) => {
+        if (!readOnly) {
+          set({ selectedNode });
+        }
+      },
       aiEditNode: null,
-      setAiEditNode: (aiEditNode) => set({ aiEditNode }),
+      setAiEditNode: (aiEditNode) => {
+        if (!readOnly) {
+          set({ aiEditNode });
+        }
+      },
       mindmapDB,
       pendingOps: [],
       flushedWatermark: 0,

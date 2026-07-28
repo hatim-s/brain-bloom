@@ -13,8 +13,14 @@ describe("auth routing", () => {
     ["/sign-in/sso-callback", true],
     ["/sign-up", true],
     ["/sign-up/verify", true],
-    ["/", false],
+    ["/", true],
+    ["/share", true],
+    ["/share/public-map", true],
+    ["/maps", false],
+    ["/maps/private-map", false],
+    ["/new", false],
     ["/sign-invitation", false],
+    ["/shared", false],
     ["/api/chat", false],
   ])("matches public path %s as %s", (pathname, expected) => {
     expect(isPublicPath(pathname)).toBe(expected);

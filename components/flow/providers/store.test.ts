@@ -263,6 +263,29 @@ describe("createMindmapStore", () => {
     expectDerivedStateInvariant(store.getState());
   });
 
+  it("rejects mutation actions when seeded read-only", () => {
+    const fixture = createStoreFixture();
+    const store = createMindmapStore({ ...fixture, readOnly: true });
+    const initialState = store.getState();
+
+    const addedNode = initialState.actions.onAddNode(
+      NodeTypes.LEFT,
+      "l-child",
+      "blocked-child"
+    );
+    initialState.actions.onUpdateNode("l-child", { title: "Blocked edit" });
+    initialState.setSelectedNode("l-child");
+    initialState.setAiEditNode("l-child");
+
+    const state = store.getState();
+    expect(addedNode).toBeNull();
+    expect(state.nodesMap["blocked-child"]).toBeUndefined();
+    expect(state.nodesMap["l-child"].data.title).toBe("Left child");
+    expect(state.pendingOps).toEqual([]);
+    expect(state.selectedNode).toBeNull();
+    expect(state.aiEditNode).toBeNull();
+  });
+
   it("keeps derived state synchronized after every node action", () => {
     const store = createFixtureStore();
 

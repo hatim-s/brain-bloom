@@ -78,7 +78,7 @@ describe("AIMindmapInput", () => {
     await user.click(screen.getByRole("button", { name: "Grow the map" }));
 
     await waitFor(() => {
-      expect(pushMock).toHaveBeenCalledWith("/generated1");
+      expect(pushMock).toHaveBeenCalledWith("/maps/generated1");
       expect(refreshMock).toHaveBeenCalledOnce();
     });
     expect(pushMock.mock.invocationCallOrder[0]).toBeLessThan(

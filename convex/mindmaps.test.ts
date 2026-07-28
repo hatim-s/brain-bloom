@@ -197,6 +197,72 @@ describe("mindmaps", () => {
     expect(result.nodes.map((node) => node.nodeId)).toEqual(["root"]);
   });
 
+  it("exposes only shared maps through the unauthenticated public query", async () => {
+    const { t, asAlice } = createHarness();
+    const shared = await asAlice.mutation(api.mindmaps.create, {
+      name: "Shared route",
+    });
+    const privateMap = await asAlice.mutation(api.mindmaps.create, {
+      name: "Private route",
+    });
+    await asAlice.mutation(api.mindmaps.setVisibility, {
+      mindmapId: shared.mindmapId,
+      visibility: "shared",
+    });
+
+    const result = await t.query(api.mindmaps.getShared, {
+      publicId: shared.publicId,
+    });
+
+    expect(result.mindmap).toMatchObject({
+      _id: shared.mindmapId,
+      publicId: shared.publicId,
+      visibility: "shared",
+      isOwner: false,
+    });
+    expect(result.mindmap).not.toHaveProperty("ownerId");
+    expect(result.nodes.map((node) => node.nodeId)).toEqual(["root"]);
+    await expect(
+      t.query(api.mindmaps.getShared, { publicId: privateMap.publicId })
+    ).rejects.toThrow("Not found");
+    await expect(
+      t.query(api.mindmaps.getShared, { publicId: "unknown000" })
+    ).rejects.toThrow("Not found");
+  });
+
+  it("allows only the owner to change visibility", async () => {
+    const { asAlice, asBob } = createHarness();
+    const created = await asAlice.mutation(api.mindmaps.create, {
+      name: "Visibility control",
+    });
+
+    await asAlice.mutation(api.mindmaps.setVisibility, {
+      mindmapId: created.mindmapId,
+      visibility: "shared",
+    });
+    const shared = await asAlice.query(api.mindmaps.get, {
+      mindmapId: created.mindmapId,
+    });
+
+    expect(shared.mindmap.visibility).toBe("shared");
+    await expect(
+      asBob.mutation(api.mindmaps.setVisibility, {
+        mindmapId: created.mindmapId,
+        visibility: "private",
+      })
+    ).rejects.toThrow("Forbidden");
+
+    await asAlice.mutation(api.mindmaps.setVisibility, {
+      mindmapId: created.mindmapId,
+      visibility: "private",
+    });
+    await expect(
+      asBob.query(api.mindmaps.getByPublicId, {
+        publicId: created.publicId,
+      })
+    ).rejects.toThrow("Not found");
+  });
+
   it("lists only the owner's mindmaps newest-updated first", async () => {
     const { t, asAlice, asBob } = createHarness();
     const older = await asAlice.mutation(api.mindmaps.create, {

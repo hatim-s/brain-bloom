@@ -4,8 +4,7 @@ import { NextResponse } from "next/server";
 import { acceptsJsonOverHtml, isPublicPath } from "@/lib/auth-routing";
 
 const proxy = clerkMiddleware(async (auth, request) => {
-  // "/" stays protected until P7 ships a real landing page — its current
-  // content is the authenticated dashboard, which fetches user data.
+  // Public landing, auth, and shared-map routes bypass Clerk protection.
   if (isPublicPath(request.nextUrl.pathname)) {
     return;
   }

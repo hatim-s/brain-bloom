@@ -8,6 +8,7 @@ import { navigate, Operation } from "../layout/navigate";
 import { MindmapNode, NodeTypes } from "../types";
 
 export function useMindmapNavigation({
+  readOnly,
   activeNode,
   setActiveNode,
   mindmapNodesMap,
@@ -16,6 +17,7 @@ export function useMindmapNavigation({
   setSelectedNode,
   setAiEditNode,
 }: {
+  readOnly: boolean;
   mindmapNodesMap: Record<string, MindmapNode>;
   leveledNodes: MindmapNode[][];
   activeNode: string | null;
@@ -68,9 +70,13 @@ export function useMindmapNavigation({
     );
   }, [activeNode, mindmapNodesMap, onAddNode]);
 
-  useKey("Tab", () => {
-    addNode();
-  });
+  useKey(
+    "Tab",
+    () => {
+      addNode();
+    },
+    { enabled: !readOnly }
+  );
 
   const onEditNode = useCallback(() => {
     if (!activeNode) return;
@@ -83,15 +89,20 @@ export function useMindmapNavigation({
     }
   }, [activeNode, mindmapNodesMap, setSelectedNode]);
 
-  useKey("Enter", onEditNode);
-  useKey(" ", onEditNode); // space is also used to edit nodes
+  useKey("Enter", onEditNode, { enabled: !readOnly });
+  // Space is also used to edit nodes on an editable canvas.
+  useKey(" ", onEditNode, { enabled: !readOnly });
 
   const onStartAiEditing = useEventCallback(() => {
     setAiEditNode(activeNode);
     setSelectedNode(null); // we unset the selected node to prevent user from editing the node
   });
 
-  useKey("k", onStartAiEditing, { isCtrlKey: true, isMetaKey: true });
+  useKey("k", onStartAiEditing, {
+    enabled: !readOnly,
+    isCtrlKey: true,
+    isMetaKey: true,
+  });
 
   useKey(
     "Escape",

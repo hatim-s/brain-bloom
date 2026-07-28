@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 
 type UseKeyOptions = {
+  enabled?: boolean;
   isMetaKey?: boolean;
   isCtrlKey?: boolean;
   isShiftKey?: boolean;
@@ -15,6 +16,7 @@ export function useKey(
   opts?: UseKeyOptions
 ) {
   const {
+    enabled = true,
     isMetaKey = false,
     isCtrlKey = false,
     isShiftKey = false,
@@ -23,6 +25,10 @@ export function useKey(
   } = opts ?? {};
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     const handleKey = (event: KeyboardEvent) => {
       const target = event.target;
       const isEditableTarget =
@@ -56,6 +62,7 @@ export function useKey(
   }, [
     key,
     callback,
+    enabled,
     isMetaKey,
     isCtrlKey,
     isShiftKey,

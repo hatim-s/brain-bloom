@@ -1,4 +1,5 @@
 const PUBLIC_AUTH_PATHS = ["/sign-in", "/sign-up"] as const;
+const PUBLIC_PATH_PREFIXES = [...PUBLIC_AUTH_PATHS, "/share"] as const;
 
 /**
  * Accepts only same-origin, root-relative destinations.
@@ -36,9 +37,13 @@ function buildAuthPageUrl(
   return `${pathname}?${searchParams.toString()}`;
 }
 
-/** Matches the auth pages and their optional Clerk catch-all path segments. */
+/** Matches public pages and their optional catch-all path segments. */
 function isPublicPath(pathname: string): boolean {
-  return PUBLIC_AUTH_PATHS.some(
+  if (pathname === "/") {
+    return true;
+  }
+
+  return PUBLIC_PATH_PREFIXES.some(
     (publicPath) =>
       pathname === publicPath || pathname.startsWith(`${publicPath}/`)
   );

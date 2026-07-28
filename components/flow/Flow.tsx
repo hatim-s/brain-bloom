@@ -39,8 +39,14 @@ const nodeTypes: XYNodeTypes = {
   right: RightNode,
 };
 
-export function MindmapFlow() {
+/** Mounts autosave only for an editable canvas. */
+function MindmapAutosave() {
   useMindmapSync();
+  return null;
+}
+
+export function MindmapFlow() {
+  const readOnly = useMindmapFlow((state) => state.readOnly);
   const nodes = useMindmapFlow((state) => state.nodes);
   const edges = useMindmapFlow((state) => state.edges);
   const mindmapNodesMap = useMindmapFlow((state) => state.mindmapNodesMap);
@@ -57,6 +63,7 @@ export function MindmapFlow() {
   const onAddNode = useMindmapFlow((state) => state.actions.onAddNode);
 
   useMindmapNavigation({
+    readOnly,
     mindmapNodesMap,
     leveledNodes,
     activeNode,
@@ -90,9 +97,11 @@ export function MindmapFlow() {
 
   const handleNodeDoubleClick = useCallback(
     (_ev: unknown, _node: Node) => {
-      setSelectedNode(_node.id);
+      if (!readOnly) {
+        setSelectedNode(_node.id);
+      }
     },
-    [setSelectedNode]
+    [readOnly, setSelectedNode]
   );
 
   const handlePaneClick = useCallback(() => {
@@ -156,9 +165,15 @@ export function MindmapFlow() {
 
   return (
     <Stack className="h-full w-full flex-1">
-      <SaveMindmap />
+      {readOnly ? null : (
+        <>
+          <MindmapAutosave />
+          <SaveMindmap />
+        </>
+      )}
       <ReactFlow
         nodesDraggable={false}
+        nodesConnectable={false}
         minZoom={0.1}
         disableKeyboardA11y
         nodes={nodes}
@@ -189,9 +204,11 @@ export function MindmapFlow() {
 export default function Flow({
   mindmap: mindmapDB,
   nodes,
+  readOnly = false,
 }: {
   mindmap: MindmapDB;
   nodes: MindmapNodeProjection[];
+  readOnly?: boolean;
 }) {
   const initialGraph = useMemo(
     () => transformConvexNodesToFlowNodesAndEdges(nodes),
@@ -216,6 +233,7 @@ export default function Flow({
       {/* This key remounts the prop-seeded store when client navigation loads another mindmap. */}
       <MindmapFlowProvider
         key={mindmapDB._id}
+        readOnly={readOnly}
         mindmapDB={mindmapDB}
         initialNodes={initialNodes.length ? initialNodes : INITIAL_NODES}
         initialEdges={initialEdges.length ? initialEdges : INITIAL_EDGES}
