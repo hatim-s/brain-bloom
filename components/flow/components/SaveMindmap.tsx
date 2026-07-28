@@ -1,5 +1,5 @@
 import pick from "lodash/pick";
-import { Loader, LucideCloudUpload } from "lucide-react";
+import { CloudUpload, LoaderCircle } from "lucide-react";
 import { useCallback, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -40,18 +40,19 @@ export function SaveMindmap() {
         <Button
           variant="ghost"
           size="icon"
-          className="absolute top-8 right-20 z-10"
+          className="absolute top-3.5 right-16 z-10 text-muted-foreground hover:text-foreground"
           onClick={handleSaveMindmap}
           disabled={isPending}
         >
           {isPending ? (
-            <Loader className="animate-spin" />
+            <LoaderCircle className="animate-spin motion-reduce:animate-none" />
           ) : (
-            <LucideCloudUpload />
+            <CloudUpload />
           )}
+          <span className="sr-only">Save mindmap</span>
         </Button>
       </TooltipTrigger>
-      <TooltipContent align="center">Save Mindmap</TooltipContent>
+      <TooltipContent align="center">Save mindmap</TooltipContent>
     </Tooltip>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
@@ -8,6 +8,12 @@ import { cn } from "@/lib/utils";
 import { Box } from "./ui/box";
 import { Textarea } from "./ui/textarea";
 
+/**
+ * Prompt field whose empty state cycles through example prompts.
+ *
+ * The cycling is the point of the component, so under `prefers-reduced-motion`
+ * it settles on the first example rather than disappearing.
+ */
 export function PromptInput({
   placeholders,
   onChange,
@@ -16,14 +22,17 @@ export function PromptInput({
   onChange?: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
 }) {
   const [currentPlaceholder, setCurrentPlaceholder] = useState(0);
+  const prefersReducedMotion = useReducedMotion();
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const startAnimationFn = useCallback(() => {
+    if (prefersReducedMotion) return;
+
     intervalRef.current = setInterval(() => {
       setCurrentPlaceholder((prev) => (prev + 1) % placeholders.length);
     }, 3000);
-  }, [placeholders]);
+  }, [placeholders, prefersReducedMotion]);
 
   const startAnimation = useRef(startAnimationFn);
   startAnimation.current = startAnimationFn;
@@ -56,8 +65,8 @@ export function PromptInput({
     <Box className="relative">
       <Textarea
         className={cn(
-          "w-full text-sm sm:text-base rounded-xl min-h-32 bg-transparent",
-          "dark:text-white text-black focus:outline-hidden focus:ring-0"
+          "min-h-32 w-full rounded-lg text-sm sm:text-base",
+          "resize-none"
         )}
         onChange={(e) => {
           setValue(e.target.value);
@@ -70,24 +79,12 @@ export function PromptInput({
         <AnimatePresence mode="wait">
           {!value && (
             <motion.p
-              initial={{
-                y: 5,
-                opacity: 0,
-              }}
+              initial={prefersReducedMotion ? false : { y: 5, opacity: 0 }}
               key={`current-placeholder-${currentPlaceholder}`}
-              animate={{
-                y: 0,
-                opacity: 1,
-              }}
-              exit={{
-                y: -15,
-                opacity: 0,
-              }}
-              transition={{
-                duration: 0.3,
-                ease: "linear",
-              }}
-              className="dark:text-zinc-500 text-sm sm:text-base font-normal text-neutral-500 px-3 py-2 text-left"
+              animate={{ y: 0, opacity: 1 }}
+              exit={prefersReducedMotion ? undefined : { y: -15, opacity: 0 }}
+              transition={{ duration: 0.3, ease: [0.32, 0.72, 0, 1] }}
+              className="px-3 py-2 text-left text-sm font-normal text-muted-foreground sm:text-base"
             >
               {placeholders[currentPlaceholder]}
             </motion.p>

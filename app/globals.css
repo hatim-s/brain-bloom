@@ -3,39 +3,72 @@
 
 @custom-variant dark (&:is(.dark *));
 
-@theme inline {
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-  --color-sidebar: hsl(var(--sidebar-background));
-  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
-  --color-sidebar-primary: hsl(var(--sidebar-primary));
-  /* prettier-ignore */
-  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
-  --color-sidebar-accent: hsl(var(--sidebar-accent));
-  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
-  --color-sidebar-border: hsl(var(--sidebar-border));
-  --color-sidebar-ring: hsl(var(--sidebar-ring));
+/*
+ * Sprig: "organic bloom".
+ *
+ * Sage/moss greens against bone/paper neutrals. Every surface token sits on a
+ * single hue family per theme (~152 for dark moss-shadow, ~95-120 for light
+ * bone paper) so the two themes read as siblings rather than inversions.
+ *
+ * Two line tokens, deliberately:
+ *   --border       quiet hairline for decorative grouping (dividers, card edges).
+ *                  Below 3:1 on purpose; it is not carrying any information.
+ *   --line-strong  boundary of an object the user can act on (form controls,
+ *                  node cards, flow edges). Measured >= 3:1 against every
+ *                  surface it is drawn on, per WCAG 1.4.11.
+ *
+ * --bloom is the AI accent. It means "the model touched this" and nothing else.
+ * It is intentionally NOT wired to --accent, which shadcn uses for ordinary
+ * hover chrome and would spend the colour on nothing.
+ */
 
+@theme inline {
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-sidebar: var(--sidebar-background);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-line-strong: var(--line-strong);
+  --color-scrim: var(--scrim);
+  --color-bloom: var(--bloom);
+  --color-bloom-foreground: var(--bloom-foreground);
+  --color-bloom-wash: var(--bloom-wash);
+  --color-canvas-dot: var(--canvas-dot);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+
+  /* 14 / 10 / 8. Panels and node cards are soft, controls are crisper, so the
+     hierarchy is legible instead of everything landing on the same curve. */
   --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 4px);
+  --radius-sm: calc(var(--radius) - 6px);
+
+  /* Weighted decelerate. Everything that moves in Sprig uses this curve. */
+  --ease-organic: cubic-bezier(0.32, 0.72, 0, 1);
 
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
@@ -112,129 +145,109 @@
   scrollbar-color: var(--scrollbar-color) transparent;
 }
 
-/* neutral colors
-0 0% 3.9%
-0 0% 9%
-0 0% 14.9%
-0 0% 25.1%
-0 0% 32.2%
-0 0% 45.1%
-0 0% 63.9%
-0 0% 83.1%
-0 0% 89.8%
-0 0% 96.1%
-0 0% 98%
-*/
-
-/* primary colors
-144.9 80.4% 10%
-143.8 61.2% 20.2%
-142.8 64.2% 24.1%
-142.4 71.8% 29.2%
-142.1 76.2% 36.3%
-142.1 70.6% 45.3%
-141.9 69.2% 58%
-141.7 76.6% 73.1%
-141 78.9% 85.1%
-140.6 84.2% 92.5%
-138.5 76.5% 96.7%
-*/
-
 @layer base {
+  /* Light: bone paper. Card surfaces sit *above* the page, like sheets on a desk. */
   :root {
-    --background: 0 0% 98%;
-    --foreground: 0 0% 3.9%;
-    --card: 0 0% 98%;
-    --card-foreground: 0 0% 3.9%;
+    --background: oklch(0.965 0.008 95);
+    --foreground: oklch(0.245 0.017 150);
 
-    --popover: 0 0% 98%;
-    --popover-foreground: 0 0% 3.9%;
+    --card: oklch(0.988 0.005 95);
+    --card-foreground: oklch(0.245 0.017 150);
 
-    --primary: 142.1 76.2% 36.3%;
-    --primary-foreground: 0 0% 98%;
+    --popover: oklch(0.995 0.004 95);
+    --popover-foreground: oklch(0.245 0.017 150);
 
-    --secondary: 0 0% 96.1%;
-    --secondary-foreground: 0 0% 9%;
+    --primary: oklch(0.505 0.105 150);
+    --primary-foreground: oklch(0.985 0.006 95);
 
-    --muted: 0 0% 96.1%;
-    --muted-foreground: 0 0% 45.1%;
+    --secondary: oklch(0.933 0.011 100);
+    --secondary-foreground: oklch(0.245 0.017 150);
 
-    --accent: 0 0% 96.1%;
-    --accent-foreground: 0 0% 9%;
+    --muted: oklch(0.933 0.011 100);
+    --muted-foreground: oklch(0.475 0.019 140);
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
+    --accent: oklch(0.918 0.013 105);
+    --accent-foreground: oklch(0.245 0.017 150);
 
-    --border: 0 0% 89.8%;
-    --input: 0 0% 89.8%;
-    --ring: 142.1 76.2% 36.3%;
+    --destructive: oklch(0.52 0.19 27);
+    --destructive-foreground: oklch(0.99 0.005 60);
 
-    --radius: 0.75rem;
+    --border: oklch(0.858 0.014 120);
+    --line-strong: oklch(0.63 0.025 145);
+    --input: var(--line-strong);
+    --ring: oklch(0.505 0.105 150);
 
-    --chart-1: 142.1 76.2% 36.3%;
-    --chart-2: 142.1 70.6% 45.3%;
-    --chart-3: 141.9 69.2% 58%;
-    --chart-4: 141.7 76.6% 73.1%;
-    --chart-5: 141 78.9% 85.1%;
+    --bloom: oklch(0.545 0.145 42);
+    --bloom-foreground: oklch(0.99 0.005 60);
+    --bloom-wash: oklch(0.545 0.145 42 / 0.1);
 
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 0 0% 3.9%;
-    --sidebar-primary: 142.1 76.2% 36.3%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 0 0% 96.1%;
-    --sidebar-accent-foreground: 0 0% 9%;
-    --sidebar-border: 0 0% 89.8%;
-    --sidebar-ring: 142.1 76.2% 36.3%;
+    --canvas-dot: oklch(0.855 0.012 120);
 
-    --scrollbar-color: #00000099;
+    /* A scrim is a scrim: the same deep moss shade in both themes, so a modal
+       always dims towards the same place. */
+    --scrim: oklch(0.14 0.012 152 / 0.66);
+
+    --radius: 0.875rem;
+
+    --sidebar-background: oklch(0.988 0.005 95);
+    --sidebar-foreground: oklch(0.245 0.017 150);
+    --sidebar-primary: oklch(0.505 0.105 150);
+    --sidebar-primary-foreground: oklch(0.985 0.006 95);
+    --sidebar-accent: oklch(0.918 0.013 105);
+    --sidebar-accent-foreground: oklch(0.245 0.017 150);
+    --sidebar-border: var(--line-strong);
+    --sidebar-ring: oklch(0.505 0.105 150);
+
+    --scrollbar-color: oklch(0.63 0.025 145);
   }
 
+  /* Dark: moss shadow. The default. */
   .dark {
-    --background: 0 0% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 9%;
-    --card-foreground: 0 0% 98%;
+    --background: oklch(0.168 0.011 152);
+    --foreground: oklch(0.945 0.008 100);
 
-    --popover: 0 0% 9%;
-    --popover-foreground: 0 0% 98%;
+    --card: oklch(0.213 0.013 152);
+    --card-foreground: oklch(0.945 0.008 100);
 
-    --primary: 142.1 70.6% 45.3%;
-    --primary-foreground: 144.9 80.4% 10%;
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 0 0% 14.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 85.7% 97.3%;
+    --popover: oklch(0.232 0.013 152);
+    --popover-foreground: oklch(0.945 0.008 100);
 
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 142.4 71.8% 29.2%;
+    --primary: oklch(0.74 0.115 148);
+    --primary-foreground: oklch(0.19 0.045 150);
 
-    --chart-1: 142.1 70.6% 45.3%;
-    --chart-2: 141.9 69.2% 58%;
-    --chart-3: 141.7 76.6% 73.1%;
-    --chart-4: 141 78.9% 85.1%;
-    --chart-5: 140.6 84.2% 92.5%;
+    --secondary: oklch(0.258 0.013 152);
+    --secondary-foreground: oklch(0.945 0.008 100);
 
-    --sidebar-background: 0 0% 3.9%;
-    --sidebar-foreground: 0 0% 98%;
-    --sidebar-primary: 142.1 70.6% 45.3%;
-    --sidebar-primary-foreground: 144.9 80.4% 10%;
-    --sidebar-accent: 0 0% 14.9%;
-    --sidebar-accent-foreground: 0 0% 98%;
-    --sidebar-border: 0 0% 14.9%;
-    --sidebar-ring: 142.4 71.8% 29.2%;
+    --muted: oklch(0.258 0.013 152);
+    --muted-foreground: oklch(0.74 0.014 128);
 
-    --scrollbar-color: #ffffff99;
-  }
-  .animate-aurora {
-    --animate-aurora: aurora 8s ease-in-out infinite;
-  }
-  .animate-spin-slow {
-    animation: spin 2s linear infinite;
+    --accent: oklch(0.282 0.014 152);
+    --accent-foreground: oklch(0.945 0.008 100);
+
+    --destructive: oklch(0.62 0.17 27);
+    --destructive-foreground: oklch(0.2 0.05 27);
+
+    --border: oklch(0.318 0.014 152);
+    --line-strong: oklch(0.53 0.022 150);
+    --input: var(--line-strong);
+    --ring: oklch(0.74 0.115 148);
+
+    --bloom: oklch(0.8 0.115 42);
+    --bloom-foreground: oklch(0.22 0.05 45);
+    --bloom-wash: oklch(0.8 0.115 42 / 0.12);
+
+    --canvas-dot: oklch(0.3 0.014 152);
+
+    --sidebar-background: oklch(0.213 0.013 152);
+    --sidebar-foreground: oklch(0.945 0.008 100);
+    --sidebar-primary: oklch(0.74 0.115 148);
+    --sidebar-primary-foreground: oklch(0.19 0.045 150);
+    --sidebar-accent: oklch(0.282 0.014 152);
+    --sidebar-accent-foreground: oklch(0.945 0.008 100);
+    --sidebar-border: var(--line-strong);
+    --sidebar-ring: oklch(0.74 0.115 148);
+
+    --scrollbar-color: oklch(0.53 0.022 150);
   }
 }
 
@@ -242,35 +255,45 @@
   * {
     @apply border-border;
   }
+
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+
+  /* One focus treatment across the whole product: a 2px moss ring, offset from
+     the control so it never sits on top of the control's own border. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 }
 
-@keyframes aurora {
-  0% {
-    background-position: 0% 50%;
-    transform: rotate(-5deg) scale(0.9);
-  }
-  25% {
-    background-position: 50% 100%;
-    transform: rotate(5deg) scale(1.1);
-  }
-  50% {
-    background-position: 100% 50%;
-    transform: rotate(-3deg) scale(0.95);
-  }
-  75% {
-    background-position: 50% 0%;
-    transform: rotate(3deg) scale(1.05);
+/* AI activity. Both keyframes settle back to the resting state so the highlight
+   reads as a pulse of attention, not a permanent badge. P8 applies the classes. */
+@keyframes sprig-bloom-node {
+  0%,
+  60% {
+    box-shadow: 0 0 0 2px var(--bloom);
   }
   100% {
-    background-position: 0% 50%;
-    transform: rotate(-5deg) scale(0.9);
+    box-shadow: 0 0 0 2px transparent;
   }
 }
 
-/* TODO: check why is this working? */
-.animate-aurora {
-  animation: aurora 8s ease-in-out infinite;
+@keyframes sprig-bloom-edge {
+  0%,
+  60% {
+    stroke: var(--bloom);
+    stroke-width: 2.5;
+  }
+  100% {
+    stroke: var(--line-strong);
+    stroke-width: 1.5;
+  }
+}
+
+@keyframes sprig-edge-flow {
+  to {
+    stroke-dashoffset: -16;
+  }
 }

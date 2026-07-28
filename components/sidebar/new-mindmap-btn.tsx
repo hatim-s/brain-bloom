@@ -1,12 +1,12 @@
 "use client";
 
-import { PencilLine } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { Typography } from "../ui/typography";
 
+/** Starts a new mindmap. Sits in the sidebar header, next to the wordmark. */
 export function NewMindmapButton() {
   const router = useRouter();
 
@@ -18,17 +18,16 @@ export function NewMindmapButton() {
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
-          className="shrink-0 self-end place-self-end !size-10"
+          className="shrink-0 !size-8 text-muted-foreground hover:text-foreground [&_svg]:!size-4"
           variant="ghost"
           size="icon"
           onClick={handleNewMindmap}
         >
-          <PencilLine className="size-3" />
+          <Plus />
+          <span className="sr-only">New mindmap</span>
         </Button>
       </TooltipTrigger>
-      <TooltipContent>
-        <Typography variant="p">New Mindmap</Typography>
-      </TooltipContent>
+      <TooltipContent>New mindmap</TooltipContent>
     </Tooltip>
   );
 }

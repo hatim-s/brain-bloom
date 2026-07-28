@@ -178,7 +178,9 @@ export function MindmapFlow() {
         fitView
         nodeTypes={nodeTypes}
       >
-        <Background gap={20} />
+        {/* Sparse and soft: the grid should register as paper texture at a
+            glance and only resolve into dots when you look for it. */}
+        <Background gap={28} size={1.5} />
       </ReactFlow>
     </Stack>
   );

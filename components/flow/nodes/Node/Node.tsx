@@ -17,6 +17,18 @@ import { useMindmapFlow } from "../../providers/MindmapFlowProvider";
 import NodeAiEdit from "./NodeAiEdit";
 import NodeDataInput from "./NodeDataInput";
 
+/**
+ * The card that every mindmap node renders into.
+ *
+ * Flat: a hairline boundary on a card surface, no elevation. Selection is
+ * signalled by a 2px moss ring held off the card by a 2px gap in the canvas
+ * colour, so the ring reads at any zoom without thickening the card itself.
+ *
+ * The box model here is load-bearing. `components/flow/layout/init.ts` measures
+ * nodes analytically (12px vertical padding, 28px title line, two 24px
+ * description lines, 300px wide) to feed dagre. Padding, width and line-heights
+ * must not drift or the graph spacing goes wrong.
+ */
 export function BaseNodeContent(props: {
   title: string;
   description?: string | undefined;
@@ -35,9 +47,11 @@ export function BaseNodeContent(props: {
   return (
     <Stack
       className={cn(
-        "border border-secondary-foreground rounded-sm py-3 px-5 w-[300px] bg-background items-start text-left",
+        "w-[300px] py-3 px-5 items-start text-left",
+        "rounded-lg border border-line-strong bg-card text-card-foreground",
+        "transition-[border-color,box-shadow] duration-200 ease-organic",
         {
-          "outline outline-2 outline-offset-4 outline-primary !border-primary bg-primary/15":
+          "border-primary shadow-[0_0_0_2px_var(--background),0_0_0_4px_var(--primary)]":
             isSelected,
         },
         containerClassName
@@ -51,7 +65,10 @@ export function BaseNodeContent(props: {
         {title}
       </Typography>
       {description ? (
-        <Typography className="flex-1 text-base line-clamp-2" variant="p">
+        <Typography
+          className="flex-1 text-base text-muted-foreground line-clamp-2"
+          variant="p"
+        >
           {description}
         </Typography>
       ) : null}
@@ -62,11 +79,11 @@ export function BaseNodeContent(props: {
           className="text-xs absolute right-2 top-2"
         >
           <Button
-            className="[&_svg]:!size-5 !size-8 hover:scale-105 transition-all duration-200 group"
-            variant="link"
+            className="[&_svg]:!size-4 !size-8 text-muted-foreground hover:text-primary"
+            variant="ghost"
             size="icon"
           >
-            <LinkIcon className="group-hover:drop-shadow-[0_0_8px_#22c55e] transition-all duration-200" />
+            <LinkIcon />
           </Button>
         </Link>
       ) : null}
@@ -100,16 +117,8 @@ export default function BaseNode(
           link={link}
           isSelected={isSelected}
         />
-        <Handle
-          type="source"
-          position={sourcePosition}
-          className="!size-3 !bg-primary !border-primary"
-        />
-        <Handle
-          type="target"
-          position={targetPosition}
-          className="!size-3 !bg-primary !border-primary"
-        />
+        <Handle type="source" position={sourcePosition} />
+        <Handle type="target" position={targetPosition} />
       </PopoverTrigger>
       <PopoverContent
         className={!selectedNode ? "hidden" : ""}

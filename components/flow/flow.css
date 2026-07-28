@@ -1,3 +1,99 @@
+/*
+ * Canvas surface for the mindmap.
+ *
+ * xyflow reads its own `--xy-*` custom properties before falling back to its
+ * bundled defaults, so the whole canvas is retheme-able from here without
+ * touching any flow logic.
+ */
+
+.react-flow {
+  --xy-background-color: var(--background);
+
+  /* Dots recede. They give the canvas a sense of scale and nothing else, so
+     they sit well below the 3:1 line and never compete with the nodes. */
+  --xy-background-pattern-color: var(--canvas-dot);
+
+  /* Edges carry the structure of the map, so they use the perceivable line
+     token rather than the decorative hairline. */
+  --xy-edge-stroke: var(--line-strong);
+  --xy-edge-stroke-selected: var(--primary);
+  --xy-edge-stroke-width: 1.5;
+  --xy-connectionline-stroke: var(--primary);
+  --xy-connectionline-stroke-width: 1.5;
+
+  --xy-handle-background-color: var(--primary);
+  --xy-handle-border-color: var(--background);
+}
+
 div.react-flow__panel.react-flow__attribution {
   display: none;
+}
+
+/* Connections are not user-editable here, so the handles are pure geometry.
+   Hiding them lets each edge appear to grow straight out of the card edge
+   instead of bolting onto a visible stud. */
+.react-flow__handle {
+  width: 1px;
+  height: 1px;
+  min-width: 1px;
+  min-height: 1px;
+  border: 0;
+  background: transparent;
+}
+
+/* Nodes are positioned by the layout pass; easing the transform turns a
+   re-layout (new branch, AI insert) into a readable movement instead of a jump. */
+.react-flow__node {
+  transition: transform 340ms var(--ease-organic);
+}
+
+.react-flow__edge-path {
+  transition:
+    stroke 220ms var(--ease-organic),
+    stroke-width 220ms var(--ease-organic);
+}
+
+/*
+ * AI activity states. P8 sets these by putting the class on the node/edge
+ * object; xyflow forwards it to the rendered wrapper.
+ *
+ *   .sprig-ai-touched  one-shot bloom pulse that settles back to rest
+ *   .sprig-ai-active   sustained state while a generation is in flight
+ */
+.react-flow__node.sprig-ai-touched > * {
+  animation: sprig-bloom-node 1600ms var(--ease-organic) forwards;
+  border-radius: var(--radius);
+}
+
+.react-flow__edge.sprig-ai-touched .react-flow__edge-path {
+  animation: sprig-bloom-edge 1600ms var(--ease-organic) forwards;
+}
+
+.react-flow__edge.sprig-ai-active .react-flow__edge-path {
+  stroke: var(--bloom);
+  stroke-width: 2;
+  stroke-dasharray: 6 10;
+  animation: sprig-edge-flow 900ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__node,
+  .react-flow__edge-path {
+    transition: none;
+  }
+
+  /* The AI signal still has to land without motion, so the pulse collapses to
+     a static bloom outline rather than disappearing entirely. */
+  .react-flow__node.sprig-ai-touched > * {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--bloom);
+  }
+
+  .react-flow__edge.sprig-ai-touched .react-flow__edge-path,
+  .react-flow__edge.sprig-ai-active .react-flow__edge-path {
+    animation: none;
+    stroke: var(--bloom);
+    stroke-width: 2;
+    stroke-dasharray: none;
+  }
 }
