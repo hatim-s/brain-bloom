@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { Edge } from "@xyflow/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { MindmapDB } from "@/types/Mindmap";
 
@@ -80,6 +80,87 @@ describe("createMindmapStore", () => {
     expectDerivedStateInvariant(state);
   });
 
+  it("resyncs the owning dagre node height when node data changes", () => {
+    const store = createFixtureStore();
+    const rightGraph = store.getState().layout.rightGraph;
+
+    expect(rightGraph.node("r-child").height).toBe(52);
+
+    store.getState().actions.onUpdateNode("r-child", {
+      title: "Updated right child",
+      description: "A description increases the rendered node height",
+    });
+
+    expect(rightGraph.node("r-child")).toEqual({
+      height: 100,
+      width: 300,
+    });
+  });
+
+  it("reads the current public mindmap map before adding a node", () => {
+    const store = createFixtureStore();
+    const root = store.getState().mindmapNodesMap[ROOT_NODE_ID];
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    store.setState({ mindmapNodesMap: { [ROOT_NODE_ID]: root } });
+
+    const result = store
+      .getState()
+      .actions.onAddNode(NodeTypes.LEFT, "l-child", "l-grandchild");
+
+    expect(result).toBeNull();
+    expect(store.getState().nodesMap["l-grandchild"]).toBeUndefined();
+    expect(error).toHaveBeenCalledWith(
+      "[MindmapFlowProvider] onAddNode: parent node l-child not found"
+    );
+    error.mockRestore();
+  });
+
+  it("rejects a parent missing from the target-side graph", () => {
+    const store = createFixtureStore();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = store
+      .getState()
+      .actions.onAddNode(NodeTypes.RIGHT, "l-child", "r-wrong-side");
+
+    expect(result).toBeNull();
+    expect(store.getState().layout.rightGraph.hasNode("l-child")).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      "[MindmapFlowProvider] onAddNode: parent node l-child not found in right graph"
+    );
+    error.mockRestore();
+  });
+
+  it("rejects explicit id collisions and regenerates generated collisions", () => {
+    const store = createFixtureStore();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const explicitResult = store
+      .getState()
+      .actions.onAddNode(NodeTypes.RIGHT, "r-child", "r-child");
+
+    expect(explicitResult).toBeNull();
+    expect(error).toHaveBeenCalledWith(
+      "[MindmapFlowProvider] onAddNode: node r-child already exists"
+    );
+
+    store.getState().actions.onAddNode(NodeTypes.RIGHT, "r-child", "r-00000");
+    const random = vi
+      .spyOn(Math, "random")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(1.5 / 36 ** 5);
+
+    const generatedResult = store
+      .getState()
+      .actions.onAddNode(NodeTypes.RIGHT, "r-child");
+
+    expect(generatedResult).toBe("r-00001");
+    expect(store.getState().nodesMap["r-00000"]).toBeDefined();
+    expect(store.getState().nodesMap["r-00001"]).toBeDefined();
+    random.mockRestore();
+    error.mockRestore();
+  });
+
   it("updates active, selected, and AI edit node fields", () => {
     const store = createFixtureStore();
 
@@ -119,6 +200,25 @@ describe("createMindmapStore", () => {
 
     store.getState().actions.onUpdateNode("l-grandchild", { title: "Updated" });
     expectDerivedStateInvariant(store.getState());
+  });
+
+  it("converges incremental bilateral additions on batch layout positions", () => {
+    const store = createFixtureStore();
+
+    store
+      .getState()
+      .actions.onAddNode(NodeTypes.LEFT, "l-child", "l-grandchild");
+    store
+      .getState()
+      .actions.onAddNode(NodeTypes.RIGHT, "r-child", "r-grandchild");
+    store
+      .getState()
+      .actions.onAddNode(NodeTypes.LEFT, "l-grandchild", "l-great-grandchild");
+
+    const state = store.getState();
+    const batchNodes = initLayout(initGraphs(), state.nodes, state.edges);
+
+    expect(toNodePositions(state.nodes)).toEqual(toNodePositions(batchNodes));
   });
 });
 
@@ -179,4 +279,9 @@ function expectDerivedStateInvariant(state: MindmapStore): void {
       .map((node) => node.id)
       .sort()
   ).toEqual(Object.keys(state.mindmapNodesMap).sort());
+}
+
+/** Reduces flow nodes to the geometry asserted by layout fidelity tests. */
+function toNodePositions(nodes: MindmapStore["nodes"]) {
+  return nodes.map(({ id, position }) => ({ id, position }));
 }

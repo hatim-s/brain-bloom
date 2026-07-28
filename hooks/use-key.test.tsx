@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, render, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useKey } from "./use-key";
 
 afterEach(cleanup);
 
-/** Characterization — pins keyboard matching quirks before the P3 canvas changes. */
+/** Verifies exact key, modifier, and editable-target matching. */
 describe("useKey", () => {
   it("fires when the event key matches the binding", () => {
     const callback = vi.fn();
@@ -58,14 +58,25 @@ describe("useKey", () => {
     expect(callback).toHaveBeenCalledOnce();
   });
 
-  it("fires a plain binding when only meta is held", () => {
+  it("does not fire a plain binding when only meta is held", () => {
     const callback = vi.fn();
     renderHook(() => useKey("k", callback));
 
-    // Characterized quirk: the default ctrl=false half satisfies the modifier OR.
     dispatchKey({ key: "k", metaKey: true });
 
-    expect(callback).toHaveBeenCalledOnce();
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it("does not fire a plain binding from a focused input", () => {
+    const callback = vi.fn();
+    const view = render(<input aria-label="Title" />);
+    const input = view.getByRole("textbox");
+    input.focus();
+    renderHook(() => useKey(" ", callback));
+
+    dispatchKeyOn(input, { key: " " });
+
+    expect(callback).not.toHaveBeenCalled();
   });
 
   it("does not fire a plain binding when shift is held", () => {
@@ -132,6 +143,19 @@ function dispatchKey(init: KeyboardEventInit): void {
   act(() => {
     window.dispatchEvent(
       new KeyboardEvent("keydown", { ...init, cancelable: true })
+    );
+  });
+}
+
+/** Dispatches a bubbling keydown from an element so window sees its real target. */
+function dispatchKeyOn(target: Element, init: KeyboardEventInit): void {
+  act(() => {
+    target.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        ...init,
+        bubbles: true,
+        cancelable: true,
+      })
     );
   });
 }

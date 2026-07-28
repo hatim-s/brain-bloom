@@ -9,6 +9,7 @@ export function generateLeveledNodes(
   if (!rootNode) return [];
 
   const leveledNodes: MindmapNode[][] = [];
+  const enqueuedNodeIds = new Set([rootNode.id]);
   let currentLevel = [rootNode];
 
   while (currentLevel.length > 0) {
@@ -18,7 +19,8 @@ export function generateLeveledNodes(
     for (const currentNode of currentLevel) {
       for (const childId of Array.from(currentNode.children.keys())) {
         const childNode = mindmapNodesMap[childId];
-        if (childNode) {
+        if (childNode && !enqueuedNodeIds.has(childId)) {
+          enqueuedNodeIds.add(childId);
           nextLevel.push(childNode);
         }
       }

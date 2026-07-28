@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, render, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildMindmapFixture } from "../testing/fixtures";
@@ -8,7 +8,7 @@ import { useMindmapNavigation } from "./useMindmapNavigation";
 
 afterEach(cleanup);
 
-/** Characterization — pins canvas keyboard actions before the P3 hook migration. */
+/** Verifies canvas keyboard navigation and editing actions. */
 describe("useMindmapNavigation", () => {
   it("moves left to the node returned by navigate", () => {
     const fixture = renderNavigationHook("right-a-child");
@@ -135,6 +135,18 @@ describe("useMindmapNavigation", () => {
     expect(fixture.setSelectedNode).toHaveBeenCalledWith(null);
     expect(fixture.setAiEditNode).toHaveBeenCalledWith(null);
   });
+
+  it("clears selection and AI editing on Escape from a focused input", () => {
+    const fixture = renderNavigationHook("right-a");
+    const view = render(<input aria-label="Title" />);
+    const input = view.getByRole("textbox");
+    input.focus();
+
+    dispatchKeyOn(input, { key: "Escape" });
+
+    expect(fixture.setSelectedNode).toHaveBeenCalledWith(null);
+    expect(fixture.setAiEditNode).toHaveBeenCalledWith(null);
+  });
 });
 
 /**
@@ -173,6 +185,19 @@ function dispatchKey(init: KeyboardEventInit): void {
   act(() => {
     window.dispatchEvent(
       new KeyboardEvent("keydown", { ...init, cancelable: true })
+    );
+  });
+}
+
+/** Dispatches a bubbling keydown from an element so window sees its real target. */
+function dispatchKeyOn(target: Element, init: KeyboardEventInit): void {
+  act(() => {
+    target.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        ...init,
+        bubbles: true,
+        cancelable: true,
+      })
     );
   });
 }

@@ -5,7 +5,13 @@ import { MindmapDB } from "@/types/Mindmap";
 
 import { ROOT_NODE_ID } from "../const";
 import { generateLeveledNodes } from "../layout/generateLeveledNodes";
-import { addNodeToGraph, initGraphs, initLayout } from "../layout/init";
+import {
+  addNodeToGraph,
+  calculateNodeHeight,
+  initGraphs,
+  initLayout,
+  NODE_DIMENSIONS,
+} from "../layout/init";
 import { createEdge } from "../mindmap/createEdge";
 import {
   createBaseFlowNodeFromPartialBaseFlowNode,
@@ -62,10 +68,7 @@ function createMindmapStore({
     edges
   );
 
-  // This closure preserves the old ref's synchronous multi-add semantics.
-  let mindmapNodesMapSync = initialMindmapNodesMap;
-
-  return createStore<MindmapStore>((set) => {
+  return createStore<MindmapStore>((set, get) => {
     /** Applies XYFlow node changes and refreshes the node lookup atomically. */
     const onNodesChange: MindmapFlowContext["actions"]["onNodesChange"] = (
       changes
@@ -91,7 +94,9 @@ function createMindmapStore({
       id,
       data
     ) => {
-      if (!mindmapNodesMapSync[parentNodeId]) {
+      const currentMindmapNodesMap = get().mindmapNodesMap;
+
+      if (!currentMindmapNodesMap[parentNodeId]) {
         // eslint-disable-next-line no-console -- needed
         console.error(
           `[MindmapFlowProvider] onAddNode: parent node ${parentNodeId} not found`
@@ -99,35 +104,57 @@ function createMindmapStore({
         return null;
       }
 
-      const newNode = createNode(type, "New Node", id, data);
-      const newEdge = createEdge(parentNodeId, newNode.id);
+      if (id && currentMindmapNodesMap[id]) {
+        // eslint-disable-next-line no-console -- needed
+        console.error(
+          `[MindmapFlowProvider] onAddNode: node ${id} already exists`
+        );
+        return null;
+      }
+
+      let newNode = createNode(type, "New Node", id, data);
+      while (!id && currentMindmapNodesMap[newNode.id]) {
+        newNode = createNode(type, "New Node", undefined, data);
+      }
 
       const newGraph =
         type === NodeTypes.LEFT ? layout.leftGraph : layout.rightGraph;
       const oldGraph =
         type === NodeTypes.LEFT ? layout.rightGraph : layout.leftGraph;
 
+      if (!newGraph.hasNode(parentNodeId)) {
+        // eslint-disable-next-line no-console -- needed
+        console.error(
+          `[MindmapFlowProvider] onAddNode: parent node ${parentNodeId} not found in ${type} graph`
+        );
+        return null;
+      }
+
+      const newEdge = createEdge(parentNodeId, newNode.id);
       addNodeToGraph(newGraph, newNode, newEdge);
 
-      mindmapNodesMapSync = {
-        ...mindmapNodesMapSync,
+      let updatedMindmapNodesMap = {
+        ...currentMindmapNodesMap,
         [newNode.id]: createMindmapNodeFromFlowNode(
           newNode,
           parentNodeId,
-          mindmapNodesMapSync[parentNodeId].level
+          currentMindmapNodesMap[parentNodeId].level
         ),
       };
 
       if (parentNodeId) {
-        mindmapNodesMapSync[parentNodeId] = addChildToMindmapNode(
-          mindmapNodesMapSync[parentNodeId],
-          mindmapNodesMapSync[newNode.id]
-        );
+        updatedMindmapNodesMap = {
+          ...updatedMindmapNodesMap,
+          [parentNodeId]: addChildToMindmapNode(
+            updatedMindmapNodesMap[parentNodeId],
+            updatedMindmapNodesMap[newNode.id]
+          ),
+        };
       }
 
       const newRootNode = newGraph.node(ROOT_NODE_ID);
       const { nodes: newGraphNodes, edges: newGraphEdges } =
-        transformMindmapNodesToFlowNodesAndEdges(mindmapNodesMapSync);
+        transformMindmapNodesToFlowNodesAndEdges(updatedMindmapNodesMap);
 
       const updatedNodes = newGraphNodes.map<FlowNode>((partialNode) => {
         const node = createBaseFlowNodeFromPartialBaseFlowNode(partialNode);
@@ -166,9 +193,9 @@ function createMindmapStore({
       set({
         nodes: updatedNodes,
         edges: newGraphEdges,
-        mindmapNodesMap: mindmapNodesMapSync,
+        mindmapNodesMap: updatedMindmapNodesMap,
         nodesMap: deriveNodesMap(updatedNodes),
-        leveledNodes: deriveLeveledNodes(mindmapNodesMapSync),
+        leveledNodes: deriveLeveledNodes(updatedMindmapNodesMap),
       });
 
       return newNode.id;
@@ -183,20 +210,33 @@ function createMindmapStore({
         const updatedNodes = state.nodes.map((node) =>
           node.id === nodeId ? { ...node, data } : node
         );
-        const currentMindmapNode = mindmapNodesMapSync[nodeId];
+        const currentNode = state.nodesMap[nodeId];
+        const currentMindmapNode = state.mindmapNodesMap[nodeId];
+        const updatedMindmapNodesMap = currentMindmapNode
+          ? {
+              ...state.mindmapNodesMap,
+              [nodeId]: { ...currentMindmapNode, data },
+            }
+          : state.mindmapNodesMap;
 
-        if (currentMindmapNode) {
-          mindmapNodesMapSync = {
-            ...mindmapNodesMapSync,
-            [nodeId]: { ...currentMindmapNode, data },
-          };
+        if (currentNode) {
+          const updatedNode = { ...currentNode, data };
+          const graph =
+            updatedNode.type === NodeTypes.LEFT
+              ? layout.leftGraph
+              : layout.rightGraph;
+
+          graph.setNode(nodeId, {
+            height: calculateNodeHeight(updatedNode),
+            width: NODE_DIMENSIONS.width,
+          });
         }
 
         return {
           nodes: updatedNodes,
           nodesMap: deriveNodesMap(updatedNodes),
-          mindmapNodesMap: mindmapNodesMapSync,
-          leveledNodes: deriveLeveledNodes(mindmapNodesMapSync),
+          mindmapNodesMap: updatedMindmapNodesMap,
+          leveledNodes: deriveLeveledNodes(updatedMindmapNodesMap),
         };
       });
     };

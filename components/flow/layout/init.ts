@@ -36,7 +36,8 @@ function edgeLabelRenderer() {
   return {};
 }
 
-function calculateNodeHeight(node: BaseFlowNode): number {
+/** Calculates the fixed rendered height dagre should reserve for a node. */
+export function calculateNodeHeight(node: BaseFlowNode): number {
   const baseHeight = 12 * 2; // top and bottom padding
   const titleHeight = 28; // text-xl height
   const descriptionHeight = 24 * 2; // text-base height, we only support 2 lines in view
@@ -241,13 +242,15 @@ export function getNodeDimensions(node: BaseFlowNode) {
   };
 }
 
+/**
+ * Dagre 3.0 reversed sibling stacking, so mirror y about the root to preserve
+ * the 1.x visual order that breadth-first keyboard navigation assumes.
+ */
 function reflectGraphVertically(graph: DagreGraph): void {
   const rootY = graph.node(ROOT_NODE_ID).y!;
 
   graph.nodes().forEach((nodeId) => {
     const node = graph.node(nodeId);
-
-    // dagre 3.0 reversed sibling stacking; reflect y to preserve the 1.x visual order that keyboard navigation's BFS sibling order assumes.
     node.y = rootY - (node.y! - rootY);
   });
 }

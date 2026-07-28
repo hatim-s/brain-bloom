@@ -11,24 +11,14 @@ import { MindmapFlowContext as MindmapFlowContextType } from "./types";
 
 const MindmapFlowContext = createContext<StoreApi<MindmapStore> | null>(null);
 
-/**
- * Reads the full mindmap state for compatibility or a selected state slice.
- */
-function useMindmapFlow(): MindmapFlowContextType;
-function useMindmapFlow<T>(selector: (state: MindmapFlowContextType) => T): T;
-function useMindmapFlow<T>(
-  selector?: (state: MindmapFlowContextType) => T
-): MindmapFlowContextType | T {
+/** Reads a selected mindmap state slice from the nearest provider. */
+function useMindmapFlow<T>(selector: (state: MindmapFlowContextType) => T): T {
   const store = useContext(MindmapFlowContext);
   if (!store) {
     throw new Error("useMindmapFlow must be used within a MindmapFlowProvider");
   }
 
-  return useStore(
-    store,
-    selector ??
-      ((state: MindmapFlowContextType) => state as MindmapFlowContextType | T)
-  );
+  return useStore(store, selector);
 }
 
 type MindmapFlowProviderProps = {

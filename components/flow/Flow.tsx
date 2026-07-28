@@ -200,7 +200,9 @@ export default function Flow({ mindmap: mindmapDB }: { mindmap: MindmapDB }) {
 
   return (
     <ReactFlowProvider>
+      {/* This key remounts the prop-seeded store when client navigation loads another mindmap. */}
       <MindmapFlowProvider
+        key={mindmapDB.id}
         mindmapDB={mindmapDB}
         initialNodes={initialNodes.length ? initialNodes : INITIAL_NODES}
         initialEdges={initialEdges.length ? initialEdges : INITIAL_EDGES}

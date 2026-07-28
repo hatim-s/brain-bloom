@@ -67,6 +67,57 @@ describe("generateLeveledNodes", () => {
   it("returns an empty result for an empty node map", () => {
     expect(generateLeveledNodes({})).toEqual([]);
   });
+
+  it("breaks a cycle when traversal revisits an enqueued node", () => {
+    const child = createMindmapNode(
+      "r-child",
+      NodeTypes.RIGHT,
+      ROOT_NODE_ID,
+      1
+    );
+    const root = createRootNode([child]);
+    child.children.set(root.id, root);
+
+    expect(
+      generateLeveledNodes({
+        [root.id]: root,
+        [child.id]: child,
+      })
+    ).toEqual([[root], [child]]);
+  });
+
+  it("includes a duplicated child once under the first parent encountered", () => {
+    const sharedChild = createMindmapNode(
+      "r-shared",
+      NodeTypes.RIGHT,
+      "r-first",
+      2
+    );
+    const firstParent = createMindmapNode(
+      "r-first",
+      NodeTypes.RIGHT,
+      ROOT_NODE_ID,
+      1,
+      [sharedChild]
+    );
+    const secondParent = createMindmapNode(
+      "r-second",
+      NodeTypes.RIGHT,
+      ROOT_NODE_ID,
+      1,
+      [sharedChild]
+    );
+    const root = createRootNode([firstParent, secondParent]);
+
+    expect(
+      generateLeveledNodes({
+        [root.id]: root,
+        [firstParent.id]: firstParent,
+        [secondParent.id]: secondParent,
+        [sharedChild.id]: sharedChild,
+      })
+    ).toEqual([[root], [firstParent, secondParent], [sharedChild]]);
+  });
 });
 
 function createRootNode(children: MindmapNode[]): MindmapNode {
