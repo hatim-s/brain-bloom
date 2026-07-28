@@ -24,6 +24,9 @@ export function Header({ mindmap }: { mindmap: MindmapDB }) {
   const { open } = useSidebar();
   const identity =
     user?.primaryEmailAddress?.emailAddress ?? user?.fullName ?? "Account";
+  // A letter, not an avatar image: the header is a hairline-and-type surface,
+  // and a remote photo would be the only bitmap on it.
+  const initial = identity.slice(0, 1).toUpperCase();
 
   return (
     <header
@@ -49,9 +52,24 @@ export function Header({ mindmap }: { mindmap: MindmapDB }) {
       <Typography className="text-sm font-medium" variant="p">
         {mindmap.name}
       </Typography>
-      <div className="ml-auto flex items-center gap-2">
-        <span className="text-sm text-muted-foreground">{identity}</span>
+      {/* 68px of right padding clears the floating theme switcher (36px wide,
+          24px from the viewport edge) plus one gap. */}
+      <div className="ml-auto flex min-w-0 items-center gap-2 pr-[68px]">
+        <span
+          aria-hidden="true"
+          className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line-strong bg-secondary font-mono text-[11px] font-medium text-secondary-foreground"
+        >
+          {initial}
+        </span>
+        <span
+          className="max-w-[22ch] truncate text-sm text-muted-foreground"
+          title={identity}
+        >
+          {identity}
+        </span>
+        <Separator orientation="vertical" className="mx-1 h-4 bg-border" />
         <Button
+          className="text-muted-foreground hover:text-foreground"
           onClick={() => signOut({ redirectUrl: "/sign-in" })}
           size="sm"
           type="button"

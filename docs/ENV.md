@@ -4,6 +4,7 @@
 | --- | --- | --- | --- |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk's browser provider. | Not required in keyless development; production-only in P9. | Configure the production Clerk application in P9. |
 | `CLERK_SECRET_KEY` | Clerk's server SDK and request proxy. | Not required in keyless development; production-only in P9. | Configure the production Clerk application in P9. |
+| `NEXT_PUBLIC_ENABLE_OAUTH` | `app/(auth-pages)/oauth-buttons.tsx` renders the Google and GitHub buttons on `/sign-in` and `/sign-up` only when this is exactly `"true"`. | Optional; leave unset in keyless development. | Set to `true` once P9 claims the Clerk instance and enables the Google and GitHub social connections in the Clerk dashboard. |
 | `CLERK_JWT_ISSUER_DOMAIN` | `convex/auth.config.ts` uses this issuer to validate Clerk JWTs. | Supplied by the orchestrator after keyless provisioning; production is configured in P9. | In keyless development, use the Clerk frontend API URL written to `.env.local`; it doubles as the issuer domain. |
 | `CONVEX_DEPLOYMENT` | The Convex CLI uses this deployment identifier for schema generation and local backend commands. | Required for Convex development commands. | Created by the anonymous local Convex setup and stored in `.env.local`. Production deployment values arrive in P9. |
 | `GROQ_API_KEY` | The AI generation and AI editing server actions in `actions/ai-gen.ts` and `actions/ai-edit.ts`. | Required when using AI generation or editing. | Create an API key in the Groq console. |
@@ -19,6 +20,11 @@ Clerk keyless development requires no `CLERK_*` variables before the first
 `next dev` run. Clerk self-provisions and writes local artifacts at that point.
 Keep the generated `.clerk/` directory gitignored. The production publishable
 and secret keys are intentionally deferred to P9.
+
+Social sign-in is gated behind `NEXT_PUBLIC_ENABLE_OAUTH` for the same reason: a
+keyless instance has no OAuth credentials, so the buttons stay out of the markup
+entirely until the instance is claimed. The flag is read at module scope, so
+changing it requires a dev-server restart.
 
 The Groq and Supabase variables are slated for removal in a later overhaul phase. Until that phase lands, place local values in `.env.local` and configure the same values in the deployment environment.
 

@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+import { type AuthOAuthStrategy, OAuthButtons } from "../oauth-buttons";
+
 /** Provides the minimal password-based Clerk Core 3 sign-in flow. */
 export default function Login() {
   const { signIn, fetchStatus } = useSignIn();
@@ -47,47 +49,79 @@ export default function Login() {
     router.refresh();
   }
 
+  /**
+   * Hands the sign-in off to a social provider.
+   *
+   * `sso()` navigates away on success, so the only path back into this
+   * component is the error one. `redirectCallbackUrl` returns the user here
+   * when the provider could not produce a session on its own.
+   */
+  async function handleOAuth(strategy: AuthOAuthStrategy) {
+    setErrorMessage(null);
+
+    const { error } = await signIn.sso({
+      redirectCallbackUrl: "/sign-in",
+      redirectUrl: "/",
+      strategy,
+    });
+
+    if (error) {
+      setErrorMessage(error.longMessage ?? error.message);
+    }
+  }
+
   return (
-    <form
-      className="flex flex-col min-w-[400px] max-w-[400px] mx-auto"
-      onSubmit={handleSubmit}
-    >
-      <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Don&apos;t have an account?{" "}
-        <Link
-          className="font-medium text-primary underline underline-offset-4"
-          href="/sign-up"
-        >
-          Sign up
-        </Link>
-      </p>
-      <div className="flex flex-col gap-2 [&>input]:mb-3 mt-8">
-        <Label htmlFor="identifier">Email</Label>
-        <Input
-          autoComplete="email"
-          id="identifier"
-          name="identifier"
-          placeholder="you@example.com"
-          required
-          type="email"
-        />
-        <Label htmlFor="password">Password</Label>
-        <Input
-          autoComplete="current-password"
-          id="password"
-          name="password"
-          placeholder="Your password"
-          required
-          type="password"
-        />
-        <Button disabled={isSubmitting} type="submit">
+    <div className="flex flex-col gap-8">
+      <div className="flex flex-col gap-2">
+        <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+          Sign in
+        </p>
+        <h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
+        <p className="text-sm text-muted-foreground">
+          Don&apos;t have an account?{" "}
+          <Link
+            className="font-medium text-primary underline underline-offset-4 transition-colors duration-200 ease-organic hover:text-primary/80 motion-reduce:transition-none"
+            href="/sign-up"
+          >
+            Sign up
+          </Link>
+        </p>
+      </div>
+
+      <OAuthButtons disabled={isSubmitting} onSelect={handleOAuth} />
+
+      <form className="flex flex-col gap-5" onSubmit={handleSubmit}>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="identifier">Email</Label>
+          <Input
+            autoComplete="email"
+            id="identifier"
+            name="identifier"
+            placeholder="you@example.com"
+            required
+            type="email"
+          />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="password">Password</Label>
+          <Input
+            autoComplete="current-password"
+            id="password"
+            name="password"
+            placeholder="Your password"
+            required
+            type="password"
+          />
+        </div>
+        {errorMessage ? (
+          <div role="alert">
+            <FormMessage message={{ error: errorMessage }} />
+          </div>
+        ) : null}
+        <Button className="w-full" disabled={isSubmitting} type="submit">
           {isSubmitting ? "Signing in..." : "Sign in"}
         </Button>
-        {errorMessage ? (
-          <FormMessage message={{ error: errorMessage }} />
-        ) : null}
-      </div>
-    </form>
+      </form>
+    </div>
   );
 }
