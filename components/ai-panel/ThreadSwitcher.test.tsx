@@ -109,6 +109,37 @@ describe("ThreadSwitcher", () => {
     expect(document.activeElement).toBe(items[0]);
   });
 
+  it("does not reclaim focus when the live thread list updates while open", async () => {
+    const user = userEvent.setup();
+    const view = render(
+      <ThreadSwitcher
+        activeThreadId="threads:new"
+        isStreaming={false}
+        onSelect={vi.fn()}
+        threads={THREADS}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Conversations" }));
+    await user.keyboard("{ArrowDown}");
+
+    const oldThread = screen.getByRole("menuitemradio", {
+      name: "First pass at the outline",
+    });
+    expect(document.activeElement).toBe(oldThread);
+
+    view.rerender(
+      <ThreadSwitcher
+        activeThreadId="threads:new"
+        isStreaming={false}
+        onSelect={vi.fn()}
+        threads={[...THREADS]}
+      />
+    );
+
+    expect(document.activeElement).toBe(oldThread);
+  });
+
   it("keeps the paused trigger focusable and refuses to open", async () => {
     const user = userEvent.setup();
     render(

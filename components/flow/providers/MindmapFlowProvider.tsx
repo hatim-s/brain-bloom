@@ -5,7 +5,6 @@ import { StoreApi, useStore } from "zustand";
 import { useKey } from "@/hooks/use-key";
 import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 
-import { INITIAL_EDGES, INITIAL_NODES } from "../initialNodesAndEdges";
 import { BaseFlowNode } from "../types";
 import { createMindmapStore, MindmapStore } from "./store";
 import { MindmapFlowContext as MindmapFlowContextType } from "./types";
@@ -59,7 +58,7 @@ const MindmapFlowProvider = (props: MindmapFlowProviderProps) => {
 
   // A lazy state initializer guarantees one prop-seeded store per provider.
   const [store] = useState(() => {
-    if ("serverNodes" in props && props.serverNodes.length > 0) {
+    if ("serverNodes" in props) {
       return createMindmapStore({
         readOnly,
         mindmapDB,
@@ -67,15 +66,12 @@ const MindmapFlowProvider = (props: MindmapFlowProviderProps) => {
       });
     }
 
-    const fallbackSeed =
-      "initialNodes" in props
-        ? {
-            initialNodes: props.initialNodes,
-            initialEdges: props.initialEdges,
-          }
-        : { initialNodes: INITIAL_NODES, initialEdges: INITIAL_EDGES };
-
-    return createMindmapStore({ readOnly, mindmapDB, ...fallbackSeed });
+    return createMindmapStore({
+      readOnly,
+      mindmapDB,
+      initialNodes: props.initialNodes,
+      initialEdges: props.initialEdges,
+    });
   });
 
   const debugLogger = useCallback(() => {

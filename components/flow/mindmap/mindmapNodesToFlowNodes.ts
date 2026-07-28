@@ -82,7 +82,8 @@ function transformMindmapNodesToFlowNodesAndEdges(
   const flowEdges: FlowEdge[] = [];
 
   const rootMindmapNode = mindmapNodes[ROOT_NODE_ID];
-  // A partially written or empty snapshot must let Flow render its starter map.
+  // A partially written or empty snapshot intentionally remains empty; the
+  // server projection is the source of truth for server-seeded canvases.
   if (!rootMindmapNode) {
     return { nodes: flowNodes, edges: flowEdges };
   }

@@ -84,6 +84,19 @@ function createSeededGraphState({
   initialEdges,
 }: FlowGraphSeed): SeededGraphState {
   const layout = initGraphs();
+
+  // An empty server snapshot is authoritative. Dagre needs a root node to
+  // calculate translations, so skip layout while preserving the empty seed.
+  if (initialNodes.length === 0) {
+    return {
+      layout,
+      nodes: [],
+      edges: initialEdges,
+      nodesMap: {},
+      mindmapNodesMap: {},
+      leveledNodes: [],
+    };
+  }
   const nodes = initLayout(layout, initialNodes, initialEdges);
   const edges = initialEdges;
   const mindmapNodesMap = transformFlowNodesAndEdgesToMindmapNodes(

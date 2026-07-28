@@ -17,6 +17,8 @@ import { useMindmapFlow } from "../providers/MindmapFlowProvider";
 
 /** How long the copy button stays in its confirmed state. */
 const COPIED_RESET_MS = 2000;
+/** Gives the live store a bounded window to acknowledge a visibility write. */
+const VISIBILITY_ACK_TIMEOUT_MS = 5000;
 
 type Visibility = "private" | "shared";
 
@@ -37,7 +39,9 @@ const ShareMindmap = () => {
 
   const switchLabelId = useId();
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visibilityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previousVisibilityRef = useRef(visibility);
+  const pendingVisibilityRef = useRef<Visibility | null>(null);
 
   const [isPending, setIsPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -64,10 +68,26 @@ const ShareMindmap = () => {
     );
   }, [visibility]);
 
+  useEffect(() => {
+    if (pendingVisibilityRef.current !== visibility) {
+      return;
+    }
+
+    pendingVisibilityRef.current = null;
+    if (visibilityTimerRef.current !== null) {
+      clearTimeout(visibilityTimerRef.current);
+      visibilityTimerRef.current = null;
+    }
+    setIsPending(false);
+  }, [visibility]);
+
   useEffect(
     () => () => {
       if (copyTimerRef.current !== null) {
         clearTimeout(copyTimerRef.current);
+      }
+      if (visibilityTimerRef.current !== null) {
+        clearTimeout(visibilityTimerRef.current);
       }
     },
     []
@@ -83,14 +103,27 @@ const ShareMindmap = () => {
     setIsPending(true);
     setErrorMessage(null);
     setAnnouncement("Updating sharing");
+    pendingVisibilityRef.current = nextVisibility;
+    visibilityTimerRef.current = setTimeout(() => {
+      // The mutation may have succeeded without its live-query reseed arriving.
+      // Release the switch and render the store's still-authoritative value.
+      pendingVisibilityRef.current = null;
+      visibilityTimerRef.current = null;
+      setIsPending(false);
+    }, VISIBILITY_ACK_TIMEOUT_MS);
 
     try {
       await setVisibility({ mindmapId, visibility: nextVisibility });
+      setErrorMessage(null);
     } catch {
+      pendingVisibilityRef.current = null;
+      if (visibilityTimerRef.current !== null) {
+        clearTimeout(visibilityTimerRef.current);
+        visibilityTimerRef.current = null;
+      }
+      setIsPending(false);
       setErrorMessage("Couldn't change sharing just now. Try again.");
       setAnnouncement("Sharing was not changed");
-    } finally {
-      setIsPending(false);
     }
   });
 

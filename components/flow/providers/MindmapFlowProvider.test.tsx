@@ -1,16 +1,13 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render } from "@testing-library/react";
-import { Edge } from "@xyflow/react";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { MindmapDB } from "@/types/Mindmap";
+import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 
 import { ROOT_NODE_ID } from "../const";
-import { createEdge } from "../mindmap/createEdge";
-import { createBaseFlowNodeFromPartialBaseFlowNode } from "../mindmap/createNode";
-import { BaseFlowNode, NodeTypes } from "../types";
+import { NodeTypes } from "../types";
 import { MindmapFlowProvider, useMindmapFlow } from "./MindmapFlowProvider";
 
 afterEach(cleanup);
@@ -72,6 +69,40 @@ describe("MindmapFlowProvider", () => {
 
     expect(view.getByTestId("read-only").textContent).toBe("true");
   });
+
+  it("seeds empty and root-only server snapshots exactly as received", () => {
+    const fixture = createProviderFixture();
+    const empty = render(
+      <MindmapFlowProvider {...fixture} serverNodes={[]}>
+        <SeedProbe />
+      </MindmapFlowProvider>
+    );
+
+    expect(empty.getByTestId("node-ids").textContent).toBe("");
+    expect(empty.getByTestId("edge-count").textContent).toBe("0");
+    empty.unmount();
+
+    const rootOnly = render(
+      <MindmapFlowProvider
+        {...fixture}
+        serverNodes={[
+          {
+            nodeId: ROOT_NODE_ID,
+            order: 0,
+            parentId: null,
+            title: "Server root",
+            type: "root",
+          },
+        ]}
+      >
+        <SeedProbe />
+      </MindmapFlowProvider>
+    );
+
+    expect(rootOnly.getByTestId("node-ids").textContent).toBe(ROOT_NODE_ID);
+    expect(rootOnly.getByTestId("node-titles").textContent).toBe("Server root");
+    expect(rootOnly.getByTestId("edge-count").textContent).toBe("0");
+  });
 });
 
 /** Exposes selected store writes while recording renders of the active slice. */
@@ -106,25 +137,29 @@ function ReadOnlyProbe() {
   return <output data-testid="read-only">{String(readOnly)}</output>;
 }
 
+/** Reports the graph contents seeded into the provider's isolated store. */
+function SeedProbe() {
+  const nodes = useMindmapFlow((state) => state.nodes);
+  const edgeCount = useMindmapFlow((state) => state.edges.length);
+
+  return (
+    <>
+      <output data-testid="node-ids">
+        {nodes.map((node) => node.id).join(",")}
+      </output>
+      <output data-testid="node-titles">
+        {nodes.map((node) => node.data.title).join(",")}
+      </output>
+      <output data-testid="edge-count">{edgeCount}</output>
+    </>
+  );
+}
+
 /** Creates a minimal rooted mindmap for provider wiring tests. */
 function createProviderFixture(): {
   mindmapDB: MindmapDB;
-  initialNodes: BaseFlowNode[];
-  initialEdges: Edge[];
+  serverNodes: MindmapNodeProjection[];
 } {
-  const initialNodes = [
-    createBaseFlowNodeFromPartialBaseFlowNode({
-      id: ROOT_NODE_ID,
-      type: NodeTypes.ROOT,
-      data: { title: "Root" },
-    }),
-    createBaseFlowNodeFromPartialBaseFlowNode({
-      id: "l-child",
-      type: NodeTypes.LEFT,
-      data: { title: "Left child" },
-    }),
-  ];
-  const initialEdges = [createEdge(ROOT_NODE_ID, "l-child")];
   const mindmapDB: MindmapDB = {
     _id: "mindmaps:provider-fixture" as MindmapDB["_id"],
     publicId: "provider-map",
@@ -134,5 +169,23 @@ function createProviderFixture(): {
     isOwner: true,
   };
 
-  return { mindmapDB, initialNodes, initialEdges };
+  return {
+    mindmapDB,
+    serverNodes: [
+      {
+        nodeId: ROOT_NODE_ID,
+        order: 0,
+        parentId: null,
+        title: "Root",
+        type: NodeTypes.ROOT,
+      },
+      {
+        nodeId: "l-child",
+        order: 0,
+        parentId: ROOT_NODE_ID,
+        title: "Left child",
+        type: NodeTypes.LEFT,
+      },
+    ],
+  };
 }

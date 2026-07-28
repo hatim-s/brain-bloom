@@ -44,6 +44,14 @@ function ThreadSwitcher({
   );
   const listRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const previousIsOpenRef = useRef(isOpen);
+  const threadsRef = useRef(threads);
+  const activeThreadIdRef = useRef(activeThreadId);
+
+  // Keep the initial-focus effect tied only to opening, not to live-query
+  // list updates that can arrive while someone is moving through the menu.
+  threadsRef.current = threads;
+  activeThreadIdRef.current = activeThreadId;
 
   const triggerLabel = isStreaming
     ? "Conversations — paused while Sprig is working"
@@ -59,19 +67,29 @@ function ThreadSwitcher({
   }, [isOpen, isStreaming]);
 
   useEffect(() => {
-    if (!isOpen || threads === undefined || threads.length === 0) {
+    const wasOpen = previousIsOpenRef.current;
+    previousIsOpenRef.current = isOpen;
+
+    if (!isOpen || wasOpen) {
+      return;
+    }
+
+    const currentThreads = threadsRef.current;
+    if (currentThreads === undefined || currentThreads.length === 0) {
       return;
     }
 
     const initialThread =
-      threads.find((thread) => thread._id === activeThreadId) ?? threads[0];
+      currentThreads.find(
+        (thread) => thread._id === activeThreadIdRef.current
+      ) ?? currentThreads[0];
     setRovingThreadId(initialThread._id);
     listRef.current
       ?.querySelector<HTMLButtonElement>(
         `[data-thread-id="${initialThread._id}"]`
       )
       ?.focus();
-  }, [activeThreadId, isOpen, threads]);
+  }, [isOpen]);
 
   /** Moves focus between rows without letting the popover scroll under it. */
   function handleListKeyDown(event: KeyboardEvent<HTMLDivElement>) {

@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Edge } from "@xyflow/react";
 import {
@@ -101,8 +108,16 @@ describe("ShareMindmap", () => {
     expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe(
       "false"
     );
+    expect(screen.getByRole("switch").getAttribute("aria-disabled")).toBe(
+      "true"
+    );
     reseedVisibility("shared");
 
+    await waitFor(() =>
+      expect(screen.getByRole("switch").getAttribute("aria-disabled")).toBe(
+        "false"
+      )
+    );
     expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe(
       "true"
     );
@@ -158,6 +173,23 @@ describe("ShareMindmap", () => {
     expect(screen.queryByLabelText("Public link to this map")).toBeNull();
   });
 
+  it("clears a failed toggle error when a later attempt succeeds", async () => {
+    const user = userEvent.setup();
+    mocks.setVisibility.mockRejectedValueOnce(new Error("offline"));
+    renderShareControl("private");
+
+    await user.click(screen.getByRole("button", { name: "Sharing: private" }));
+    await user.click(screen.getByRole("switch"));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeDefined());
+
+    await user.click(screen.getByRole("switch"));
+
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.getByRole("switch").getAttribute("aria-disabled")).toBe(
+      "true"
+    );
+  });
+
   it("keeps the pending switch focusable and ignores a second activation", async () => {
     const user = userEvent.setup();
     let resolve!: () => void;
@@ -182,6 +214,25 @@ describe("ShareMindmap", () => {
     expect(mocks.setVisibility).toHaveBeenCalledOnce();
 
     await act(async () => resolve());
+  });
+
+  it("releases a successful write if the live visibility reseed never arrives", () => {
+    vi.useFakeTimers();
+    renderShareControl("private");
+
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Sharing: private" }));
+      const shareSwitch = screen.getByRole("switch");
+      fireEvent.click(shareSwitch);
+
+      expect(shareSwitch.getAttribute("aria-disabled")).toBe("true");
+      act(() => vi.advanceTimersByTime(5_000));
+
+      expect(shareSwitch.getAttribute("aria-disabled")).toBe("false");
+      expect(shareSwitch.getAttribute("aria-checked")).toBe("false");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reflects an external visibility reseed and announces revocation", () => {
