@@ -17,7 +17,10 @@
     "lint:fix": "eslint . --ext .ts,.tsx,.js,.jsx --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "fix:all": "pnpm lint:fix && pnpm format"
+    "fix:all": "pnpm lint:fix && pnpm format",
+    "convex:dev": "convex dev",
+    "convex:codegen": "convex codegen",
+    "test:convex": "vitest run convex"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",

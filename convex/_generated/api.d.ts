@@ -8,13 +8,25 @@
  * @module
  */
 
+import type * as lib_access from "../lib/access.js";
+import type * as lib_nodeOps from "../lib/nodeOps.js";
+import type * as mindmaps from "../mindmaps.js";
+import type * as ops from "../ops.js";
+import type * as threads from "../threads.js";
+
 import type {
   ApiFromModules,
   FilterApi,
   FunctionReference,
 } from "convex/server";
 
-declare const fullApi: ApiFromModules<{}>;
+declare const fullApi: ApiFromModules<{
+  "lib/access": typeof lib_access;
+  "lib/nodeOps": typeof lib_nodeOps;
+  mindmaps: typeof mindmaps;
+  ops: typeof ops;
+  threads: typeof threads;
+}>;
 
 /**
  * A utility for referencing Convex functions in your app's public API.
