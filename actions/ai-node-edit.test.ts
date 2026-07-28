@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { flattenSuggestions } from "./ai-node-edit";
+import { flattenSuggestions } from "@/lib/ai/nodeSuggestions";
 
 describe("flattenSuggestions", () => {
   it("appends generated children after the active node's existing children", () => {
