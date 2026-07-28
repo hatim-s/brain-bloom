@@ -1,4 +1,5 @@
 import { fetchQuery } from "convex/nextjs";
+import { ConvexError } from "convex/values";
 
 import { ConvexAuthNotice } from "@/components/convex-auth-notice";
 import Flow from "@/components/flow/Flow";
@@ -23,7 +24,14 @@ export default async function MindmapPage(props: {
     api.mindmaps.getByPublicId,
     { publicId: mindmapSlug },
     { token }
-  ).catch(() => null);
+  ).catch((error: unknown) => {
+    // The query uses this exact public error for absent and unreadable maps.
+    if (error instanceof ConvexError && error.data === "Not found") {
+      return null;
+    }
+
+    throw error;
+  });
 
   if (!result) {
     return <MindmapNotFound />;

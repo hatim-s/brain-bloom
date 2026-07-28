@@ -10,6 +10,9 @@ mindmap, supports AI-assisted branch editing, and stores mindmaps in Convex.
 - Node.js 24 or newer (Node.js 24 is selected by `.nvmrc`)
 - pnpm
 - A Convex deployment
+- A Clerk `convex` JWT template for authenticated Convex reads; see
+  [`docs/ENV.md`](docs/ENV.md). Keyless Clerk instances cannot create this
+  template until they have been claimed.
 - A Groq API key for AI generation and editing
 
 ### Setup

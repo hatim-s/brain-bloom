@@ -2,6 +2,7 @@
 
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AIMindmapInput } from "./new-ai-mindmap";
@@ -26,7 +27,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("AIMindmapInput", () => {
-  it("shows an inline failure and re-enables generation", async () => {
+  it("shows generic copy for an unexpected failure and re-enables generation", async () => {
     const user = userEvent.setup();
     actionMock.mockRejectedValue(new Error("Generation failed"));
     render(<AIMindmapInput />);
@@ -35,7 +36,7 @@ describe("AIMindmapInput", () => {
     await user.click(screen.getByRole("button", { name: "Grow the map" }));
 
     expect((await screen.findByRole("alert")).textContent).toBe(
-      "Generation failed"
+      "Generation failed — try again."
     );
     expect(
       (
@@ -46,6 +47,19 @@ describe("AIMindmapInput", () => {
     ).toBe(false);
     expect(pushMock).not.toHaveBeenCalled();
     expect(refreshMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a known Convex generation error", async () => {
+    const user = userEvent.setup();
+    actionMock.mockRejectedValue(new ConvexError("Invalid op: too many nodes"));
+    render(<AIMindmapInput />);
+
+    await user.type(screen.getByRole("textbox"), "Plan a launch");
+    await user.click(screen.getByRole("button", { name: "Grow the map" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Invalid op: too many nodes"
+    );
   });
 
   it("pushes to the new map before refreshing the shared layout", async () => {

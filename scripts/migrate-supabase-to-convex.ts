@@ -3,6 +3,8 @@ import { pathToFileURL } from "node:url";
 
 import type { NodeSnapshot } from "../convex/lib/nodeOps.ts";
 
+const LEGACY_MINDMAP_PAGE_SIZE = 1_000;
+
 /**
  * Exact legacy row stored by Supabase: each row owns XYFlow node and edge JSON
  * arrays rather than normalized node records. Older rows use numeric `id` URLs;
@@ -166,20 +168,38 @@ async function fetchLegacyMindmaps(): Promise<LegacyMindmapRow[]> {
     throw new Error("SUPABASE_URL and SUPABASE_API_KEY are required");
   }
 
-  const response = await fetch(`${supabaseUrl}/rest/v1/mindmaps?select=*`, {
-    headers: {
-      apikey: apiKey,
-      Authorization: `Bearer ${apiKey}`,
-    },
-  });
+  const rows: LegacyMindmapRow[] = [];
+  let rangeStart = 0;
 
-  if (!response.ok) {
-    throw new Error(
-      `Supabase REST request failed: ${response.status} ${await response.text()}`
+  while (true) {
+    const rangeEnd = rangeStart + LEGACY_MINDMAP_PAGE_SIZE - 1;
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/mindmaps?select=*&order=id.asc`,
+      {
+        headers: {
+          apikey: apiKey,
+          Authorization: `Bearer ${apiKey}`,
+          Range: `${rangeStart}-${rangeEnd}`,
+          "Range-Unit": "items",
+        },
+      }
     );
-  }
 
-  return (await response.json()) as LegacyMindmapRow[];
+    if (!response.ok) {
+      throw new Error(
+        `Supabase REST request failed: ${response.status} ${await response.text()}`
+      );
+    }
+
+    const page = (await response.json()) as LegacyMindmapRow[];
+    rows.push(...page);
+
+    if (page.length < LEGACY_MINDMAP_PAGE_SIZE) {
+      return rows;
+    }
+
+    rangeStart += page.length;
+  }
 }
 
 /** Runs one internal Convex function through the administrator CLI. */
@@ -222,9 +242,28 @@ async function runConvexFunction(
 async function main(argv = process.argv.slice(2)): Promise<void> {
   const options = parseCliOptions(argv);
   const rows = await fetchLegacyMindmaps();
+  const totals = {
+    created: 0,
+    updated: 0,
+    unchanged: 0,
+    rejected: 0,
+    failed: 0,
+  };
 
   for (const row of rows) {
-    const transformed = transformLegacyMindmap(row);
+    let transformed: MigrationPayload;
+    try {
+      transformed = transformLegacyMindmap(row);
+    } catch (error) {
+      totals.failed += 1;
+      // eslint-disable-next-line no-console -- CLI output is the migration report.
+      console.error(
+        `${options.execute ? "execute" : "dry-run"} ${row.public_id ?? row.id} (${row.name}): ` +
+          `failed; ${error instanceof Error ? error.message : String(error)}`
+      );
+      continue;
+    }
+
     const publicId = transformed.mindmap.publicId ?? String(row.id);
     const ownerId = options.owner ?? row.owner_user_id;
     const functionName = options.execute
@@ -238,12 +277,14 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     });
 
     if (summary.status === "rejected") {
+      totals.rejected += 1;
       // eslint-disable-next-line no-console -- CLI output is the migration report.
       console.error(
         `${options.execute ? "execute" : "dry-run"} ${publicId} (${row.name}): ` +
           `rejected; ${summary.error}; nodes=${summary.offendingNodeIds.join(",")}`
       );
     } else {
+      totals[summary.status] += 1;
       // eslint-disable-next-line no-console -- CLI output is the migration report.
       console.log(
         `${options.execute ? "execute" : "dry-run"} ${publicId} (${row.name}): ` +
@@ -251,6 +292,13 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       );
     }
   }
+
+  // eslint-disable-next-line no-console -- CLI output is the migration report.
+  console.log(
+    `${options.execute ? "execute" : "dry-run"} summary: ` +
+      `created=${totals.created} updated=${totals.updated} unchanged=${totals.unchanged} ` +
+      `rejected=${totals.rejected} failed=${totals.failed}`
+  );
 }
 
 const importMeta = import.meta as ImportMeta & { main?: boolean };

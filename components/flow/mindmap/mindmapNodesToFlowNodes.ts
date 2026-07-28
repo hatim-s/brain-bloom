@@ -82,6 +82,11 @@ function transformMindmapNodesToFlowNodesAndEdges(
   const flowEdges: FlowEdge[] = [];
 
   const rootMindmapNode = mindmapNodes[ROOT_NODE_ID];
+  // A partially written or empty snapshot must let Flow render its starter map.
+  if (!rootMindmapNode) {
+    return { nodes: flowNodes, edges: flowEdges };
+  }
+
   dfsHelper(rootMindmapNode, mindmapNodes, flowNodes, flowEdges);
 
   return {

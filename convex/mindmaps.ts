@@ -11,6 +11,8 @@ import { applyOps } from "./ops";
 const PUBLIC_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const PUBLIC_ID_LENGTH = 10;
 const PURGE_BATCH_SIZE = 200;
+/** Bounds generated trees so one atomic apply operation remains predictable. */
+const MAX_GENERATED_NODE_COUNT = 200;
 const nodeSnapshotValidator = v.object({
   nodeId: v.string(),
   parentId: v.union(v.string(), v.null()),
@@ -151,6 +153,11 @@ export const createWithNodes = mutation({
   },
   handler: async (ctx, args) => {
     const ownerId = await requireUser(ctx);
+
+    if (args.nodes.length > MAX_GENERATED_NODE_COUNT) {
+      throw new ConvexError("Invalid op: too many nodes");
+    }
+
     const rootSnapshots = args.nodes.filter(
       (node) => node.nodeId === "root" || node.type === "root"
     );

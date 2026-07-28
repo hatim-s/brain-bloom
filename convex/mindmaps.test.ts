@@ -104,6 +104,49 @@ describe("mindmaps", () => {
     });
   });
 
+  it("accepts 200 generated nodes and rejects the 201st", async () => {
+    const { asAlice } = createHarness();
+    const nodes = Array.from({ length: 200 }, (_, index) =>
+      index === 0
+        ? {
+            nodeId: "root",
+            parentId: null,
+            type: "root" as const,
+            title: "Generated plan",
+            order: 0,
+          }
+        : {
+            nodeId: `left-${index}`,
+            parentId: "root",
+            type: "left" as const,
+            title: `Idea ${index}`,
+            order: index - 1,
+          }
+    );
+
+    await expect(
+      asAlice.mutation(api.mindmaps.createWithNodes, {
+        name: "At the limit",
+        nodes,
+      })
+    ).resolves.toBeDefined();
+    await expect(
+      asAlice.mutation(api.mindmaps.createWithNodes, {
+        name: "Above the limit",
+        nodes: [
+          ...nodes,
+          {
+            nodeId: "left-200",
+            parentId: "root",
+            type: "left",
+            title: "Idea 200",
+            order: 199,
+          },
+        ],
+      })
+    ).rejects.toThrow("Invalid op: too many nodes");
+  });
+
   it("rolls back the mindmap when generated nodes are rejected", async () => {
     const { t, asAlice } = createHarness();
 
