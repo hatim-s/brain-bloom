@@ -1,17 +1,17 @@
+import { fetchQuery } from "convex/nextjs";
 import { PropsWithChildren } from "react";
 
 import { FloatingSidebar } from "@/components/sidebar";
-import { fetchAllMindmaps } from "@/data/fetch-all-mindmaps";
-import { MindmapDB } from "@/types/Mindmap";
-
-const DEFAULT_MINDMAPS = [] as MindmapDB[];
+import { api } from "@/convex/_generated/api";
+import { getConvexAuthToken } from "@/lib/convex-server";
 
 export default async function MainAppLayout({ children }: PropsWithChildren) {
-  const mindmaps = await fetchAllMindmaps();
+  const token = await getConvexAuthToken();
+  const mindmaps = await fetchQuery(api.mindmaps.listMine, {}, { token });
 
   return (
     <>
-      <FloatingSidebar mindmaps={mindmaps ?? DEFAULT_MINDMAPS} />
+      <FloatingSidebar mindmaps={mindmaps} />
       {children}
     </>
   );

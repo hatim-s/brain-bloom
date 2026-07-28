@@ -36,7 +36,6 @@ export function FloatingSidebar({
 }: React.ComponentProps<typeof Sidebar> & { mindmaps: MindmapDB[] }) {
   const params = useParams();
   const mindmapSlug = params.mindmapSlug as string;
-  const activeId = parseInt(mindmapSlug);
 
   return (
     <Sidebar variant="floating" {...props}>
@@ -71,12 +70,12 @@ export function FloatingSidebar({
               {mindmaps.length ? (
                 <SidebarMenuSub className="mx-0 gap-0.5 border-l-0 px-0">
                   {mindmaps.map((mindmap) => (
-                    <SidebarMenuSubItem key={mindmap.id}>
+                    <SidebarMenuSubItem key={mindmap._id}>
                       <SidebarMenuSubButton
                         asChild
-                        isActive={mindmap.id === activeId}
+                        isActive={mindmap.publicId === mindmapSlug}
                       >
-                        <a href={`/${mindmap.id}`}>
+                        <a href={`/${mindmap.publicId}`}>
                           <TypographyWithTooltip
                             className="text-sm"
                             variant="p"

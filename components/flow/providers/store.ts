@@ -23,6 +23,11 @@ import {
   transformFlowNodesAndEdgesToMindmapNodes,
 } from "../mindmap/flowNodeToMindmapNode";
 import { transformMindmapNodesToFlowNodesAndEdges } from "../mindmap/mindmapNodesToFlowNodes";
+import {
+  appendPendingOp,
+  describePendingOps,
+  PendingNodePatch,
+} from "../mindmap/pendingOps";
 import { BaseFlowNode, FlowNode, MindmapNode, NodeTypes } from "../types";
 import { MindmapFlowContext } from "./types";
 
@@ -47,6 +52,28 @@ function deriveLeveledNodes(
   mindmapNodesMap: Record<string, MindmapNode>
 ): MindmapNode[][] {
   return generateLeveledNodes(mindmapNodesMap);
+}
+
+/** Builds a minimal wire patch while preserving explicit optional removals. */
+function createNodeDataPatch(
+  previous: FlowNode["data"],
+  next: FlowNode["data"]
+): PendingNodePatch {
+  const patch: PendingNodePatch = {};
+
+  if (previous.title !== next.title) {
+    patch.title = next.title;
+  }
+
+  if (previous.description !== next.description) {
+    patch.description = next.description ?? null;
+  }
+
+  if (previous.link !== next.link) {
+    patch.link = next.link ?? null;
+  }
+
+  return patch;
 }
 
 /**
@@ -131,6 +158,7 @@ function createMindmapStore({
       }
 
       const newEdge = createEdge(parentNodeId, newNode.id);
+      const siblingOrder = currentMindmapNodesMap[parentNodeId].children.size;
       addNodeToGraph(newGraph, newNode, newEdge);
 
       let updatedMindmapNodesMap = {
@@ -190,13 +218,31 @@ function createMindmapStore({
         };
       });
 
-      set({
+      set((state) => ({
         nodes: updatedNodes,
         edges: newGraphEdges,
         mindmapNodesMap: updatedMindmapNodesMap,
         nodesMap: deriveNodesMap(updatedNodes),
         leveledNodes: deriveLeveledNodes(updatedMindmapNodesMap),
-      });
+        pendingOps: appendPendingOp(state.pendingOps, {
+          kind: "create",
+          node: {
+            nodeId: newNode.id,
+            parentId: parentNodeId,
+            type: newNode.type,
+            title: newNode.data.title,
+            ...(newNode.data.description === undefined
+              ? {}
+              : { description: newNode.data.description }),
+            ...(newNode.data.link === undefined
+              ? {}
+              : { link: newNode.data.link }),
+            order: siblingOrder,
+          },
+        }),
+        syncState: "dirty",
+        lastSyncError: null,
+      }));
 
       return newNode.id;
     };
@@ -207,10 +253,15 @@ function createMindmapStore({
       data
     ) => {
       set((state) => {
+        const currentNode = state.nodesMap[nodeId];
+
+        if (!currentNode) {
+          return state;
+        }
+
         const updatedNodes = state.nodes.map((node) =>
           node.id === nodeId ? { ...node, data } : node
         );
-        const currentNode = state.nodesMap[nodeId];
         const currentMindmapNode = state.mindmapNodesMap[nodeId];
         const updatedMindmapNodesMap = currentMindmapNode
           ? {
@@ -219,24 +270,35 @@ function createMindmapStore({
             }
           : state.mindmapNodesMap;
 
-        if (currentNode) {
-          const updatedNode = { ...currentNode, data };
-          const graph =
-            updatedNode.type === NodeTypes.LEFT
-              ? layout.leftGraph
-              : layout.rightGraph;
+        const updatedNode = { ...currentNode, data };
+        const graph =
+          updatedNode.type === NodeTypes.LEFT
+            ? layout.leftGraph
+            : layout.rightGraph;
+        const patch = createNodeDataPatch(currentNode.data, data);
+        const hasChanges = Object.keys(patch).length > 0;
 
-          graph.setNode(nodeId, {
-            height: calculateNodeHeight(updatedNode),
-            width: NODE_DIMENSIONS.width,
-          });
-        }
+        graph.setNode(nodeId, {
+          height: calculateNodeHeight(updatedNode),
+          width: NODE_DIMENSIONS.width,
+        });
 
         return {
           nodes: updatedNodes,
           nodesMap: deriveNodesMap(updatedNodes),
           mindmapNodesMap: updatedMindmapNodesMap,
           leveledNodes: deriveLeveledNodes(updatedMindmapNodesMap),
+          ...(hasChanges
+            ? {
+                pendingOps: appendPendingOp(state.pendingOps, {
+                  kind: "update",
+                  nodeId,
+                  patch,
+                }),
+                syncState: "dirty" as const,
+                lastSyncError: null,
+              }
+            : {}),
         };
       });
     };
@@ -255,10 +317,32 @@ function createMindmapStore({
       aiEditNode: null,
       setAiEditNode: (aiEditNode) => set({ aiEditNode }),
       mindmapDB,
+      pendingOps: [],
+      lastSyncError: null,
+      syncState: "idle",
       actions: {
         onNodesChange,
         onAddNode,
         onUpdateNode,
+        drainPendingOps: () => {
+          const ops = get().pendingOps;
+
+          if (ops.length === 0) {
+            return null;
+          }
+
+          set({ pendingOps: [] });
+          return { ops, description: describePendingOps(ops) };
+        },
+        restorePendingOps: (ops) => {
+          set((state) => ({ pendingOps: [...ops, ...state.pendingOps] }));
+        },
+        markSyncState: (syncState, error) => {
+          set({
+            syncState,
+            lastSyncError: syncState === "error" ? (error ?? null) : null,
+          });
+        },
       },
     };
   });
@@ -266,6 +350,7 @@ function createMindmapStore({
 
 export {
   createMindmapStore,
+  createNodeDataPatch,
   deriveLeveledNodes,
   deriveNodesMap,
   type MindmapStore,

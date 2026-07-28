@@ -22,9 +22,9 @@ export function AIMindmapInput() {
       const aiMindmap = await createMindmapFromAI(userPrompt);
       // console.log({ userPrompt, aiMindmap });
 
-      const mindmapId = aiMindmap.data?.id;
-      if (mindmapId) {
-        router.push(`/${mindmapId}`);
+      const publicId = aiMindmap.data?.publicId;
+      if (publicId) {
+        router.push(`/${publicId}`);
       }
     });
   });

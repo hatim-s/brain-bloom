@@ -1,24 +1,17 @@
-export type MindmapNodeDB = {
-  id: string;
-  type: "root" | "left" | "right";
-  data: {
-    title: string;
-    description?: string;
-    link?: string;
-  };
-};
+import type { Id } from "@/convex/_generated/dataModel";
+import type { NodeSnapshot } from "@/convex/lib/nodeOps";
 
-export type MindmapEdgeDB = {
-  id: string;
-  source: string;
-  target: string;
-};
-
-export type MindmapDB = {
-  id: number;
+/** Client-safe projection returned by the P4 mindmap queries. */
+type MindmapDB = {
+  _id: Id<"mindmaps">;
+  publicId: string;
   name: string;
-  created_at: string; // ISO 8601,
-  owner_user_id: string; // UUID
-  nodes: MindmapNodeDB[];
-  edges: MindmapEdgeDB[];
+  visibility: "private" | "shared";
+  updatedAt: number;
+  isOwner: boolean;
 };
+
+/** Stable node fields consumed by the canvas transform pipeline. */
+type MindmapNodeProjection = NodeSnapshot;
+
+export { type MindmapDB, type MindmapNodeProjection };

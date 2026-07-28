@@ -1,61 +1,25 @@
-import pick from "lodash/pick";
-import { CloudUpload, LoaderCircle } from "lucide-react";
-import { useCallback, useTransition } from "react";
-import { toast } from "sonner";
+import { CloudUpload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { updateMindmap } from "@/data/update-mindmap";
 
 import { useMindmapFlow } from "../providers/MindmapFlowProvider";
 
-/** Saves the current mindmap while exposing the full request as a transition. */
+/** Retains the legacy save-button position until P6b supplies a status pill. */
 const SaveMindmap = () => {
-  const nodes = useMindmapFlow((state) => state.nodes);
-  const edges = useMindmapFlow((state) => state.edges);
-  const mindmapDB = useMindmapFlow((state) => state.mindmapDB);
-
-  const [isPending, startTransition] = useTransition();
-
-  const handleSaveMindmap = useCallback(() => {
-    startTransition(async () => {
-      try {
-        await updateMindmap({
-          ...mindmapDB,
-          nodes: nodes.map((node) => pick(node, ["id", "type", "data"])),
-          edges: edges.map((edge) => pick(edge, ["id", "source", "target"])),
-        });
-        toast.success("Mindmap saved successfully");
-      } catch {
-        toast.error("Failed to save mindmap!");
-      }
-    });
-  }, [nodes, edges, mindmapDB]);
+  const syncState = useMindmapFlow((state) => state.syncState);
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="absolute top-3.5 right-16 z-10 text-muted-foreground hover:text-foreground"
-          onClick={handleSaveMindmap}
-          disabled={isPending}
-        >
-          {isPending ? (
-            <LoaderCircle className="animate-spin motion-reduce:animate-none" />
-          ) : (
-            <CloudUpload />
-          )}
-          <span className="sr-only">Save mindmap</span>
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent align="center">Save mindmap</TooltipContent>
-    </Tooltip>
+    <Button
+      variant="ghost"
+      size="icon"
+      className="absolute top-3.5 right-16 z-10 text-muted-foreground"
+      data-sync-state={syncState}
+      disabled
+      title="autosaves now"
+    >
+      <CloudUpload />
+      <span className="sr-only">Mindmap autosaves now</span>
+    </Button>
   );
 };
 

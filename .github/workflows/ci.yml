@@ -51,6 +51,3 @@ jobs:
       # needs the client to construct. Replaced when Supabase is removed in P6.
       - name: Build
         run: pnpm build
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key

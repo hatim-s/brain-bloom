@@ -3,6 +3,7 @@ import { ReactFlowProps } from "@xyflow/react";
 
 import { MindmapDB } from "@/types/Mindmap";
 
+import { NodeOp } from "../mindmap/pendingOps";
 import { FlowEdge, FlowNode, MindmapNode, NodeTypes } from "../types";
 
 type DagreGraph = graphlib.Graph<GraphLabel, NodeLabel, EdgeLabel>;
@@ -31,6 +32,9 @@ export type MindmapFlowContext = {
   setAiEditNode: (nodeId: string | null) => void;
 
   mindmapDB: MindmapDB;
+  pendingOps: NodeOp[];
+  lastSyncError: string | null;
+  syncState: "idle" | "dirty" | "saving" | "error";
 
   actions: {
     onNodesChange: NonNullable<ReactFlowProps["onNodesChange"]>;
@@ -43,5 +47,14 @@ export type MindmapFlowContext = {
       data?: FlowNode["data"]
     ) => string | null;
     onUpdateNode: (nodeId: string, data: FlowNode["data"]) => void;
+    drainPendingOps: () => {
+      ops: NodeOp[];
+      description: string;
+    } | null;
+    restorePendingOps: (ops: NodeOp[]) => void;
+    markSyncState: (
+      state: MindmapFlowContext["syncState"],
+      error?: string
+    ) => void;
   };
 };

@@ -10,8 +10,8 @@
 | `GROQ_API_KEY` | The AI generation and AI editing server actions in `actions/ai-gen.ts` and `actions/ai-edit.ts`. | Required when using AI generation or editing. | Create an API key in the Groq console. |
 | `NEXT_PUBLIC_CONVEX_URL` | `providers/ConvexClientProvider.tsx` uses this deployment URL for browser queries and mutations. | Optional at build time; required at runtime once the frontend uses Convex data in P6. | Created by the anonymous local Convex setup and stored in `.env.local`. Production deployment values arrive in P9. |
 | `NEXT_PUBLIC_CONVEX_SITE_URL` | Reserved for future Convex HTTP actions; nothing consumes it until P8 adds HTTP actions. | Not user-configured. | The anonymous local Convex deployment writes `http://127.0.0.1:3214` (the local HTTP-actions port) to `.env.local`; cloud deployments use the deployment's `.convex.site` domain. |
-| `NEXT_PUBLIC_SUPABASE_URL` | The transitional Supabase data client and client factories. | Required while Supabase data remains in use through P6. | Copy the project URL from the Supabase project settings. |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | The transitional Supabase data client and client factories. | Required while Supabase data remains in use through P6. | Copy the anonymous public key from the Supabase project API settings. |
+| `SUPABASE_URL` | The one-time `scripts/migrate-supabase-to-convex.ts` REST reader. | Required only while previewing or executing the legacy migration. | Copy the legacy project URL from its Supabase project settings. |
+| `SUPABASE_API_KEY` | The one-time migration script's PostgREST `apikey` and bearer credential. | Required only while previewing or executing the legacy migration. | Use a legacy-project key that can read every row being migrated; keep it server-side. |
 | `VERCEL_URL` | `app/layout.tsx` uses it to build the metadata base URL. | Optional; Vercel sets it automatically. When self-hosting without it, the application falls back to `http://localhost:3000`. | Supplied by Vercel deployments. |
 
 ## Clerk authentication
@@ -31,7 +31,8 @@ keyless instance has no OAuth credentials, so the buttons stay out of the markup
 entirely until the instance is claimed. The flag is read at module scope, so
 changing it requires a dev-server restart.
 
-The Groq and Supabase variables are slated for removal in a later overhaul phase. Until that phase lands, place local values in `.env.local` and configure the same values in the deployment environment.
+The Groq path remains until P8. The unprefixed Supabase variables are temporary,
+operator-only migration inputs and are never exposed to the application bundle.
 
 The P5 Convex provider tolerates a missing public URL during placeholder-env CI
 builds. Keep all local Clerk and Convex values in the gitignored `.env.local`.
