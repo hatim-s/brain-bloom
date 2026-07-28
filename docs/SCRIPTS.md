@@ -20,3 +20,14 @@ Vercel does not invoke the `dev` or `build` package scripts. `vercel.json` pins
 `"devCommand": "next"` and `"buildCommand": "next build"`, so changes to those
 scripts affect local and CI usage only unless the Vercel commands are updated
 separately.
+
+## Convex scripts
+
+- `pnpm convex:dev` — run the Convex development deployment (anonymous local by
+  default; see `docs/ENV.md`).
+- `pnpm convex:codegen` — regenerate `convex/_generated/` from the current
+  schema and function modules. Run after any change under `convex/` and commit
+  the result (CI typechecks against the committed output).
+- `pnpm test:convex` — run only the `convex/**/*.test.ts` suites.
+
+`pnpm test` also includes the Convex Vitest suites.
