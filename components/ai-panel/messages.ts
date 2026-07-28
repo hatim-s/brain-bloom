@@ -21,6 +21,7 @@ type SprigUIMessagePart = SprigUIMessage["parts"][number];
 /** The shape `api.threads.listMessages` returns for one persisted message. */
 type ThreadMessageRecord = {
   _id: string;
+  messageId?: string | null;
   role: "user" | "assistant";
   content: unknown;
   operationId?: string | null;
@@ -183,8 +184,8 @@ function collectTouchedNodeIds(message: SprigUIMessage): string[] {
  *
  * Persisted messages carry the id the route linked at write time. A turn that
  * is still in this session's memory has no metadata yet, so the last operation
- * id reported by a tool is used instead — the same "highest sequence wins"
- * rule the route applies when it persists the link.
+ * id reported by a tool is used instead. The first successful mutation is the
+ * undo target because undoTo(first) reverses the whole turn.
  */
 function getUndoOperationId(message: SprigUIMessage): string | null {
   if (message.role !== "assistant") {
@@ -196,8 +197,6 @@ function getUndoOperationId(message: SprigUIMessage): string | null {
     return persisted;
   }
 
-  let latest: string | null = null;
-
   for (const part of getToolParts(message)) {
     if (part.state !== "output-available" || part.output === null) {
       continue;
@@ -205,11 +204,11 @@ function getUndoOperationId(message: SprigUIMessage): string | null {
 
     const operationId = asNonEmptyString(part.output.operationId);
     if (operationId !== null) {
-      latest = operationId;
+      return operationId;
     }
   }
 
-  return latest;
+  return null;
 }
 
 /**
@@ -230,7 +229,7 @@ function toUIMessages(
 
     return [
       {
-        id: record._id,
+        id: asNonEmptyString(record.messageId) ?? record._id,
         role: record.role,
         parts: record.content as SprigUIMessage["parts"],
         ...(operationId === null ? {} : { metadata: { operationId } }),

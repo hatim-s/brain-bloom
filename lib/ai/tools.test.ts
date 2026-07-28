@@ -53,6 +53,11 @@ function createConvexLayer(
       seq: 2,
     })),
     getHistory: vi.fn(async () => ({ page: [] })),
+    getOperation: vi.fn(async () => ({
+      mindmapId: "mindmap-1",
+      seq: 1,
+      undone: false,
+    })),
     undoTo: vi.fn(async () => ({ undoneCount: 1, seq: 1 })),
     ...overrides,
   };
@@ -186,5 +191,30 @@ describe("createMindmapTools", () => {
       )
     ).resolves.toEqual({ undoneCount: 3, seq: 4 });
     expect(undoTo).toHaveBeenCalledWith("operation-4");
+  });
+
+  it("rejects undoing an operation from another mindmap", async () => {
+    const undoTo = vi.fn(async () => ({ undoneCount: 1, seq: 4 }));
+    const tools = createMindmapTools({
+      mindmapId: "mindmap-1",
+      convex: createConvexLayer({
+        getOperation: vi.fn(async () => ({
+          mindmapId: "mindmap-2",
+          seq: 4,
+          undone: false,
+        })),
+        undoTo,
+      }),
+    });
+
+    await expect(
+      tools.undoOperation.execute(
+        { operationId: "operation-4" },
+        toolExecutionOptions
+      )
+    ).resolves.toEqual({
+      error: "operation belongs to a different mindmap",
+    });
+    expect(undoTo).not.toHaveBeenCalled();
   });
 });

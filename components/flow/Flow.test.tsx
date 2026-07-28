@@ -14,6 +14,18 @@ vi.mock("@/actions/mindmap", () => ({
   editMindmapWithAI: vi.fn(),
 }));
 
+vi.mock("next/dynamic", () => ({
+  default: () =>
+    function DynamicPanelHarness({ children }: PropsWithChildren) {
+      return (
+        <>
+          <StoreHandle />
+          {children}
+        </>
+      );
+    },
+}));
+
 // The panel needs Convex and the AI SDK; this suite is about the canvas it
 // wraps, so the shell is reduced to a pass-through plus a store handle.
 vi.mock("@/components/ai-panel/AiPanelLayout", () => ({

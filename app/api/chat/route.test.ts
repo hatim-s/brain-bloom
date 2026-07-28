@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
         headers?: HeadersInit;
         onFinish?: (event: {
           responseMessage: UIMessage;
+          isAborted: boolean;
         }) => PromiseLike<void> | void;
       }
     | undefined,
@@ -152,10 +153,11 @@ describe("POST /api/chat", () => {
     );
   });
 
-  it("persists full UI parts and links the latest applied operation", async () => {
+  it("persists full UI parts and links the earliest applied operation", async () => {
     mocks.fetchMutation
       .mockResolvedValueOnce("thread-1")
       .mockResolvedValueOnce({ operationId: "operation-7", seq: 7 })
+      .mockResolvedValueOnce({ operationId: "operation-8", seq: 8 })
       .mockResolvedValueOnce("user-message-1")
       .mockResolvedValueOnce("assistant-message-1");
 
@@ -165,6 +167,10 @@ describe("POST /api/chat", () => {
     await streamOptions.tools.updateNode.execute(
       { nodeId: "root", title: "Updated launch plan" },
       { toolCallId: "call-1", messages: [], context: {} }
+    );
+    await streamOptions.tools.renameMindmap.execute(
+      { name: "Updated launch plan" },
+      { toolCallId: "call-2", messages: [], context: {} }
     );
     const assistantMessage: UIMessage = {
       id: "assistant-1",
@@ -183,18 +189,104 @@ describe("POST /api/chat", () => {
 
     await mocks.responseOptions?.onFinish?.({
       responseMessage: assistantMessage,
+      isAborted: false,
     });
 
-    expect(mocks.fetchMutation.mock.calls[2]?.[1]).toEqual({
+    expect(mocks.fetchMutation.mock.calls[3]?.[1]).toEqual({
       threadId: "thread-1",
+      messageId: "user-1",
       role: "user",
       content: userMessage.parts,
     });
-    expect(mocks.fetchMutation.mock.calls[3]?.[1]).toEqual({
+    expect(mocks.fetchMutation.mock.calls[4]?.[1]).toEqual({
       threadId: "thread-1",
+      messageId: "assistant-1",
       role: "assistant",
       content: assistantMessage.parts,
       operationId: "operation-7",
     });
+  });
+
+  it("skips both persistence writes when the response is aborted", async () => {
+    mocks.fetchMutation.mockResolvedValueOnce("thread-1");
+    await POST(createRequest({ mindmapId: "map-1", messages: [userMessage] }));
+
+    await mocks.responseOptions?.onFinish?.({
+      responseMessage: {
+        id: "assistant-partial",
+        role: "assistant",
+        parts: [{ type: "text", text: "Partial" }],
+      },
+      isAborted: true,
+    });
+
+    expect(mocks.fetchMutation).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a thread bound to another mindmap before model execution", async () => {
+    mocks.fetchQuery
+      .mockResolvedValueOnce(createMindmapResult())
+      .mockResolvedValueOnce({ _id: "thread-1", mindmapId: "map-2" });
+
+    const response = await POST(
+      createRequest({
+        mindmapId: "map-1",
+        threadId: "thread-1",
+        messages: [userMessage],
+      })
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "thread belongs to a different mindmap",
+    });
+    expect(mocks.streamText).not.toHaveBeenCalled();
+  });
+
+  it("rejects requests over the JSON byte ceiling", async () => {
+    const response = await POST(
+      createRequest({
+        mindmapId: "map-1",
+        messages: [
+          {
+            ...userMessage,
+            parts: [{ type: "text", text: "x".repeat(270_000) }],
+          },
+        ],
+      })
+    );
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({
+      error: "Request too large",
+    });
+    expect(mocks.streamText).not.toHaveBeenCalled();
+  });
+
+  it("rejects more than 40 messages and oversized text parts", async () => {
+    const tooMany = await POST(
+      createRequest({
+        mindmapId: "map-1",
+        messages: Array.from({ length: 41 }, (_, index) => ({
+          ...userMessage,
+          id: `user-${index}`,
+        })),
+      })
+    );
+    const longPart = await POST(
+      createRequest({
+        mindmapId: "map-1",
+        messages: [
+          {
+            ...userMessage,
+            parts: [{ type: "text", text: "x".repeat(16_001) }],
+          },
+        ],
+      })
+    );
+
+    expect(tooMany.status).toBe(400);
+    expect(longPart.status).toBe(400);
+    expect(mocks.streamText).not.toHaveBeenCalled();
   });
 });

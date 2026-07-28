@@ -18,7 +18,7 @@ const RETRY_DELAYS_MS = [2_000, 4_000, 8_000, 30_000] as const;
 /**
  * Coordinates flush ownership across StrictMode effect instances per store.
  */
-const flushMutex = new WeakMap<StoreApi<MindmapStore>, boolean>();
+const flushPromises = new WeakMap<StoreApi<MindmapStore>, Promise<boolean>>();
 
 type PendingRun = {
   count: number;
@@ -139,26 +139,19 @@ function useMindmapSync(): void {
     };
 
     /** Peeks and sends the current queue, committing only successful prefixes. */
-    async function flush(): Promise<void> {
-      if (isDisposed) return;
-
-      if (flushMutex.get(store)) {
-        // Both handles were nulled by their callbacks before reaching here.
-        // Re-arming prevents a long in-flight request from parking newer edits.
-        if (store.getState().pendingOps.length > 0) {
-          schedulePending();
-        }
-        return;
-      }
+    async function performFlush(): Promise<boolean> {
+      if (isDisposed) return false;
 
       clearBurstTimers();
       if (retryTimer !== undefined) clearTimeout(retryTimer);
       retryTimer = undefined;
 
       const batch = store.getState().actions.peekPendingOps();
-      if (batch === null) return;
+      if (batch === null) {
+        const state = store.getState();
+        return state.syncState === "idle" && !state.desyncedSinceRejection;
+      }
 
-      flushMutex.set(store, true);
       if (store.getState().syncState !== "error") {
         store.getState().actions.markSyncState("saving");
       }
@@ -173,7 +166,7 @@ function useMindmapSync(): void {
               source: run.source,
             });
           } catch (error) {
-            if (isDisposed) return;
+            if (isDisposed) return false;
 
             if (error instanceof ConvexError) {
               // This exact run can never pass the same deterministic server
@@ -197,16 +190,16 @@ function useMindmapSync(): void {
                 .actions.markSyncState("error", getSyncErrorMessage(error));
             }
             scheduleRetry();
-            return;
+            return false;
           }
 
-          if (isDisposed) return;
+          if (isDisposed) return false;
 
           store.getState().actions.commitFlushedOps(run.count);
           consecutiveFailures = 0;
         }
 
-        if (isDisposed) return;
+        if (isDisposed) return false;
 
         const state = store.getState();
         if (state.desyncedSinceRejection) {
@@ -221,10 +214,58 @@ function useMindmapSync(): void {
           state.actions.markSyncState("dirty");
           schedulePending();
         }
+
+        return !state.desyncedSinceRejection;
       } finally {
-        flushMutex.delete(store);
+        if (isDisposed) {
+          clearBurstTimers();
+        }
       }
     }
+
+    /**
+     * Shares an in-flight flush across StrictMode instances and manual callers.
+     */
+    function flush(): Promise<boolean> {
+      const activeFlush = flushPromises.get(store);
+      if (activeFlush !== undefined) {
+        return activeFlush;
+      }
+
+      const nextFlush = performFlush();
+      flushPromises.set(store, nextFlush);
+      void nextFlush.finally(() => {
+        if (flushPromises.get(store) === nextFlush) {
+          flushPromises.delete(store);
+        }
+      });
+      return nextFlush;
+    }
+
+    /** Drains edits added during an earlier request before navigation proceeds. */
+    async function flushNow(): Promise<boolean> {
+      while (!isDisposed) {
+        const succeeded = await flush();
+        const state = store.getState();
+
+        if (!succeeded || state.desyncedSinceRejection) {
+          return false;
+        }
+
+        if (state.pendingOps.length === 0) {
+          if (state.syncState !== "idle") {
+            state.actions.markSyncState("idle");
+          }
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    const unregisterFlushNow = store
+      .getState()
+      .actions.registerFlushNow(flushNow);
 
     const unsubscribe = store.subscribe((state, previousState) => {
       if (state.syncRetryNonce !== previousState.syncRetryNonce) {
@@ -281,12 +322,13 @@ function useMindmapSync(): void {
     return () => {
       // If no request owns the queue, capture one final immutable snapshot
       // before disposal. It intentionally performs no later store commits.
-      const finalBatch = flushMutex.get(store)
+      const finalBatch = flushPromises.has(store)
         ? null
         : store.getState().actions.peekPendingOps();
 
       isDisposed = true;
       unsubscribe();
+      unregisterFlushNow();
       clearBurstTimers();
       if (retryTimer !== undefined) clearTimeout(retryTimer);
       window.removeEventListener("beforeunload", flushBeforeExit);

@@ -1,6 +1,5 @@
 "use client";
 
-import { ConvexError } from "convex/values";
 import { LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -12,24 +11,11 @@ import { PromptInput } from "./prompt-input";
 import { Button } from "./ui/button";
 import { Stack } from "./ui/stack";
 
-const GENERATION_ERROR_MESSAGES = new Set([
-  "AI is not configured",
-  "Invalid generated root node",
-  "Invalid op: too many nodes",
-]);
-
-/** Converts a generation failure into concise, user-visible copy. */
-function getGenerationErrorMessage(error: unknown): string {
-  if (
-    error instanceof ConvexError &&
-    typeof error.data === "string" &&
-    GENERATION_ERROR_MESSAGES.has(error.data)
-  ) {
-    return error.data;
-  }
-
-  return "Generation failed — try again.";
-}
+const GENERATION_ERROR_MESSAGES = {
+  "not-configured": "AI is not configured",
+  "too-many-nodes": "Sprig generated too many nodes — try a narrower prompt.",
+  "generation-failed": "Generation failed — try again.",
+} as const;
 
 /** Prompt form that creates and navigates to one atomic AI mindmap. */
 function AIMindmapInput() {
@@ -43,15 +29,17 @@ function AIMindmapInput() {
     startTransition(async () => {
       setGenerationError(null);
 
-      try {
-        const aiMindmap = await createMindmapFromAI(userPrompt);
-        const publicId = aiMindmap.data.publicId;
-        router.push(`/maps/${publicId}`);
-        // Refresh the shared server layout so listMine includes the new map.
-        router.refresh();
-      } catch (error) {
-        setGenerationError(getGenerationErrorMessage(error));
+      const aiMindmap = await createMindmapFromAI(userPrompt);
+
+      if (!aiMindmap.ok) {
+        setGenerationError(GENERATION_ERROR_MESSAGES[aiMindmap.code]);
+        return;
       }
+
+      const publicId = aiMindmap.data.publicId;
+      router.push(`/maps/${publicId}`);
+      // Refresh the shared server layout so listMine includes the new map.
+      router.refresh();
     });
   });
 

@@ -345,7 +345,10 @@ describe("createMindmapStore", () => {
     // node on this canvas until the page is re-seeded from the server.
     store.getState().setAiTouchedNodeIds(["l-child", "l-not-loaded-yet"]);
 
-    expect(store.getState().aiTouchedNodeIds).toEqual(["l-child"]);
+    expect(store.getState().aiTouchedNodeIds).toEqual([
+      "l-child",
+      "l-not-loaded-yet",
+    ]);
 
     store.getState().setAiTouchedNodeIds([]);
 

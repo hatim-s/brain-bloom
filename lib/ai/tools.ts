@@ -56,6 +56,12 @@ type HistoryPage = {
   }>;
 };
 
+type OperationRecord = {
+  mindmapId: string;
+  seq: number;
+  undone: boolean;
+};
+
 type MindmapToolConvexLayer = {
   getMindmap: (mindmapId: string) => Promise<ToolMindmap>;
   applyOps: (args: {
@@ -73,6 +79,7 @@ type MindmapToolConvexLayer = {
     mindmapId: string;
     paginationOpts: { cursor: null; numItems: number };
   }) => Promise<HistoryPage>;
+  getOperation: (operationId: string) => Promise<OperationRecord>;
   undoTo: (operationId: string) => Promise<{
     undoneCount: number;
     seq: number;
@@ -86,6 +93,11 @@ type CreateMindmapToolsOptions = {
   onOperationApplied?: (operation: AppliedOperation) => void;
 };
 
+/**
+ * Keeps one AI tool transaction well below Convex's 200-operation hard cap.
+ */
+const MAX_CREATE_NODES_PER_CALL = 50;
+
 const createNodesInputSchema = z.object({
   nodes: z
     .array(
@@ -97,7 +109,8 @@ const createNodesInputSchema = z.object({
         link: z.string().optional(),
       })
     )
-    .min(1),
+    .min(1)
+    .max(MAX_CREATE_NODES_PER_CALL),
 });
 
 const updateNodeInputSchema = z
@@ -404,7 +417,15 @@ function createMindmapTools({
         "Undo the target operation and every later active operation atomically.",
       inputSchema: z.object({ operationId: z.string().min(1) }),
       execute: async ({ operationId }) =>
-        runMutationTool(async () => convex.undoTo(operationId)),
+        runMutationTool(async () => {
+          const operation = await convex.getOperation(operationId);
+
+          if (operation.mindmapId !== mindmapId) {
+            return { error: "operation belongs to a different mindmap" };
+          }
+
+          return convex.undoTo(operationId);
+        }),
     }),
   };
 }

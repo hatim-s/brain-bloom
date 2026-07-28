@@ -94,6 +94,10 @@ function AiPanelLayout({ children }: PropsWithChildren) {
   const restoredWidthRef = useRef<number | null>(null);
   const hasRestoredRef = useRef(false);
   const hasAppliedWidthRef = useRef(false);
+  const isOpenRef = useRef(true);
+  const persistWidthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
 
   const [isOpen, setIsOpen] = useState(true);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -125,7 +129,18 @@ function AiPanelLayout({ children }: PropsWithChildren) {
     hasRestoredRef.current = true;
 
     if (preferences.isOpen !== null) {
+      isOpenRef.current = preferences.isOpen;
       setIsOpen(preferences.isOpen);
+
+      if (!preferences.isOpen) {
+        requestAnimationFrame(() => {
+          try {
+            panelRef.current?.collapse();
+          } catch {
+            // The stored visual state still applies while registration settles.
+          }
+        });
+      }
     }
   }, []);
 
@@ -147,12 +162,25 @@ function AiPanelLayout({ children }: PropsWithChildren) {
       restoredWidthRef.current
     );
     const frame = requestAnimationFrame(() => {
-      panelRef.current?.resize(defaultSize);
-      hasAppliedWidthRef.current = true;
+      try {
+        panelRef.current?.resize(defaultSize);
+        hasAppliedWidthRef.current = true;
+      } catch {
+        // The panel can unregister between this frame and StrictMode cleanup.
+      }
     });
 
     return () => cancelAnimationFrame(frame);
   }, [containerWidth]);
+
+  useEffect(
+    () => () => {
+      if (persistWidthTimerRef.current !== null) {
+        clearTimeout(persistWidthTimerRef.current);
+      }
+    },
+    []
+  );
 
   const constraints = useMemo(
     () => getPanelConstraints(containerWidth, restoredWidthRef.current),
@@ -162,26 +190,70 @@ function AiPanelLayout({ children }: PropsWithChildren) {
   const handleToggle = useEventCallback(() => {
     const nextIsOpen = !isOpen;
 
+    isOpenRef.current = nextIsOpen;
     setIsOpen(nextIsOpen);
     writeAiPanelOpen(nextIsOpen);
+
+    if (!nextIsOpen) {
+      requestAnimationFrame(() => {
+        try {
+          panelRef.current?.collapse();
+        } catch {
+          // Registration may still be settling on the first interactive frame.
+        }
+      });
+      return;
+    }
+
+    const measuredWidth =
+      containerRef.current?.getBoundingClientRect().width ?? containerWidth;
+    const { defaultSize } = getPanelConstraints(
+      measuredWidth,
+      restoredWidthRef.current
+    );
+
+    // Recompute at expansion time so a collapsed panel never restores against
+    // stale viewport constraints.
+    requestAnimationFrame(() => {
+      try {
+        panelRef.current?.expand(defaultSize);
+        panelRef.current?.resize(defaultSize);
+      } catch {
+        // Visibility state remains correct even if the layout is unregistering.
+      }
+    });
   });
 
   const handleResize = useEventCallback((size: number) => {
     // Before the stored width has been applied, `onResize` is only reporting
     // the provisional layout — persisting it would erase the writer's choice.
-    if (!hasAppliedWidthRef.current || containerWidth <= 0) return;
+    if (
+      !hasAppliedWidthRef.current ||
+      !isOpenRef.current ||
+      containerWidth <= 0 ||
+      size <= 0
+    ) {
+      return;
+    }
 
     const widthPx = (size / 100) * containerWidth;
 
     restoredWidthRef.current = widthPx;
-    writeAiPanelWidth(widthPx);
+
+    if (persistWidthTimerRef.current !== null) {
+      clearTimeout(persistWidthTimerRef.current);
+    }
+    persistWidthTimerRef.current = setTimeout(() => {
+      writeAiPanelWidth(widthPx);
+      persistWidthTimerRef.current = null;
+    }, 300);
   });
 
   return (
     <div className="relative flex h-full w-full flex-1" ref={containerRef}>
       <PanelGroup className="h-full w-full" direction="horizontal">
         <Panel
-          className="relative flex min-w-0"
+          className="relative flex min-w-0 max-lg:!w-full max-lg:!flex-[1_1_100%]"
           // Declared so the first paint matches the prerendered layout instead
           // of shifting once the group registers its panels.
           defaultSize={isOpen ? 100 - constraints.defaultSize : 100}
@@ -190,27 +262,37 @@ function AiPanelLayout({ children }: PropsWithChildren) {
         >
           {children}
         </Panel>
-        {isOpen ? (
-          <>
-            <PanelResizeHandle
-              aria-label="Resize Sprig panel"
-              className="relative w-px bg-line-strong outline-none transition-colors duration-200 ease-organic after:absolute after:-left-1.5 after:top-0 after:h-full after:w-3.5 after:content-[''] hover:bg-primary focus-visible:bg-primary data-[resize-handle-state=drag]:bg-primary motion-reduce:transition-none"
-              id="sprig-panel-seam"
-            />
-            <Panel
-              className="min-w-0 border-l border-line-strong"
-              defaultSize={constraints.defaultSize}
-              id="sprig-ai-panel"
-              maxSize={constraints.maxSize}
-              minSize={constraints.minSize}
-              onResize={handleResize}
-              order={2}
-              ref={panelRef}
-            >
-              <AiPanel onCollapse={handleToggle} />
-            </Panel>
-          </>
-        ) : null}
+        <PanelResizeHandle
+          aria-label="Resize Sprig panel"
+          className={
+            "relative w-1 bg-line-strong outline-none transition-colors duration-200 ease-organic " +
+            "after:absolute after:-left-1.5 after:top-0 after:h-full after:w-4 after:content-[''] " +
+            "hover:bg-primary focus-visible:bg-primary focus-visible:ring-2 focus-visible:ring-ring " +
+            "data-[resize-handle-state=drag]:bg-primary motion-reduce:transition-none " +
+            (isOpen ? "max-lg:hidden" : "hidden")
+          }
+          id="sprig-panel-seam"
+        />
+        <Panel
+          aria-hidden={!isOpen}
+          className={
+            "min-w-0 border-l border-line-strong max-lg:!fixed max-lg:inset-y-0 max-lg:right-0 " +
+            "max-lg:z-30 max-lg:!w-[min(90vw,35rem)] max-lg:!max-w-[90vw] max-lg:shadow-xl " +
+            (isOpen ? "" : "pointer-events-none invisible")
+          }
+          collapsedSize={0}
+          collapsible
+          defaultSize={constraints.defaultSize}
+          id="sprig-ai-panel"
+          inert={!isOpen}
+          maxSize={constraints.maxSize}
+          minSize={constraints.minSize}
+          onResize={handleResize}
+          order={2}
+          ref={panelRef}
+        >
+          <AiPanel onCollapse={handleToggle} />
+        </Panel>
       </PanelGroup>
       {isOpen ? null : (
         /* A tab on the canvas edge, below the save pill's row, so it never

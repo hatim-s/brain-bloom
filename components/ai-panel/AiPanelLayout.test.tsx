@@ -20,6 +20,24 @@ vi.mock("./AiPanel", () => ({
       <button onClick={onCollapse} type="button">
         Collapse Sprig panel
       </button>
+      <label>
+        Stream completion
+        <input aria-label="Stream completion" defaultValue="streaming" />
+      </label>
+      <label>
+        Thread intent
+        <input aria-label="Thread intent" defaultValue="existing" />
+      </label>
+      <button
+        onClick={(event) => {
+          const input =
+            event.currentTarget.previousElementSibling?.querySelector("input");
+          if (input) input.value = "fresh";
+        }}
+        type="button"
+      >
+        New conversation
+      </button>
     </div>
   ),
 }));
@@ -121,7 +139,8 @@ describe("AiPanelLayout", () => {
       screen.getByRole("button", { name: "Collapse Sprig panel" })
     );
 
-    expect(screen.queryByTestId("ai-panel")).toBeNull();
+    expect(screen.getByTestId("ai-panel")).toBeDefined();
+    expect(screen.getByTestId("ai-panel").closest("[inert]")).toBeDefined();
     expect(screen.getByTestId("canvas")).toBeDefined();
     expect(window.localStorage.getItem(AI_PANEL_OPEN_STORAGE_KEY)).toBe(
       "false"
@@ -145,7 +164,8 @@ describe("AiPanelLayout", () => {
     expect(
       await screen.findByRole("button", { name: "Open Sprig panel" })
     ).toBeDefined();
-    expect(screen.queryByTestId("ai-panel")).toBeNull();
+    expect(screen.getByTestId("ai-panel")).toBeDefined();
+    expect(screen.getByTestId("ai-panel").closest("[inert]")).toBeDefined();
   });
 
   it("exposes a labelled separator so the seam is keyboard-resizable", () => {
@@ -158,5 +178,46 @@ describe("AiPanelLayout", () => {
     expect(
       screen.getByRole("separator", { name: "Resize Sprig panel" })
     ).toBeDefined();
+  });
+
+  it("keeps stream completion state mounted while collapsed", async () => {
+    const user = userEvent.setup();
+    render(
+      <AiPanelLayout>
+        <div data-testid="canvas" />
+      </AiPanelLayout>
+    );
+    const completion = screen.getByLabelText(
+      "Stream completion"
+    ) as HTMLInputElement;
+
+    await user.click(
+      screen.getByRole("button", { name: "Collapse Sprig panel" })
+    );
+    // Models the chat onFinish update arriving while the region is inert.
+    completion.value = "finished";
+    await user.click(screen.getByRole("button", { name: "Open Sprig panel" }));
+
+    expect(screen.getByLabelText("Stream completion")).toBe(completion);
+    expect(completion.value).toBe("finished");
+  });
+
+  it("keeps fresh-conversation intent through collapse and expand", async () => {
+    const user = userEvent.setup();
+    render(
+      <AiPanelLayout>
+        <div data-testid="canvas" />
+      </AiPanelLayout>
+    );
+
+    await user.click(screen.getByRole("button", { name: "New conversation" }));
+    const intent = screen.getByLabelText("Thread intent") as HTMLInputElement;
+    await user.click(
+      screen.getByRole("button", { name: "Collapse Sprig panel" })
+    );
+    await user.click(screen.getByRole("button", { name: "Open Sprig panel" }));
+
+    expect(screen.getByLabelText("Thread intent")).toBe(intent);
+    expect(intent.value).toBe("fresh");
   });
 });

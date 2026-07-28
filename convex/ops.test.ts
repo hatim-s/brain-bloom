@@ -50,6 +50,24 @@ async function readNodeRows(t: Harness["t"], mindmapId: string) {
 }
 
 describe("ops.apply", () => {
+  it("rejects batches larger than the transaction ceiling", async () => {
+    const { asAlice } = createHarness();
+    const map = await createMindmap(asAlice);
+
+    await expect(
+      asAlice.mutation(api.ops.apply, {
+        mindmapId: map.mindmapId,
+        ops: Array.from({ length: 201 }, (_, index) => ({
+          kind: "update",
+          nodeId: "root",
+          patch: { title: `Title ${index}` },
+        })),
+        description: "Oversized batch",
+        source: "ai",
+      })
+    ).rejects.toThrow("Invalid op: too many operations");
+  });
+
   it("applies create, update, and delete operations", async () => {
     const { asAlice } = createHarness();
     const map = await createMindmap(asAlice);
@@ -734,6 +752,29 @@ describe("ops.apply", () => {
         source: "user",
       })
     ).rejects.toThrow("Forbidden");
+  });
+});
+
+describe("ops.getOperation", () => {
+  it("returns the bound mindmap, sequence, and undo state to its owner", async () => {
+    const { asAlice } = createHarness();
+    const map = await createMindmap(asAlice);
+    const applied = await asAlice.mutation(api.ops.apply, {
+      mindmapId: map.mindmapId,
+      ops: [],
+      description: "Reviewed",
+      source: "ai",
+    });
+
+    await expect(
+      asAlice.query(api.ops.getOperation, {
+        operationId: applied.operationId,
+      })
+    ).resolves.toEqual({
+      mindmapId: map.mindmapId,
+      seq: 1,
+      undone: false,
+    });
   });
 });
 

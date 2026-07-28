@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  CHARACTERS_PER_TOKEN,
+  DEFAULT_MAX_CHARACTERS,
   type SerializableMindmap,
   serializeMindmap,
   TRUNCATION_MARKER,
@@ -38,7 +38,7 @@ describe("serializeMindmap", () => {
   });
 
   it("respects the heuristic cap and adds an explicit truncation marker", () => {
-    const maxTokens = 24;
+    const maxCharacters = 96;
     const largeMindmap: SerializableMindmap = {
       mindmap: { name: "Large map" },
       nodes: [
@@ -60,17 +60,17 @@ describe("serializeMindmap", () => {
       ],
     };
 
-    const outline = serializeMindmap(largeMindmap, { maxTokens });
+    const outline = serializeMindmap(largeMindmap, { maxCharacters });
 
-    expect(outline.length).toBeLessThanOrEqual(
-      maxTokens * CHARACTERS_PER_TOKEN
-    );
+    expect(outline.length).toBeLessThanOrEqual(maxCharacters);
     expect(outline).toContain(TRUNCATION_MARKER);
   });
 
   it("produces the same small outline when given a larger explicit cap", () => {
-    expect(serializeMindmap(smallMindmap, { maxTokens: 10_000 })).toBe(
-      serializeMindmap(smallMindmap)
-    );
+    expect(
+      serializeMindmap(smallMindmap, {
+        maxCharacters: DEFAULT_MAX_CHARACTERS,
+      })
+    ).toBe(serializeMindmap(smallMindmap));
   });
 });

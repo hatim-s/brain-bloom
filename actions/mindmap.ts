@@ -18,6 +18,10 @@ import { NodeTypes } from "@/components/flow/types";
 import { api } from "@/convex/_generated/api";
 import type { NodeSnapshot } from "@/convex/lib/nodeOps";
 import {
+  type AIActionErrorCode,
+  getAIActionErrorCode,
+} from "@/lib/ai/actionErrors";
+import {
   generatedMindmapSchema,
   type GeneratedTreeNode,
 } from "@/lib/ai/generatedTree";
@@ -224,6 +228,15 @@ async function persistGeneratedMindmap(
 
 /** Generates and atomically persists a new mindmap from one prompt. */
 async function createMindmapFromAI(userPrompt: string) {
+  try {
+    return await createMindmapFromAIUnsafe(userPrompt);
+  } catch (error) {
+    return { ok: false as const, code: getAIActionErrorCode(error) };
+  }
+}
+
+/** Performs generation and persistence before the public action serializes errors. */
+async function createMindmapFromAIUnsafe(userPrompt: string) {
   const { mindmap: aiMindmap, rawOutput } = await generateAIMindmap(userPrompt);
 
   const rootNode = aiMindmap.find((node) => node.nodeId === "root");
@@ -273,6 +286,7 @@ async function createMindmapFromAI(userPrompt: string) {
   const data = await persistGeneratedMindmap(rootNode.title, nodes, edges);
 
   return {
+    ok: true as const,
     data,
     error: null,
     rawOutput,
@@ -285,12 +299,28 @@ async function editMindmapWithAI(
   currentBranch: AIMindmap[],
   activeNodeId: string
 ) {
+  try {
+    return await editMindmapWithAIUnsafe(
+      userPrompt,
+      currentBranch,
+      activeNodeId
+    );
+  } catch (error) {
+    return { ok: false as const, code: getAIActionErrorCode(error) };
+  }
+}
+
+/** Builds a local branch edit before the public action serializes errors. */
+async function editMindmapWithAIUnsafe(
+  userPrompt: string,
+  currentBranch: AIMindmap[],
+  activeNodeId: string
+) {
   const { mindmap: aiMindmap, rawOutput } = await editAIMindmap(
     userPrompt,
     currentBranch,
     activeNodeId
   );
-
   const aiNodesMap = new Map<string, AIMindmap>();
   aiMindmap.forEach((node) => {
     aiNodesMap.set(node.nodeId, node);
@@ -322,6 +352,7 @@ async function editMindmapWithAI(
   }
 
   return {
+    ok: true as const,
     editedMindmap: {
       nodes,
       edges,
@@ -331,4 +362,9 @@ async function editMindmapWithAI(
   };
 }
 
-export { createMindmapFromAI, editMindmapWithAI };
+export {
+  type AIActionErrorCode,
+  createMindmapFromAI,
+  editMindmapWithAI,
+  getAIActionErrorCode,
+};

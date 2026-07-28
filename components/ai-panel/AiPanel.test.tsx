@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Edge } from "@xyflow/react";
 import { ConvexError } from "convex/values";
@@ -17,7 +17,10 @@ import {
 import { ROOT_NODE_ID } from "@/components/flow/const";
 import { createEdge } from "@/components/flow/mindmap/createEdge";
 import { createBaseFlowNodeFromPartialBaseFlowNode } from "@/components/flow/mindmap/createNode";
-import { MindmapFlowProvider } from "@/components/flow/providers/MindmapFlowProvider";
+import {
+  MindmapFlowProvider,
+  useMindmapStoreApi,
+} from "@/components/flow/providers/MindmapFlowProvider";
 import { BaseFlowNode, NodeTypes } from "@/components/flow/types";
 import { MindmapDB } from "@/types/Mindmap";
 
@@ -30,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
   undoTo: vi.fn(),
 }));
+let panelStore: ReturnType<typeof useMindmapStoreApi>;
 
 vi.mock("convex/react", () => ({
   useMutation: () => mocks.undoTo,
@@ -59,7 +63,8 @@ function createChat(overrides: Partial<UseSprigChat> = {}): UseSprigChat {
     isHistoryLoading: false,
     isStreaming: false,
     messages: [],
-    sendPrompt: vi.fn(),
+    regenerate: vi.fn(async () => true),
+    sendPrompt: vi.fn(async () => true),
     startNewConversation: vi.fn(),
     status: "ready",
     stop: vi.fn(),
@@ -156,9 +161,9 @@ describe("AiPanel", () => {
 
     renderPanel();
 
-    expect(screen.getByLabelText("Sprig is working")).toBeDefined();
+    expect(screen.getByRole("status").textContent).toBe("Sprig is thinking");
     expect(screen.getByLabelText("Message Sprig")).toHaveProperty(
-      "disabled",
+      "readOnly",
       true
     );
     expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
@@ -172,9 +177,7 @@ describe("AiPanel", () => {
 
     renderPanel();
 
-    expect(
-      screen.getByRole("status", { name: "Loading conversation" })
-    ).toBeDefined();
+    expect(screen.getByLabelText("Loading conversation")).toBeDefined();
     expect(screen.queryByText("Nothing here yet")).toBeNull();
   });
 
@@ -186,13 +189,13 @@ describe("AiPanel", () => {
 
     expect(screen.getByText("Added 1 node")).toBeDefined();
 
-    await user.click(screen.getByRole("button", { name: /Undo to here/ }));
+    await user.click(screen.getByRole("button", { name: "Undo to message 1" }));
 
     expect(mocks.undoTo).toHaveBeenCalledWith({ operationId: "operations:1" });
     await waitFor(() =>
       expect(screen.getByText("Undone back to this change.")).toBeDefined()
     );
-    expect(mocks.refresh).toHaveBeenCalled();
+    expect(mocks.refresh).not.toHaveBeenCalled();
   });
 
   it("explains a rejected undo inline instead of failing silently", async () => {
@@ -206,7 +209,7 @@ describe("AiPanel", () => {
 
     renderPanel();
 
-    await user.click(screen.getByRole("button", { name: /Undo to here/ }));
+    await user.click(screen.getByRole("button", { name: "Undo to message 1" }));
 
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toBe(
@@ -228,7 +231,9 @@ describe("AiPanel", () => {
 
     renderPanel();
 
-    expect(screen.queryByRole("button", { name: /Undo to here/ })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /Undo to message/ })
+    ).toBeNull();
   });
 
   it("starts a fresh thread on request", async () => {
@@ -265,15 +270,57 @@ describe("AiPanel", () => {
 
     expect(clearError).toHaveBeenCalled();
   });
+
+  it("reloads immediately when the canvas queue is clean", async () => {
+    const user = userEvent.setup();
+    const reload = vi.fn();
+    mocks.chat.current = createChat({ messages: [createTurnWithOperation()] });
+    renderPanel(reload);
+
+    await user.click(screen.getByRole("button", { name: "Undo to message 1" }));
+    await user.click(screen.getByRole("button", { name: "Reload" }));
+
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it("attempts a flush and refuses reload when dirty edits cannot save", async () => {
+    const user = userEvent.setup();
+    const reload = vi.fn();
+    const flushNow = vi.fn(async () => false);
+    mocks.chat.current = createChat({ messages: [createTurnWithOperation()] });
+    renderPanel(reload);
+
+    await user.click(screen.getByRole("button", { name: "Undo to message 1" }));
+    act(() => {
+      panelStore
+        .getState()
+        .actions.onUpdateNode("right-child", { title: "Unsaved" });
+      panelStore.getState().actions.registerFlushNow(flushNow);
+    });
+    await user.click(screen.getByRole("button", { name: "Reload" }));
+
+    expect(flushNow).toHaveBeenCalledOnce();
+    expect(reload).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Couldn't save your latest canvas edits"
+    );
+  });
 });
 
 /** Mounts the panel over a real mindmap store, as the canvas does. */
-function renderPanel(): void {
+function renderPanel(onReload?: () => void): void {
   render(
     <MindmapFlowProvider {...createPanelFixture()}>
-      <AiPanel onCollapse={vi.fn()} />
+      <PanelStoreProbe />
+      <AiPanel onCollapse={vi.fn()} onReload={onReload} />
     </MindmapFlowProvider>
   );
+}
+
+/** Captures the real provider store for dirty-queue reload assertions. */
+function PanelStoreProbe() {
+  panelStore = useMindmapStoreApi();
+  return null;
 }
 
 /** Creates the smallest rooted graph the provider will accept. */

@@ -29,7 +29,8 @@ type UseSprigChat = {
   isStreaming: boolean;
   isHistoryLoading: boolean;
   clearError: () => void;
-  sendPrompt: (text: string, selectedNodeId: string | null) => void;
+  regenerate: () => Promise<boolean>;
+  sendPrompt: (text: string, selectedNodeId: string | null) => Promise<boolean>;
   startNewConversation: () => void;
   stop: () => void;
 };
@@ -48,6 +49,10 @@ function useSprigChat({
   // Written from inside `fetch`, read when composing the next request body.
   const threadIdRef = useRef<string | null>(null);
   const hasReplayedHistoryRef = useRef(false);
+  const freshThreadIntentRef = useRef(false);
+  const isActiveStreamRef = useRef(false);
+  const pendingResultRef = useRef<((succeeded: boolean) => void) | null>(null);
+  const lastRequestBodyRef = useRef<Record<string, string>>({ mindmapId });
 
   const [transport] = useState(
     () =>
@@ -63,10 +68,18 @@ function useSprigChat({
 
           if (threadId !== null && threadId.length > 0) {
             threadIdRef.current = threadId;
+            freshThreadIntentRef.current = false;
           }
 
           return response;
         },
+        // Keep recent context while enforcing the route's 40-message ceiling.
+        prepareSendMessagesRequest: ({ body, messages }) => ({
+          body: {
+            ...body,
+            messages: messages.slice(-40),
+          },
+        }),
       })
   );
 
@@ -80,6 +93,10 @@ function useSprigChat({
       isAbort: boolean;
       isError: boolean;
     }) => {
+      isActiveStreamRef.current = false;
+      pendingResultRef.current?.(!isAbort && !isError);
+      pendingResultRef.current = null;
+
       if (isAbort || isError) {
         return;
       }
@@ -107,7 +124,12 @@ function useSprigChat({
 
   // Threads are listed oldest-first, so the most recent conversation is last.
   useEffect(() => {
-    if (historyThreadId !== undefined || threads === undefined) {
+    if (
+      historyThreadId !== undefined ||
+      threads === undefined ||
+      freshThreadIntentRef.current ||
+      isActiveStreamRef.current
+    ) {
       return;
     }
 
@@ -126,7 +148,12 @@ function useSprigChat({
   // `listMessages` is a live query and keeps pushing as the route persists the
   // turn, so replay is allowed exactly once per conversation.
   useEffect(() => {
-    if (hasReplayedHistoryRef.current || historyMessages === undefined) {
+    if (
+      hasReplayedHistoryRef.current ||
+      historyMessages === undefined ||
+      freshThreadIntentRef.current ||
+      isActiveStreamRef.current
+    ) {
       return;
     }
 
@@ -134,36 +161,95 @@ function useSprigChat({
     setMessages(toUIMessages(historyMessages as ThreadMessageRecord[]));
   }, [historyMessages, setMessages]);
 
+  const isHistoryLoading =
+    !hasReplayedHistoryRef.current &&
+    (historyThreadId === undefined || historyMessages === undefined);
+
   const sendPrompt = useEventCallback(
-    (text: string, selectedNodeId: string | null) => {
-      void chat.sendMessage(
-        { text },
-        {
+    async (text: string, selectedNodeId: string | null) => {
+      if (isHistoryLoading || isActiveStreamRef.current) {
+        return false;
+      }
+
+      const body = {
+        mindmapId,
+        ...(threadIdRef.current === null
+          ? {}
+          : { threadId: threadIdRef.current }),
+        ...(selectedNodeId === null ? {} : { selectedNodeId }),
+      };
+      lastRequestBodyRef.current = body;
+      isActiveStreamRef.current = true;
+
+      const result = new Promise<boolean>((resolve) => {
+        pendingResultRef.current = resolve;
+      });
+
+      try {
+        void chat.sendMessage({ text }, { body }).catch(() => {
+          isActiveStreamRef.current = false;
+          pendingResultRef.current?.(false);
+          pendingResultRef.current = null;
+        });
+      } catch {
+        isActiveStreamRef.current = false;
+        pendingResultRef.current?.(false);
+        pendingResultRef.current = null;
+      }
+
+      return result;
+    }
+  );
+
+  const regenerate = useEventCallback(async () => {
+    if (isHistoryLoading || isActiveStreamRef.current) {
+      return false;
+    }
+
+    isActiveStreamRef.current = true;
+    const result = new Promise<boolean>((resolve) => {
+      pendingResultRef.current = resolve;
+    });
+
+    try {
+      void chat
+        .regenerate({
           body: {
-            mindmapId,
+            ...lastRequestBodyRef.current,
             ...(threadIdRef.current === null
               ? {}
               : { threadId: threadIdRef.current }),
-            ...(selectedNodeId === null ? {} : { selectedNodeId }),
           },
-        }
-      );
+        })
+        .catch(() => {
+          isActiveStreamRef.current = false;
+          pendingResultRef.current?.(false);
+          pendingResultRef.current = null;
+        });
+    } catch {
+      isActiveStreamRef.current = false;
+      pendingResultRef.current?.(false);
+      pendingResultRef.current = null;
     }
-  );
+
+    return result;
+  });
 
   const startNewConversation = useEventCallback(() => {
     // Nothing is deleted: the previous thread stays in Convex, this panel just
     // stops addressing it. P9 owns the thread switcher that can return to it.
     hasReplayedHistoryRef.current = true;
+    freshThreadIntentRef.current = true;
     threadIdRef.current = null;
     setHistoryThreadId(null);
     chat.clearError();
     setMessages([]);
   });
 
+  const stopChat = chat.stop;
   const stop = useCallback(() => {
-    void chat.stop();
-  }, [chat]);
+    void stopChat();
+  }, [stopChat]);
 
   const isStreaming =
     chat.status === "submitted" || chat.status === "streaming";
@@ -173,10 +259,9 @@ function useSprigChat({
     status: chat.status,
     error: chat.error,
     isStreaming,
-    isHistoryLoading:
-      !hasReplayedHistoryRef.current &&
-      (historyThreadId === undefined || historyMessages === undefined),
+    isHistoryLoading,
     clearError: chat.clearError,
+    regenerate,
     sendPrompt,
     startNewConversation,
     stop,

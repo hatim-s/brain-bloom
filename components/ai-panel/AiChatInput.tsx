@@ -12,9 +12,10 @@ import { cn } from "@/lib/utils";
 const MAX_INPUT_HEIGHT_PX = 160;
 
 type AiChatInputProps = {
+  isSendDisabled: boolean;
   isStreaming: boolean;
   onStop: () => void;
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string) => Promise<boolean>;
 };
 
 /**
@@ -25,9 +26,15 @@ type AiChatInputProps = {
  * control while a turn is in flight rather than appearing next to it, so the
  * one primary action in the composer is always the one that applies.
  */
-function AiChatInput({ isStreaming, onStop, onSubmit }: AiChatInputProps) {
+function AiChatInput({
+  isSendDisabled,
+  isStreaming,
+  onStop,
+  onSubmit,
+}: AiChatInputProps) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const wasStreamingRef = useRef(isStreaming);
 
   // Grow with the prompt up to a cap. Height is reset first so the element can
   // shrink again when the writer deletes a line.
@@ -39,22 +46,41 @@ function AiChatInput({ isStreaming, onStop, onSubmit }: AiChatInputProps) {
     textarea.style.height = `${Math.min(textarea.scrollHeight, MAX_INPUT_HEIGHT_PX)}px`;
   }, [value]);
 
-  const handleSubmit = useEventCallback(() => {
+  // Preserve keyboard position across the read-only streaming interval.
+  useEffect(() => {
+    if (
+      wasStreamingRef.current &&
+      !isStreaming &&
+      document.activeElement === document.body
+    ) {
+      textareaRef.current?.focus();
+    }
+
+    wasStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+
+  const handleSubmit = useEventCallback(async () => {
     const prompt = value.trim();
 
-    if (prompt.length === 0 || isStreaming) {
+    if (prompt.length === 0 || isStreaming || isSendDisabled) {
       return;
     }
 
     setValue("");
-    onSubmit(prompt);
+    const succeeded = await onSubmit(prompt);
+
+    if (!succeeded) {
+      // Do not overwrite anything the writer typed after the failed request.
+      setValue((current) => current || prompt);
+    }
   });
 
   const handleKeyDown = useEventCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      // The canvas listens for bare arrow and space keys; a focused composer
-      // must own every keystroke it receives.
-      event.stopPropagation();
+      if (event.key === "Escape") {
+        textareaRef.current?.blur();
+        return;
+      }
 
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -79,11 +105,11 @@ function AiChatInput({ isStreaming, onStop, onSubmit }: AiChatInputProps) {
           "min-h-[2.75rem] resize-none overflow-y-auto rounded-md bg-background text-sm",
           "border-line-strong px-3 py-2.5"
         )}
-        disabled={isStreaming}
         id="sprig-chat-input"
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="Ask Sprig to grow, prune, or rearrange the map"
+        readOnly={isStreaming}
         ref={textareaRef}
         rows={2}
         value={value}
@@ -92,30 +118,29 @@ function AiChatInput({ isStreaming, onStop, onSubmit }: AiChatInputProps) {
         <p className="font-mono text-[11px] leading-none text-muted-foreground">
           Enter sends · Shift+Enter for a new line
         </p>
-        {isStreaming ? (
-          <Button
-            aria-label="Stop generating"
-            className="h-8 gap-1.5 px-3 text-xs"
-            onClick={onStop}
-            size="sm"
-            type="button"
-            variant="outline"
-          >
-            <Square className="!size-3" />
-            Stop
-          </Button>
-        ) : (
-          <Button
-            aria-label="Send message"
-            className="h-8 gap-1.5 px-3 text-xs"
-            disabled={value.trim().length === 0}
-            size="sm"
-            type="submit"
-          >
-            Send
-            <ArrowUp className="!size-3.5" />
-          </Button>
-        )}
+        <Button
+          aria-label={isStreaming ? "Stop generating" : "Send message"}
+          className="h-8 gap-1.5 px-3 text-xs"
+          disabled={
+            !isStreaming && (isSendDisabled || value.trim().length === 0)
+          }
+          onClick={isStreaming ? onStop : undefined}
+          size="sm"
+          type={isStreaming ? "button" : "submit"}
+          variant={isStreaming ? "outline" : "default"}
+        >
+          {isStreaming ? (
+            <>
+              <Square className="!size-3" />
+              Stop
+            </>
+          ) : (
+            <>
+              Send
+              <ArrowUp className="!size-3.5" />
+            </>
+          )}
+        </Button>
       </div>
     </form>
   );

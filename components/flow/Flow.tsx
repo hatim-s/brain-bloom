@@ -12,9 +12,9 @@ import {
   useReactFlow,
   NodeTypes as XYNodeTypes,
 } from "@xyflow/react";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
-import { AiPanelLayout } from "@/components/ai-panel/AiPanelLayout";
 import { AI_TOUCH_DURATION_MS } from "@/components/ai-panel/constants";
 import { cn } from "@/lib/utils";
 import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
@@ -35,6 +35,16 @@ import {
   MindmapFlowProvider,
   useMindmapFlow,
 } from "./providers/MindmapFlowProvider";
+
+// Owners load the assistant graph on demand; read-only and share canvases never
+// render this boundary and therefore keep the AI SDK out of their page chunk.
+const AiPanelLayout = dynamic(
+  () =>
+    import("@/components/ai-panel/AiPanelLayout").then(
+      (module) => module.AiPanelLayout
+    ),
+  { ssr: false }
+);
 
 const nodeTypes: XYNodeTypes = {
   root: RootNode,

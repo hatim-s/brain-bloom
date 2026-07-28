@@ -62,11 +62,13 @@ describe("threads", () => {
     });
     const userMessageId = await asAlice.mutation(api.threads.addMessage, {
       threadId,
+      messageId: "user-1",
       role: "user",
       content: [{ type: "text", text: "Review this" }],
     });
     const assistantMessageId = await asAlice.mutation(api.threads.addMessage, {
       threadId,
+      messageId: "assistant-1",
       role: "assistant",
       content: [
         { type: "text", text: "Done" },
@@ -86,18 +88,50 @@ describe("threads", () => {
     expect(messages[0]).toMatchObject({
       mindmapId: map.mindmapId,
       role: "user",
+      messageId: "user-1",
       content: [{ type: "text", text: "Review this" }],
     });
     expect(messages[0].operationId).toBeUndefined();
     expect(messages[1]).toMatchObject({
       mindmapId: map.mindmapId,
       role: "assistant",
+      messageId: "assistant-1",
       operationId: operation.operationId,
     });
     expect(messages[1].content).toEqual([
       { type: "text", text: "Done" },
       { type: "data-operation", data: { seq: operation.seq } },
     ]);
+  });
+
+  it("converges duplicate client message ids on one stored row", async () => {
+    const { asAlice } = createHarness();
+    const map = await asAlice.mutation(api.mindmaps.create, {
+      name: "Idempotent messages",
+    });
+    const threadId = await asAlice.mutation(api.threads.createThread, {
+      mindmapId: map.mindmapId,
+      title: "Retry",
+    });
+    const firstId = await asAlice.mutation(api.threads.addMessage, {
+      threadId,
+      messageId: "user-stable",
+      role: "user",
+      content: [{ type: "text", text: "Original" }],
+    });
+    const retriedId = await asAlice.mutation(api.threads.addMessage, {
+      threadId,
+      messageId: "user-stable",
+      role: "user",
+      content: [{ type: "text", text: "Duplicate" }],
+    });
+    const messages = await asAlice.query(api.threads.listMessages, {
+      threadId,
+    });
+
+    expect(retriedId).toBe(firstId);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toEqual([{ type: "text", text: "Original" }]);
   });
 
   it("requires authentication for thread reads and writes", async () => {

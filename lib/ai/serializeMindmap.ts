@@ -1,5 +1,4 @@
-const DEFAULT_MAX_TOKENS = 6_000;
-const CHARACTERS_PER_TOKEN = 4;
+const DEFAULT_MAX_CHARACTERS = 16_000;
 const TRUNCATION_MARKER = "(truncated)";
 
 type SerializableMindmapNode = {
@@ -19,7 +18,7 @@ type SerializableMindmap = {
 };
 
 type SerializeMindmapOptions = {
-  maxTokens?: number;
+  maxCharacters?: number;
 };
 
 /** Collapses whitespace so each outline row stays compact and prompt-safe. */
@@ -39,17 +38,18 @@ function formatNode(node: SerializableMindmapNode, depth: number): string {
 }
 
 /**
- * Serializes a mindmap into a depth-first outline capped by the four
- * characters-per-token heuristic used by the chat prompt.
+ * Serializes a mindmap into a depth-first outline with a character budget.
+ *
+ * This is a transport-size heuristic, not a token guarantee: token density
+ * varies by content and CJK text can approach one token per character.
  */
 function serializeMindmap(
   value: SerializableMindmap,
   options: SerializeMindmapOptions = {}
 ): string {
-  const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
   const maxCharacters = Math.max(
     TRUNCATION_MARKER.length,
-    Math.floor(maxTokens * CHARACTERS_PER_TOKEN)
+    Math.floor(options.maxCharacters ?? DEFAULT_MAX_CHARACTERS)
   );
   const childrenByParent = new Map<string | null, SerializableMindmapNode[]>();
 
@@ -123,8 +123,7 @@ function serializeMindmap(
 }
 
 export {
-  CHARACTERS_PER_TOKEN,
-  DEFAULT_MAX_TOKENS,
+  DEFAULT_MAX_CHARACTERS,
   type SerializableMindmap,
   type SerializableMindmapNode,
   serializeMindmap,

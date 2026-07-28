@@ -72,6 +72,8 @@ type MindmapFlowContext = {
     commitFlushedOps: (count: number) => void;
     releaseFlushedOps: () => void;
     retrySync: () => void;
+    flushNow: () => Promise<boolean>;
+    registerFlushNow: (flushNow: () => Promise<boolean>) => () => void;
     markSyncRejected: (error: string) => void;
     markSyncState: (
       state: MindmapFlowContext["syncState"],

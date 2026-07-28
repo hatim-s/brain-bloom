@@ -21,12 +21,25 @@ import { getAnthropicModel, isAIConfigured } from "@/lib/anthropic";
 import { getConvexAuthToken } from "@/lib/convex-server";
 
 const THREAD_TITLE_LENGTH = 60;
+const MAX_MESSAGES_PER_REQUEST = 40;
+const MAX_REQUEST_BYTES = 256 * 1024;
+const MAX_TEXT_PART_LENGTH = 16_000;
 
 const uiMessagePartSchema = z
   .object({
     type: z.string().min(1),
+    text: z.string().max(MAX_TEXT_PART_LENGTH).optional(),
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((part, context) => {
+    if (part.type === "text" && typeof part.text !== "string") {
+      context.addIssue({
+        code: "custom",
+        message: "Text parts require text",
+        path: ["text"],
+      });
+    }
+  });
 
 const uiMessageSchema = z.object({
   id: z.string().min(1),
@@ -38,7 +51,7 @@ const uiMessageSchema = z.object({
 const chatRequestSchema = z.object({
   mindmapId: z.string().min(1),
   threadId: z.string().min(1).optional(),
-  messages: z.array(uiMessageSchema).min(1),
+  messages: z.array(uiMessageSchema).min(1).max(MAX_MESSAGES_PER_REQUEST),
   selectedNodeId: z.string().min(1).optional(),
 });
 
@@ -112,6 +125,12 @@ function createConvexLayer(token: string): MindmapToolConvexLayer {
         },
         { token }
       ),
+    getOperation: (operationId) =>
+      fetchQuery(
+        api.ops.getOperation,
+        { operationId: operationId as Id<"operations"> },
+        { token }
+      ),
     undoTo: (operationId) =>
       fetchMutation(
         api.ops.undoTo,
@@ -157,9 +176,20 @@ async function POST(request: Request): Promise<Response> {
     return jsonError("Convex auth is not configured", 503);
   }
 
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BYTES) {
+    return jsonError("Request too large", 413);
+  }
+
   let requestBody: unknown;
   try {
-    requestBody = await request.json();
+    const rawBody = await request.text();
+
+    if (new TextEncoder().encode(rawBody).byteLength > MAX_REQUEST_BYTES) {
+      return jsonError("Request too large", 413);
+    }
+
+    requestBody = JSON.parse(rawBody);
   } catch {
     return jsonError("Invalid request", 400);
   }
@@ -188,24 +218,41 @@ async function POST(request: Request): Promise<Response> {
 
   const convex = createConvexLayer(token);
   const currentMindmap = await convex.getMindmap(mindmapId);
-  const threadId =
-    parsedRequest.data.threadId ??
-    (await fetchMutation(
+  let threadId = parsedRequest.data.threadId;
+
+  if (threadId !== undefined) {
+    try {
+      const thread = await fetchQuery(
+        api.threads.getThread,
+        { threadId: threadId as Id<"threads"> },
+        { token }
+      );
+
+      if (thread.mindmapId !== mindmapId) {
+        return jsonError("thread belongs to a different mindmap", 400);
+      }
+    } catch {
+      return jsonError("Invalid thread", 400);
+    }
+  } else {
+    threadId = await fetchMutation(
       api.threads.createThread,
       {
         mindmapId: mindmapId as Id<"mindmaps">,
         title: getThreadTitle(messages),
       },
       { token }
-    ));
-  let lastOperation: AppliedOperation | undefined;
+    );
+  }
+
+  let firstOperation: AppliedOperation | undefined;
   const tools = createMindmapTools({
     mindmapId,
     convex,
     onOperationApplied: (operation) => {
-      // Convex sequence numbers, not tool completion timing, define "last".
-      if (!lastOperation || operation.seq >= lastOperation.seq) {
-        lastOperation = operation;
+      // undoTo(first) reverses the entire turn, including all later tool ops.
+      if (!firstOperation || operation.seq < firstOperation.seq) {
+        firstOperation = operation;
       }
     },
   });
@@ -226,11 +273,17 @@ async function POST(request: Request): Promise<Response> {
     headers: {
       "x-sprig-thread-id": threadId,
     },
-    onFinish: async ({ responseMessage }) => {
+    onFinish: async ({ responseMessage, isAborted }) => {
+      // Aborted partial turns intentionally vanish from history replay.
+      if (isAborted) {
+        return;
+      }
+
       await fetchMutation(
         api.threads.addMessage,
         {
           threadId: threadId as Id<"threads">,
+          messageId: lastUserMessage.id,
           role: "user",
           content: lastUserMessage.parts,
         },
@@ -240,11 +293,12 @@ async function POST(request: Request): Promise<Response> {
         api.threads.addMessage,
         {
           threadId: threadId as Id<"threads">,
+          messageId: responseMessage.id,
           role: "assistant",
           content: responseMessage.parts,
-          ...(lastOperation
+          ...(firstOperation
             ? {
-                operationId: lastOperation.operationId as Id<"operations">,
+                operationId: firstOperation.operationId as Id<"operations">,
               }
             : {}),
         },

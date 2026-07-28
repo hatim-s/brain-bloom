@@ -170,7 +170,7 @@ describe("getUndoOperationId", () => {
     expect(getUndoOperationId(message)).toBe("operations:persisted");
   });
 
-  it("falls back to the last operation a streamed turn reported", () => {
+  it("falls back to the first operation a streamed turn reported", () => {
     const message = createAssistantMessage([
       {
         type: "tool-createNodes",
@@ -186,7 +186,7 @@ describe("getUndoOperationId", () => {
       },
     ]);
 
-    expect(getUndoOperationId(message)).toBe("operations:2");
+    expect(getUndoOperationId(message)).toBe("operations:1");
   });
 
   it("returns null for a turn that changed nothing", () => {
@@ -214,11 +214,13 @@ describe("toUIMessages", () => {
     const records: ThreadMessageRecord[] = [
       {
         _id: "messages:1",
+        messageId: "user-1",
         role: "user",
         content: [{ type: "text", text: "add three nodes" }],
       },
       {
         _id: "messages:2",
+        messageId: "assistant-1",
         role: "assistant",
         content: [{ type: "text", text: "Done." }],
         operationId: "operations:1",
@@ -227,12 +229,12 @@ describe("toUIMessages", () => {
 
     expect(toUIMessages(records)).toEqual([
       {
-        id: "messages:1",
+        id: "user-1",
         role: "user",
         parts: [{ type: "text", text: "add three nodes" }],
       },
       {
-        id: "messages:2",
+        id: "assistant-1",
         role: "assistant",
         parts: [{ type: "text", text: "Done." }],
         metadata: { operationId: "operations:1" },

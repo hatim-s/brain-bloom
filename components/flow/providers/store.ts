@@ -376,14 +376,8 @@ function createMindmapStore({
           return;
         }
 
-        // Only ids the canvas actually holds can bloom. The AI writes straight
-        // to Convex, so a freshly created node has no client node to flash
-        // until the canvas is re-seeded from the server.
-        const knownNodeIds = nodeIds.filter(
-          (nodeId) => get().nodesMap[nodeId] !== undefined
-        );
-
-        set({ aiTouchedNodeIds: knownNodeIds });
+        // Created ids may arrive before their server-refreshed nodes mount.
+        set({ aiTouchedNodeIds: nodeIds });
       },
       mindmapDB,
       pendingOps: [],
@@ -428,6 +422,34 @@ function createMindmapStore({
         },
         retrySync: () => {
           set((state) => ({ syncRetryNonce: state.syncRetryNonce + 1 }));
+        },
+        flushNow: async () => {
+          const state = get();
+          return state.pendingOps.length === 0 && state.syncState === "idle";
+        },
+        registerFlushNow: (flushNow) => {
+          set((state) => ({
+            actions: { ...state.actions, flushNow },
+          }));
+
+          return () => {
+            if (get().actions.flushNow !== flushNow) {
+              return;
+            }
+
+            set((state) => ({
+              actions: {
+                ...state.actions,
+                flushNow: async () => {
+                  const current = get();
+                  return (
+                    current.pendingOps.length === 0 &&
+                    current.syncState === "idle"
+                  );
+                },
+              },
+            }));
+          };
         },
         markSyncRejected: (error) => {
           set({

@@ -81,6 +81,7 @@ function NodeAiEdit() {
   const prefersReducedMotion = useReducedMotion();
 
   const [value, setValue] = useState("");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const textareaRef = useRef<AutosizeTextAreaRef>(null);
 
@@ -101,14 +102,25 @@ function NodeAiEdit() {
   const handleSubmit = useEventCallback(async () => {
     const currentBranch = getCurrentBranch(mindmapNodesMap, activeNodeId);
 
-    let aiResponse: Awaited<ReturnType<typeof editMindmapWithAI>>;
-
     startTransition(async () => {
-      aiResponse = await editMindmapWithAI(
+      setErrorMessage(null);
+      const aiResponse = await editMindmapWithAI(
         value,
         currentBranch,
         activeNodeId ?? ""
       );
+
+      if (!aiResponse.ok) {
+        setErrorMessage(
+          aiResponse.code === "not-configured"
+            ? "AI is not configured."
+            : aiResponse.code === "too-many-nodes"
+              ? "Sprig returned too many nodes. Try a narrower request."
+              : "Sprig could not grow this branch. Try again."
+        );
+        return;
+      }
+
       const edgesMap = [...edges, ...aiResponse.editedMindmap.edges].reduce(
         (acc, edge) => {
           acc[edge.target] = edge.source;
@@ -177,6 +189,7 @@ function NodeAiEdit() {
         // The focus ring is never suppressed; it is only pulled flush with the
         // popover edge, which the borderless field sits directly against.
         className="h-full w-full !min-h-[30px] !border-none resize-none rounded-md px-3 py-2.5 text-sm focus-visible:outline-offset-0"
+        disabled={isPending}
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
@@ -190,6 +203,7 @@ function NodeAiEdit() {
           initial={prefersReducedMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+          role="status"
         >
           <span aria-hidden="true" className="sprig-bloom-dot" />
           <Typography
@@ -200,6 +214,21 @@ function NodeAiEdit() {
           </Typography>
         </motion.div>
       )}
+      {errorMessage ? (
+        <div
+          className="absolute left-0 top-full z-10 mt-1 flex w-full items-center gap-2 rounded-md border border-destructive bg-card px-2.5 py-2 text-sm font-medium text-destructive"
+          role="alert"
+        >
+          <span className="flex-1">{errorMessage}</span>
+          <button
+            className="underline underline-offset-2"
+            onClick={() => void handleSubmit()}
+            type="button"
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
     </Box>
   );
 }

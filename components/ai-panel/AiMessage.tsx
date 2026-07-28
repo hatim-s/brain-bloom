@@ -52,14 +52,23 @@ function getUndoErrorMessage(error: unknown): string {
  */
 function AiMessage({
   message,
+  messageNumber,
   onUndo,
 }: {
   message: SprigUIMessage;
-  onUndo: (operationId: string) => Promise<void>;
+  messageNumber: number;
+  onUndo: (operationId: string, shouldRefresh: boolean) => Promise<void>;
 }) {
   const [undoState, setUndoState] = useState<UndoState>({ status: "idle" });
   const toolParts = getToolParts(message);
   const operationId = getUndoOperationId(message);
+  const undoDescriptionId = `${message.id}-undo-description`;
+  const shouldRefresh = toolParts.some(
+    (part) =>
+      part.toolName === "renameMindmap" &&
+      part.state === "output-available" &&
+      part.output?.error === undefined
+  );
 
   const handleUndo = useEventCallback(async () => {
     if (operationId === null) return;
@@ -67,7 +76,7 @@ function AiMessage({
     setUndoState({ status: "pending" });
 
     try {
-      await onUndo(operationId);
+      await onUndo(operationId, shouldRefresh);
       setUndoState({ status: "undone" });
     } catch (error) {
       setUndoState({ status: "error", message: getUndoErrorMessage(error) });
@@ -109,14 +118,13 @@ function AiMessage({
       {operationId === null ? null : (
         <div className="flex flex-col items-start gap-1.5">
           {undoState.status === "undone" ? (
-            <p
-              className="font-mono text-[11px] text-muted-foreground"
-              role="status"
-            >
+            <p className="font-mono text-[11px] text-muted-foreground">
               Undone back to this change.
             </p>
           ) : (
             <Button
+              aria-describedby={undoDescriptionId}
+              aria-label={`Undo to message ${messageNumber}`}
               className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
               disabled={undoState.status === "pending"}
               onClick={() => void handleUndo()}
@@ -129,12 +137,15 @@ function AiMessage({
             </Button>
           )}
           {undoState.status === "error" ? (
-            <p className="text-[11px] text-destructive" role="alert">
+            <p className="text-sm font-medium text-destructive" role="alert">
               {undoState.message}
             </p>
           ) : null}
-          {undoState.status === "idle" ? (
-            <p className="text-[11px] text-muted-foreground">
+          {undoState.status === "idle" || undoState.status === "pending" ? (
+            <p
+              className="text-[11px] text-muted-foreground"
+              id={undoDescriptionId}
+            >
               Reverses this change and everything after it.
             </p>
           ) : null}

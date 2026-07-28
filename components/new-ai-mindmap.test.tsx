@@ -2,7 +2,6 @@
 
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AIMindmapInput } from "./new-ai-mindmap";
@@ -29,7 +28,10 @@ afterEach(cleanup);
 describe("AIMindmapInput", () => {
   it("shows generic copy for an unexpected failure and re-enables generation", async () => {
     const user = userEvent.setup();
-    actionMock.mockRejectedValue(new Error("Generation failed"));
+    actionMock.mockResolvedValue({
+      ok: false,
+      code: "generation-failed",
+    });
     render(<AIMindmapInput />);
 
     await user.type(screen.getByRole("textbox"), "Plan a launch");
@@ -51,20 +53,24 @@ describe("AIMindmapInput", () => {
 
   it("shows a known Convex generation error", async () => {
     const user = userEvent.setup();
-    actionMock.mockRejectedValue(new ConvexError("Invalid op: too many nodes"));
+    actionMock.mockResolvedValue({
+      ok: false,
+      code: "too-many-nodes",
+    });
     render(<AIMindmapInput />);
 
     await user.type(screen.getByRole("textbox"), "Plan a launch");
     await user.click(screen.getByRole("button", { name: "Grow the map" }));
 
     expect((await screen.findByRole("alert")).textContent).toBe(
-      "Invalid op: too many nodes"
+      "Sprig generated too many nodes — try a narrower prompt."
     );
   });
 
   it("pushes to the new map before refreshing the shared layout", async () => {
     const user = userEvent.setup();
     actionMock.mockResolvedValue({
+      ok: true,
       data: {
         mindmapId: "mindmaps:generated",
         publicId: "generated1",
