@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -30,18 +30,29 @@ export function AIMindmapInput() {
   });
 
   return (
-    <Stack className="gap-y-3 w-[68%] min-w-[480px]" direction="column">
+    <Stack className="w-full gap-y-3" direction="column">
       <PromptInput
         placeholders={[
-          "How to start a small business?",
-          "What coding projects I can make in a weekend?",
-          "My weekend project ideas",
-          "What are the benifits of mouth breathing?",
+          "How do I start a small business?",
+          "Coding projects I could build in a weekend",
+          "What goes into a good onboarding flow?",
+          "Ways to cut our cloud bill",
         ]}
         onChange={(e) => setUserPrompt(e.target.value)}
       />
-      <Button onClick={handleSubmit} disabled={isPending || !userPrompt}>
-        {isPending ? <Loader className="animate-spin" /> : "Get Started"}
+      <Button
+        className="self-start"
+        onClick={handleSubmit}
+        disabled={isPending || !userPrompt}
+      >
+        {isPending ? (
+          <>
+            <LoaderCircle className="animate-spin motion-reduce:animate-none" />
+            Growing your map
+          </>
+        ) : (
+          "Grow the map"
+        )}
       </Button>
     </Stack>
   );

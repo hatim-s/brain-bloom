@@ -1,3 +1,1 @@
-import BaseNode from "./Node";
-
-export default BaseNode;
+export { BaseNode } from "./Node";

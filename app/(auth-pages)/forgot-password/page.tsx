@@ -16,10 +16,15 @@ export default async function ForgotPassword(props: {
     <>
       <form className="flex flex-col w-full gap-2 text-foreground [&>input]:mb-6 min-w-[400px] max-w-[400px]">
         <div>
-          <h1 className="text-2xl font-medium">Reset Password</h1>
-          <p className="text-sm text-secondary-foreground">
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Reset password
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
             Already have an account?{" "}
-            <Link className="text-primary underline" href="/sign-in">
+            <Link
+              className="font-medium text-primary underline underline-offset-4"
+              href="/sign-in"
+            >
               Sign in
             </Link>
           </p>
@@ -28,7 +33,7 @@ export default async function ForgotPassword(props: {
           <Label htmlFor="email">Email</Label>
           <Input name="email" placeholder="you@example.com" required />
           <SubmitButton formAction={forgotPasswordAction}>
-            Reset Password
+            Reset password
           </SubmitButton>
           <FormMessage message={searchParams} />
         </div>

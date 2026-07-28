@@ -35,15 +35,28 @@ const ThemeSwitcher = () => {
     <Button
       variant="ghost"
       size="icon"
-      className="absolute top-8 right-8 z-10"
+      className="absolute top-3.5 right-6 z-10 text-muted-foreground hover:text-foreground"
+      aria-label={`Theme: ${theme}. Click to change.`}
       onClick={() => handleThemeChange()}
     >
       {theme === "light" ? (
-        <Sun className="transition" key="light" size={ICON_SIZE} />
+        <Sun
+          className="transition motion-reduce:transition-none"
+          key="light"
+          size={ICON_SIZE}
+        />
       ) : theme === "dark" ? (
-        <Moon className="transition" key="dark" size={ICON_SIZE} />
+        <Moon
+          className="transition motion-reduce:transition-none"
+          key="dark"
+          size={ICON_SIZE}
+        />
       ) : (
-        <Laptop className="transition" key="system" size={ICON_SIZE} />
+        <Laptop
+          className="transition motion-reduce:transition-none"
+          key="system"
+          size={ICON_SIZE}
+        />
       )}
     </Button>
   );

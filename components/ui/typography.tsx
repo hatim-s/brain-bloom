@@ -12,7 +12,7 @@ const TypographyH1 = forwardRef<
     <h1
       ref={ref}
       className={cn(
-        "scroll-m-20 text-4xl font-extrabold tracking-tight lg:text-5xl",
+        "scroll-m-20 text-4xl font-semibold tracking-tight lg:text-5xl",
         className
       )}
     >
@@ -29,7 +29,7 @@ const TypographyH2 = forwardRef<
     <h2
       ref={ref}
       className={cn(
-        "scroll-m-20 text-3xl font-extrabold tracking-tight first:mt-0",
+        "scroll-m-20 text-3xl font-semibold tracking-tight first:mt-0",
         className
       )}
     >

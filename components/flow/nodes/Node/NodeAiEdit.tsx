@@ -1,14 +1,14 @@
-import { Loader } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
+import { LoaderCircle } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
 import { useMemo, useRef, useState, useTransition } from "react";
 
 import { editMindmapWithAI } from "@/actions/mindmap";
-import { AuroraText } from "@/components/aurora-text";
 import {
   AutosizeTextarea,
   AutosizeTextAreaRef,
 } from "@/components/auto-resizer-textarea";
 import { Box } from "@/components/ui/box";
+import { Typography } from "@/components/ui/typography";
 import { useEventCallback } from "@/hooks/use-event-callback";
 import { AIMindmap } from "@/types/AI";
 
@@ -69,8 +69,15 @@ function getCurrentBranch(
   return currentBranch;
 }
 
+/**
+ * Prompt box for extending a branch with the model.
+ *
+ * The pending state is the one place in the product that spends the bloom
+ * accent on chrome, because here the chrome *is* the AI activity.
+ */
 export default function NodeAiEdit() {
   const { aiEditNode, nodesMap } = useMindmapFlow();
+  const prefersReducedMotion = useReducedMotion();
 
   const [value, setValue] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -167,37 +174,26 @@ export default function NodeAiEdit() {
   return (
     <Box>
       <AutosizeTextarea
-        className="h-full w-full !min-h-[30px] !outline-none !border-none resize-none"
+        className="h-full w-full !min-h-[30px] !outline-hidden !border-none resize-none"
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        placeholder="Edit the mindmap with AI ✨"
+        placeholder="Ask the model to grow this branch"
         ref={textareaRef}
       />
       {isPending && (
-        <AnimatePresence mode="wait">
-          <motion.div
-            className="absolute top-0 left-0 justify-center items-center bg-white rounded-md gap-x-2 flex flex-row"
-            style={textAreaDimensions}
-            initial={{
-              y: 0,
-              opacity: 0,
-            }}
-            animate={{
-              y: 0,
-              opacity: 1,
-            }}
-            transition={{
-              duration: 0.2,
-              ease: "linear",
-            }}
-          >
-            <AuroraText className="text-lg font-medium">
-              Generating with AI
-            </AuroraText>
-            <Loader className="animate-spin-slow text-primary" />
-          </motion.div>
-        </AnimatePresence>
+        <motion.div
+          className="absolute top-0 left-0 flex flex-row items-center justify-center gap-x-2 rounded-md bg-popover text-bloom"
+          style={textAreaDimensions}
+          initial={prefersReducedMotion ? false : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+        >
+          <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
+          <Typography className="text-sm font-medium" variant="p">
+            Growing this branch
+          </Typography>
+        </motion.div>
       )}
     </Box>
   );

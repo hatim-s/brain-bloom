@@ -4,7 +4,7 @@ import "./globals.css";
 
 import clsx from "clsx";
 import { ThemeProvider } from "next-themes";
-import { Geist } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 
 import { SidebarProvider } from "@/components/sidebar/sidebar-provider";
 import { ThemeSwitcher } from "@/components/theme-switcher";
@@ -24,6 +24,13 @@ export const metadata = {
 const geistSans = Geist({
   display: "swap",
   subsets: ["latin"],
+  variable: "--font-geist-sans",
+});
+
+const geistMono = Geist_Mono({
+  display: "swap",
+  subsets: ["latin"],
+  variable: "--font-geist-mono",
 });
 
 export default function RootLayout({
@@ -34,13 +41,17 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={clsx(geistSans.className, "scrollbar-styles")}
+      className={clsx(
+        geistSans.variable,
+        geistMono.variable,
+        "scrollbar-styles"
+      )}
       suppressHydrationWarning
     >
       <body className="bg-background text-foreground h-screen w-screen relative overflow-hidden">
         <ThemeProvider
           attribute="class"
-          defaultTheme="system"
+          defaultTheme="dark"
           enableSystem
           disableTransitionOnChange
         >

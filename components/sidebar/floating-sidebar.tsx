@@ -1,6 +1,5 @@
 "use client";
 
-import { Network } from "lucide-react";
 import { useParams } from "next/navigation";
 import * as React from "react";
 
@@ -8,6 +7,7 @@ import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuItem,
@@ -17,85 +17,86 @@ import {
 } from "@/components/ui/sidebar";
 import { MindmapDB } from "@/types/Mindmap";
 
-import { Box } from "../ui/box";
+import { Separator } from "../ui/separator";
+import { Stack } from "../ui/stack";
 import { Typography } from "../ui/typography";
 import { TypographyWithTooltip } from "../ui/typography-with-tooltip";
 import { NewMindmapButton } from "./new-mindmap-btn";
 
-// This is sample data.
-const getSidenavData = (mindmaps: MindmapDB[], mindmapId: string) => ({
-  navMain: [
-    {
-      title: "Your Mindmaps",
-      // url: "#",
-      items: mindmaps.map((m) => ({
-        title: m.name,
-        url: `/${m.id}`,
-        id: m.id,
-        isActive: m.id === parseInt(mindmapId),
-      })),
-    },
-  ],
-});
-
+/**
+ * Navigation panel listing every mindmap the signed-in user owns.
+ *
+ * A floating panel laid over the canvas: card surface, hairline boundary, no
+ * elevation. Identity is carried by the wordmark and the moss rail on the
+ * active row, not by an icon.
+ */
 export function FloatingSidebar({
   mindmaps,
   ...props
 }: React.ComponentProps<typeof Sidebar> & { mindmaps: MindmapDB[] }) {
   const params = useParams();
   const mindmapSlug = params.mindmapSlug as string;
+  const activeId = parseInt(mindmapSlug);
 
   return (
     <Sidebar variant="floating" {...props}>
-      <SidebarHeader className="py-4 px-3">
-        <SidebarMenu>
-          <SidebarMenuItem className="flex flex-row items-center gap-x-3">
-            {/* <SidebarMenuButton size="lg" asChild> */}
-            <Box className="flex flex-row items-center gap-x-3 flex-1">
-              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                <Network className="size-4" />
-              </div>
-              <div className="flex flex-col gap-0.5 leading-none">
-                <span className="font-semibold">Sprig</span>
-                <span className="text-xs">v0.1-alpha</span>
-              </div>
-            </Box>
-            <NewMindmapButton />
-            {/* </SidebarMenuButton> */}
-          </SidebarMenuItem>
-        </SidebarMenu>
+      <SidebarHeader className="gap-0 p-0">
+        <Stack className="items-center gap-x-3 px-4 py-3.5" direction="row">
+          <Stack className="min-w-0 flex-1 gap-y-1" direction="column">
+            <Typography
+              className="text-base font-semibold leading-none tracking-tight"
+              variant="p"
+            >
+              Sprig
+            </Typography>
+            <Typography
+              className="font-mono text-[11px] leading-none text-muted-foreground"
+              variant="p"
+            >
+              v0.1-alpha
+            </Typography>
+          </Stack>
+          <NewMindmapButton />
+        </Stack>
+        <Separator className="bg-border" />
       </SidebarHeader>
+
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarMenu className="gap-2">
-            {getSidenavData(mindmaps, mindmapSlug).navMain.map((item) => (
-              <SidebarMenuItem
-                className="flex flex-col gap-2 ms-1"
-                key={item.title}
-              >
-                <Typography className="text-base font-semibold" variant="p">
-                  {item.title}
+        <SidebarGroup className="px-3 py-3">
+          <SidebarGroupLabel className="px-2.5">
+            Your mindmaps
+          </SidebarGroupLabel>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              {mindmaps.length ? (
+                <SidebarMenuSub className="mx-0 gap-0.5 border-l-0 px-0">
+                  {mindmaps.map((mindmap) => (
+                    <SidebarMenuSubItem key={mindmap.id}>
+                      <SidebarMenuSubButton
+                        asChild
+                        isActive={mindmap.id === activeId}
+                      >
+                        <a href={`/${mindmap.id}`}>
+                          <TypographyWithTooltip
+                            className="text-sm"
+                            variant="p"
+                          >
+                            {mindmap.name}
+                          </TypographyWithTooltip>
+                        </a>
+                      </SidebarMenuSubButton>
+                    </SidebarMenuSubItem>
+                  ))}
+                </SidebarMenuSub>
+              ) : (
+                <Typography
+                  className="px-2.5 py-2 text-sm text-muted-foreground"
+                  variant="p"
+                >
+                  Nothing here yet. Start one and it will show up in this list.
                 </Typography>
-                {item.items?.length ? (
-                  <SidebarMenuSub className="ml-0 border-l-0 px-1.5">
-                    {item.items.map((item) => (
-                      <SidebarMenuSubItem key={item.id}>
-                        <SidebarMenuSubButton asChild isActive={item.isActive}>
-                          <a href={item.url}>
-                            <TypographyWithTooltip
-                              className="text-sm"
-                              variant="p"
-                            >
-                              {item.title}
-                            </TypographyWithTooltip>
-                          </a>
-                        </SidebarMenuSubButton>
-                      </SidebarMenuSubItem>
-                    ))}
-                  </SidebarMenuSub>
-                ) : null}
-              </SidebarMenuItem>
-            ))}
+              )}
+            </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
