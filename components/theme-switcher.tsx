@@ -35,7 +35,7 @@ const ThemeSwitcher = () => {
     <Button
       variant="ghost"
       size="icon"
-      className="absolute top-3.5 right-6 z-10 text-muted-foreground hover:text-foreground"
+      className="absolute top-3.5 right-[var(--theme-switcher-inset)] z-10 text-muted-foreground hover:text-foreground"
       aria-label={`Theme: ${theme}. Click to change.`}
       onClick={() => handleThemeChange()}
     >

@@ -1,13 +1,33 @@
-import { type NextRequest } from "next/server";
+import { clerkMiddleware } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
 
-import { updateSession } from "@/utils/supabase/middleware";
+import { acceptsJsonOverHtml, isPublicPath } from "@/lib/auth-routing";
 
-/**
- * Refreshes the Supabase session before protected routes handle a request.
- */
-async function proxy(request: NextRequest) {
-  return await updateSession(request);
-}
+const proxy = clerkMiddleware(async (auth, request) => {
+  // "/" stays protected until P7 ships a real landing page — its current
+  // content is the authenticated dashboard, which fetches user data.
+  if (isPublicPath(request.nextUrl.pathname)) {
+    return;
+  }
+
+  const { userId } = await auth();
+  if (userId) {
+    return;
+  }
+
+  if (
+    request.nextUrl.pathname.startsWith("/api") ||
+    acceptsJsonOverHtml(request.headers.get("accept"))
+  ) {
+    return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
+  }
+
+  const destination = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+  const unauthenticatedUrl = new URL("/sign-in", request.url);
+  unauthenticatedUrl.searchParams.set("redirect_url", destination);
+
+  return NextResponse.redirect(unauthenticatedUrl);
+});
 
 // Next parses `config` statically at compile time, so it must be exported inline —
 // a re-export from a trailing `export { ... }` statement fails the build.
@@ -15,13 +35,11 @@ export const config = {
   matcher: [
     /*
      * Match all request paths except:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - images - .svg, .png, .jpg, .jpeg, .gif, .webp
-     * Feel free to modify this pattern to include more paths.
+     * - Next.js internals
+     * - common static files, unless they are explicitly requested via search params
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/(api|trpc)(.*)",
   ],
 };
 

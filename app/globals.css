@@ -189,6 +189,10 @@
 
     --radius: 0.875rem;
 
+    /* Header identity clearance and ThemeSwitcher placement are coupled to
+       this viewport inset so the floating control never covers account text. */
+    --theme-switcher-inset: 1.5rem;
+
     --sidebar-background: oklch(0.988 0.005 95);
     --sidebar-foreground: oklch(0.245 0.017 150);
     --sidebar-primary: oklch(0.505 0.105 150);

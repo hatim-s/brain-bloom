@@ -1,9 +1,11 @@
 "use client";
 
+import { useClerk, useUser } from "@clerk/nextjs";
 import clsx from "clsx";
 
 import { MindmapDB } from "@/types/Mindmap";
 
+import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
 import { SidebarTrigger, useSidebar } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -17,7 +19,21 @@ import { Typography } from "./ui/typography";
  * curve as the panel itself.
  */
 export function Header({ mindmap }: { mindmap: MindmapDB }) {
+  const { signOut } = useClerk();
+  const { isLoaded, user } = useUser();
   const { open } = useSidebar();
+  // A loaded user can lack both email and full name; fall back to username
+  // and finally a static label so the skeleton is strictly a loading state.
+  const identity = isLoaded
+    ? (user?.primaryEmailAddress?.emailAddress ??
+      user?.fullName ??
+      user?.username ??
+      "Account")
+    : null;
+  // A letter, not an avatar image: the header is a hairline-and-type surface,
+  // and a remote photo would be the only bitmap on it.
+  const initial = identity?.slice(0, 1).toUpperCase();
+
   return (
     <header
       className={clsx(
@@ -42,6 +58,51 @@ export function Header({ mindmap }: { mindmap: MindmapDB }) {
       <Typography className="text-sm font-medium" variant="p">
         {mindmap.name}
       </Typography>
+      {/* This shares --theme-switcher-inset with ThemeSwitcher; its own 36px
+          width and an 8px gap make the remaining 2.75rem of clearance. */}
+      <div className="ml-auto flex min-w-0 items-center gap-2 pr-[calc(var(--theme-switcher-inset)+2.75rem)]">
+        {isLoaded && identity ? (
+          <>
+            <span
+              aria-hidden="true"
+              className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line-strong bg-secondary font-mono text-[11px] font-medium text-secondary-foreground"
+            >
+              {initial}
+            </span>
+            <span
+              className="max-w-[22ch] truncate text-sm text-muted-foreground"
+              title={identity}
+            >
+              {identity}
+            </span>
+          </>
+        ) : (
+          <span
+            aria-label="Loading account"
+            className="flex items-center gap-2"
+            role="status"
+          >
+            <span
+              aria-hidden="true"
+              className="size-7 shrink-0 rounded-full border border-border bg-muted"
+            />
+            <span
+              aria-hidden="true"
+              className="h-3.5 w-20 rounded-sm bg-muted"
+            />
+          </span>
+        )}
+        <Separator orientation="vertical" className="mx-1 h-4 bg-border" />
+        <Button
+          className="text-muted-foreground hover:text-foreground"
+          onClick={() => signOut({ redirectUrl: "/sign-in" })}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          Sign out
+        </Button>
+      </div>
     </header>
   );
 }
