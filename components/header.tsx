@@ -22,8 +22,13 @@ export function Header({ mindmap }: { mindmap: MindmapDB }) {
   const { signOut } = useClerk();
   const { isLoaded, user } = useUser();
   const { open } = useSidebar();
+  // A loaded user can lack both email and full name; fall back to username
+  // and finally a static label so the skeleton is strictly a loading state.
   const identity = isLoaded
-    ? (user?.primaryEmailAddress?.emailAddress ?? user?.fullName ?? null)
+    ? (user?.primaryEmailAddress?.emailAddress ??
+      user?.fullName ??
+      user?.username ??
+      "Account")
     : null;
   // A letter, not an avatar image: the header is a hairline-and-type surface,
   // and a remote photo would be the only bitmap on it.
@@ -56,7 +61,7 @@ export function Header({ mindmap }: { mindmap: MindmapDB }) {
       {/* This shares --theme-switcher-inset with ThemeSwitcher; its own 36px
           width and an 8px gap make the remaining 2.75rem of clearance. */}
       <div className="ml-auto flex min-w-0 items-center gap-2 pr-[calc(var(--theme-switcher-inset)+2.75rem)]">
-        {identity ? (
+        {isLoaded && identity ? (
           <>
             <span
               aria-hidden="true"

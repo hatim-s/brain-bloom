@@ -27,6 +27,11 @@ describe("auth routing", () => {
     ["//example.com", "/"],
     ["/\\example.com", "/"],
     ["dashboard", "/"],
+    // control characters: browsers strip tab/newline/CR before resolution,
+    // so these would otherwise smuggle a protocol-relative URL past the checks
+    ["/\n/evil.com", "/"],
+    ["/\t\\evil.com", "/"],
+    ["/a\rb", "/"],
   ])("sanitizes redirect destination %s", (destination, expected) => {
     expect(sanitizeRedirectUrl(destination)).toBe(expected);
   });

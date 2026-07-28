@@ -4,7 +4,7 @@ import { useSignUp } from "@clerk/nextjs";
 import type { SignUpField } from "@clerk/nextjs/types";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, Suspense, useState } from "react";
 
 import { FormMessage } from "@/components/form-message";
 import { Button } from "@/components/ui/button";
@@ -40,7 +40,7 @@ function formatRequirements(fields: SignUpField[]): string {
 }
 
 /** Provides the password and email-code Clerk Core 3 sign-up flow. */
-function Signup() {
+function SignupForm() {
   const { signUp, fetchStatus } = useSignUp();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -382,6 +382,18 @@ function Signup() {
         </Button>
       </form>
     </div>
+  );
+}
+
+/**
+ * Page shell: useSearchParams() forces a CSR bailout, so the form must sit
+ * under a Suspense boundary for the static prerender pass to succeed.
+ */
+function Signup() {
+  return (
+    <Suspense fallback={null}>
+      <SignupForm />
+    </Suspense>
   );
 }
 

@@ -4,7 +4,7 @@ import { useSignIn } from "@clerk/nextjs";
 import type { SignInStatus } from "@clerk/nextjs/types";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, Suspense, useState } from "react";
 
 import { FormMessage } from "@/components/form-message";
 import { Button } from "@/components/ui/button";
@@ -41,7 +41,7 @@ function getIncompleteSignInMessage(status: SignInStatus): string {
 }
 
 /** Provides password sign-in and Clerk Core 3 email-code password recovery. */
-function Login() {
+function LoginForm() {
   const { signIn, fetchStatus } = useSignIn();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -399,6 +399,18 @@ function Login() {
         </Button>
       </form>
     </div>
+  );
+}
+
+/**
+ * Page shell: useSearchParams() forces a CSR bailout, so the form must sit
+ * under a Suspense boundary for the static prerender pass to succeed.
+ */
+function Login() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }
 

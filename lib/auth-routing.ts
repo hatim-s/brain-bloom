@@ -5,13 +5,18 @@ const PUBLIC_AUTH_PATHS = ["/sign-in", "/sign-up"] as const;
  *
  * Exactly one leading slash is required. Protocol-relative URLs and paths that
  * begin with a backslash after the slash are rejected because browsers can
- * interpret both as cross-origin navigation.
+ * interpret both as cross-origin navigation. Control characters are rejected
+ * outright: browsers strip tab/newline/CR before URL resolution, so a value
+ * like "/\n/evil.com" would otherwise pass the prefix checks yet resolve
+ * protocol-relative.
  */
 function sanitizeRedirectUrl(value: string | null | undefined): string {
   if (
     !value?.startsWith("/") ||
     value.startsWith("//") ||
-    value.startsWith("/\\")
+    value.startsWith("/\\") ||
+    // eslint-disable-next-line no-control-regex -- rejecting control chars is the point
+    /[\u0000-\u001f\u007f]/.test(value)
   ) {
     return "/";
   }
