@@ -1,6 +1,8 @@
 "use server";
 
+import { generateText, Output } from "ai";
 import { fetchMutation } from "convex/nextjs";
+import { ConvexError } from "convex/values";
 
 import { ROOT_NODE_ID } from "@/components/flow/const";
 import { createEdge } from "@/components/flow/mindmap/createEdge";
@@ -15,11 +17,91 @@ import {
 import { NodeTypes } from "@/components/flow/types";
 import { api } from "@/convex/_generated/api";
 import type { NodeSnapshot } from "@/convex/lib/nodeOps";
+import {
+  generatedMindmapSchema,
+  type GeneratedTreeNode,
+} from "@/lib/ai/generatedTree";
+import { AIConfigurationError, getAnthropicModel } from "@/lib/anthropic";
 import { getConvexAuthToken } from "@/lib/convex-server";
 import { AIMindmap } from "@/types/AI";
 
-import { editAIMindmap } from "./ai-edit";
-import { generateAIMindmap } from "./ai-gen";
+import { editAIMindmap } from "./ai-node-edit";
+
+const MINDMAP_GENERATION_INSTRUCTIONS = `You generate a deep, useful mindmap
+from the user's prompt. Return a concise map name and a nested node tree. Aim
+for four to ten levels where the topic supports it, no more than three children
+per non-root node, and enough breadth to feel complete without filler.
+Descriptions and reference links are optional.`;
+
+/** Flattens a generated tree into the relationship contract used by the canvas. */
+function flattenGeneratedMindmap(
+  name: string,
+  nodes: GeneratedTreeNode[]
+): AIMindmap[] {
+  let sequence = 0;
+  const flattened: AIMindmap[] = [];
+
+  /** Assigns internal ids used only to express generated relationships. */
+  function visit(node: GeneratedTreeNode): string {
+    sequence += 1;
+    const nodeId = `generated-${sequence}`;
+    const childrenNodes = node.children.map(visit);
+
+    flattened.push({
+      nodeId,
+      title: node.title,
+      description: node.description ?? null,
+      link: node.link ?? null,
+      childrenNodes,
+    });
+
+    return nodeId;
+  }
+
+  const childrenNodes = nodes.map(visit);
+
+  return [
+    {
+      nodeId: "root",
+      title: name,
+      description: null,
+      link: null,
+      childrenNodes,
+    },
+    ...flattened,
+  ];
+}
+
+/** Generates and validates a strict nested mindmap with Anthropic OAuth. */
+async function generateAIMindmap(userPrompt: string) {
+  if (!userPrompt) {
+    throw new Error("User prompt is required");
+  }
+
+  try {
+    const result = await generateText({
+      model: getAnthropicModel(),
+      instructions: MINDMAP_GENERATION_INSTRUCTIONS,
+      prompt: userPrompt,
+      output: Output.object({
+        schema: generatedMindmapSchema,
+        name: "mindmap",
+        description: "A map name and nested tree of mindmap nodes.",
+      }),
+    });
+
+    return {
+      rawOutput: result.text,
+      mindmap: flattenGeneratedMindmap(result.output.name, result.output.nodes),
+    };
+  } catch (error) {
+    if (error instanceof AIConfigurationError) {
+      throw new ConvexError(error.message);
+    }
+
+    throw error;
+  }
+}
 
 function sanitizeParentId(parentId: string) {
   if (parentId === `l-${ROOT_NODE_ID}` || parentId === `r-${ROOT_NODE_ID}`) {

@@ -13,6 +13,7 @@ import { Button } from "./ui/button";
 import { Stack } from "./ui/stack";
 
 const GENERATION_ERROR_MESSAGES = new Set([
+  "AI is not configured",
   "Invalid generated root node",
   "Invalid op: too many nodes",
 ]);

@@ -94,6 +94,10 @@ describe("threads", () => {
       role: "assistant",
       operationId: operation.operationId,
     });
+    expect(messages[1].content).toEqual([
+      { type: "text", text: "Done" },
+      { type: "data-operation", data: { seq: operation.seq } },
+    ]);
   });
 
   it("requires authentication for thread reads and writes", async () => {
