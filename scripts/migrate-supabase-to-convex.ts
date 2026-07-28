@@ -39,12 +39,18 @@ type MigrationPayload = {
   nodes: NodeSnapshot[];
 };
 
-type ImportSummary = {
-  status: "created" | "updated" | "unchanged";
-  added: number;
-  changed: number;
-  removed: number;
-};
+type ImportSummary =
+  | {
+      status: "created" | "updated" | "unchanged";
+      added: number;
+      changed: number;
+      removed: number;
+    }
+  | {
+      status: "rejected";
+      error: string;
+      offendingNodeIds: string[];
+    };
 
 type CliOptions = {
   execute: boolean;
@@ -231,11 +237,19 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       nodes: transformed.nodes,
     });
 
-    // eslint-disable-next-line no-console -- CLI output is the migration report.
-    console.log(
-      `${options.execute ? "execute" : "dry-run"} ${publicId} (${row.name}): ` +
-        `${summary.status}; +${summary.added} ~${summary.changed} -${summary.removed}`
-    );
+    if (summary.status === "rejected") {
+      // eslint-disable-next-line no-console -- CLI output is the migration report.
+      console.error(
+        `${options.execute ? "execute" : "dry-run"} ${publicId} (${row.name}): ` +
+          `rejected; ${summary.error}; nodes=${summary.offendingNodeIds.join(",")}`
+      );
+    } else {
+      // eslint-disable-next-line no-console -- CLI output is the migration report.
+      console.log(
+        `${options.execute ? "execute" : "dry-run"} ${publicId} (${row.name}): ` +
+          `${summary.status}; +${summary.added} ~${summary.changed} -${summary.removed}`
+      );
+    }
   }
 }
 

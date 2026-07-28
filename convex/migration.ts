@@ -29,12 +29,20 @@ type ImportArgs = {
   nodes: NodeSnapshot[];
 };
 
-type ImportSummary = {
+type SuccessfulImportSummary = {
   status: "created" | "updated" | "unchanged";
   added: number;
   changed: number;
   removed: number;
 };
+
+type ImportSummary =
+  | SuccessfulImportSummary
+  | {
+      status: "rejected";
+      error: string;
+      offendingNodeIds: string[];
+    };
 
 type ReadCtx = Pick<QueryCtx | MutationCtx, "db">;
 
@@ -42,8 +50,40 @@ type ImportPlan = {
   mindmap: Doc<"mindmaps"> | null;
   existingNodes: Doc<"nodes">[];
   incomingNodes: Map<string, NodeSnapshot>;
-  summary: ImportSummary;
+  summary: SuccessfulImportSummary;
 };
+
+/** Validation failure that can be returned as one map's migration result. */
+class MigrationValidationError extends Error {
+  readonly offendingNodeIds: string[];
+
+  constructor(message: string, offendingNodeIds: string[] = []) {
+    super(message);
+    this.name = "MigrationValidationError";
+    this.offendingNodeIds = offendingNodeIds;
+  }
+}
+
+/** Rejects one migration payload without aborting the surrounding CLI run. */
+function invalidMigration(
+  message: string,
+  offendingNodeIds: string[] = []
+): never {
+  throw new MigrationValidationError(message, offendingNodeIds);
+}
+
+/** Converts a validation exception into the per-map report shape. */
+function getRejectedSummary(error: unknown): ImportSummary | null {
+  if (!(error instanceof MigrationValidationError)) {
+    return null;
+  }
+
+  return {
+    status: "rejected",
+    error: error.message,
+    offendingNodeIds: error.offendingNodeIds,
+  };
+}
 
 /** Projects a stored node into the transport-independent migration shape. */
 function toSnapshot(node: Doc<"nodes">): NodeSnapshot {
@@ -83,33 +123,45 @@ function validateIncomingNodes(nodes: NodeSnapshot[]): void {
   );
 
   if (roots.length !== 1 || roots[0].nodeId !== "root") {
-    throw new Error("Migration payload must contain exactly one root node");
+    invalidMigration(
+      "Migration payload must contain exactly one root node",
+      roots.map((root) => root.nodeId)
+    );
   }
 
   for (const node of nodes) {
     if (ids.has(node.nodeId)) {
-      throw new Error(`Duplicate migration node id: ${node.nodeId}`);
+      invalidMigration(`Duplicate migration node id: ${node.nodeId}`, [
+        node.nodeId,
+      ]);
     }
     ids.add(node.nodeId);
     nodesById.set(node.nodeId, node);
 
     if (!Number.isInteger(node.order) || node.order < 0) {
-      throw new Error(`Invalid migration order for ${node.nodeId}`);
+      invalidMigration(`Invalid migration order for ${node.nodeId}`, [
+        node.nodeId,
+      ]);
     }
 
     if (node.nodeId !== "root" && node.parentId === null) {
-      throw new Error(`Missing migration parent for ${node.nodeId}`);
+      invalidMigration(`Missing migration parent for ${node.nodeId}`, [
+        node.nodeId,
+      ]);
     }
 
     if (node.nodeId !== "root" && node.type === "root") {
-      throw new Error(`Unexpected migration root type for ${node.nodeId}`);
+      invalidMigration(`Unexpected migration root type for ${node.nodeId}`, [
+        node.nodeId,
+      ]);
     }
 
     if (node.parentId !== null) {
       const siblingOrder = `${node.parentId}\u0000${node.order}`;
       if (occupiedSiblingOrders.has(siblingOrder)) {
-        throw new Error(
-          `Duplicate migration sibling order for ${node.parentId}`
+        invalidMigration(
+          `Duplicate migration sibling order for ${node.parentId}`,
+          [node.nodeId]
         );
       }
       occupiedSiblingOrders.add(siblingOrder);
@@ -118,7 +170,9 @@ function validateIncomingNodes(nodes: NodeSnapshot[]): void {
 
   for (const node of nodes) {
     if (node.parentId !== null && !ids.has(node.parentId)) {
-      throw new Error(`Missing migration parent: ${node.parentId}`);
+      invalidMigration(`Missing migration parent: ${node.parentId}`, [
+        node.nodeId,
+      ]);
     }
 
     const ancestors = new Set<string>();
@@ -126,7 +180,10 @@ function validateIncomingNodes(nodes: NodeSnapshot[]): void {
 
     while (ancestor.parentId !== null) {
       if (ancestors.has(ancestor.nodeId)) {
-        throw new Error(`Migration payload contains a cycle at ${node.nodeId}`);
+        invalidMigration(
+          `Migration payload contains a cycle at ${node.nodeId}`,
+          [node.nodeId]
+        );
       }
       ancestors.add(ancestor.nodeId);
       ancestor = nodesById.get(ancestor.parentId);
@@ -135,6 +192,22 @@ function validateIncomingNodes(nodes: NodeSnapshot[]): void {
         break;
       }
     }
+  }
+
+  const wrongSideNodeIds = nodes
+    .filter((node) => {
+      if (node.nodeId === "root" || node.parentId === null) return false;
+
+      const parent = nodesById.get(node.parentId);
+      return parent?.type !== "root" && parent?.type !== node.type;
+    })
+    .map((node) => node.nodeId);
+
+  if (wrongSideNodeIds.length > 0) {
+    invalidMigration(
+      "Migration nodes must have a root or same-side parent",
+      wrongSideNodeIds
+    );
   }
 }
 
@@ -212,8 +285,14 @@ async function buildImportPlan(
 const previewMindmapImport = internalQuery({
   args: importArgs,
   handler: async (ctx, args): Promise<ImportSummary> => {
-    const plan = await buildImportPlan(ctx, args);
-    return plan.summary;
+    try {
+      const plan = await buildImportPlan(ctx, args);
+      return plan.summary;
+    } catch (error) {
+      const rejected = getRejectedSummary(error);
+      if (rejected !== null) return rejected;
+      throw error;
+    }
   },
 });
 
@@ -226,7 +305,15 @@ const previewMindmapImport = internalQuery({
 const importMindmap = internalMutation({
   args: importArgs,
   handler: async (ctx, args): Promise<ImportSummary> => {
-    const plan = await buildImportPlan(ctx, args);
+    let plan: ImportPlan;
+
+    try {
+      plan = await buildImportPlan(ctx, args);
+    } catch (error) {
+      const rejected = getRejectedSummary(error);
+      if (rejected !== null) return rejected;
+      throw error;
+    }
 
     if (plan.summary.status === "unchanged") {
       return plan.summary;

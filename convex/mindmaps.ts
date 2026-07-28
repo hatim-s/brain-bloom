@@ -5,11 +5,21 @@ import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { requireOwner, requireReadable, requireUser } from "./lib/access";
+import type { NodeOp, NodeSnapshot } from "./lib/nodeOps";
 import { applyOps } from "./ops";
 
 const PUBLIC_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const PUBLIC_ID_LENGTH = 10;
 const PURGE_BATCH_SIZE = 200;
+const nodeSnapshotValidator = v.object({
+  nodeId: v.string(),
+  parentId: v.union(v.string(), v.null()),
+  type: v.union(v.literal("root"), v.literal("left"), v.literal("right")),
+  title: v.string(),
+  description: v.optional(v.string()),
+  link: v.optional(v.string()),
+  order: v.number(),
+});
 
 /**
  * Generates an unbiased URL-safe identifier using rejection sampling.
@@ -79,44 +89,109 @@ function projectMindmap(
 }
 
 /**
+ * Inserts one private mindmap and its canonical root for an authenticated owner.
+ */
+async function insertOwnedMindmap(
+  ctx: MutationCtx,
+  ownerId: string,
+  name: string
+): Promise<{ mindmapId: Id<"mindmaps">; publicId: string }> {
+  let publicId = generatePublicId();
+
+  // Collisions are exceptionally unlikely, but the public route identifier
+  // must remain unique even when random generation repeats.
+  while (
+    (await ctx.db
+      .query("mindmaps")
+      .withIndex("by_publicId", (q) => q.eq("publicId", publicId))
+      .unique()) !== null
+  ) {
+    publicId = generatePublicId();
+  }
+
+  const updatedAt = Date.now();
+  const mindmapId = await ctx.db.insert("mindmaps", {
+    publicId,
+    name,
+    ownerId,
+    visibility: "private",
+    updatedAt,
+  });
+
+  await ctx.db.insert("nodes", {
+    mindmapId,
+    nodeId: "root",
+    parentId: null,
+    type: "root",
+    title: name,
+    order: 0,
+  });
+
+  return { mindmapId, publicId };
+}
+
+/**
  * Creates an owned private mindmap and seeds its root node.
  */
 export const create = mutation({
   args: { name: v.string() },
   handler: async (ctx, args) => {
     const ownerId = await requireUser(ctx);
-    let publicId = generatePublicId();
+    return insertOwnedMindmap(ctx, ownerId, args.name);
+  },
+});
 
-    // Collisions are exceptionally unlikely, but the public route identifier
-    // must remain unique even when random generation repeats.
-    while (
-      (await ctx.db
-        .query("mindmaps")
-        .withIndex("by_publicId", (q) => q.eq("publicId", publicId))
-        .unique()) !== null
+/**
+ * Atomically creates an AI mindmap, applies its nodes, and records one history row.
+ */
+export const createWithNodes = mutation({
+  args: {
+    name: v.string(),
+    nodes: v.array(nodeSnapshotValidator),
+  },
+  handler: async (ctx, args) => {
+    const ownerId = await requireUser(ctx);
+    const rootSnapshots = args.nodes.filter(
+      (node) => node.nodeId === "root" || node.type === "root"
+    );
+
+    if (
+      rootSnapshots.length > 1 ||
+      rootSnapshots.some(
+        (node) =>
+          node.nodeId !== "root" ||
+          node.type !== "root" ||
+          node.parentId !== null
+      )
     ) {
-      publicId = generatePublicId();
+      throw new ConvexError("Invalid generated root node");
     }
 
-    const updatedAt = Date.now();
-    const mindmapId = await ctx.db.insert("mindmaps", {
-      publicId,
-      name: args.name,
-      ownerId,
-      visibility: "private",
-      updatedAt,
+    const created = await insertOwnedMindmap(ctx, ownerId, args.name);
+    const ops: NodeOp[] = args.nodes.flatMap((node): NodeOp[] => {
+      if (node.nodeId !== "root") {
+        return [{ kind: "create", node: node as NodeSnapshot }];
+      }
+
+      const patch = {
+        title: node.title,
+        ...(node.description === undefined
+          ? {}
+          : { description: node.description }),
+        ...(node.link === undefined ? {} : { link: node.link }),
+      };
+      return [{ kind: "update", nodeId: "root", patch }];
     });
 
-    await ctx.db.insert("nodes", {
-      mindmapId,
-      nodeId: "root",
-      parentId: null,
-      type: "root",
-      title: args.name,
-      order: 0,
+    await applyOps(ctx, {
+      mindmapId: created.mindmapId,
+      ops,
+      actor: ownerId,
+      description: "Generated mindmap",
+      source: "ai",
     });
 
-    return { mindmapId, publicId };
+    return created;
   },
 });
 

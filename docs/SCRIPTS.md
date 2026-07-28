@@ -15,6 +15,7 @@
 | `format` | Formats supported repository files with Prettier. | Use when applying repository-wide formatting. |
 | `format:check` | Checks Prettier formatting without changing files. | Use in verification and CI. |
 | `fix:all` | Applies ESLint fixes and then formats the repository with Prettier. | Use when both lint fixes and formatting are needed. |
+| `migrate:supabase` | Previews the Supabase-to-Convex mindmap migration without writing by default. Pass `--execute --owner <Clerk subject>` after `--` to perform the import for one owner. | Run `pnpm migrate:supabase` for a dry-run report. After human approval, run `pnpm migrate:supabase -- --execute --owner <Clerk subject>` to write to Convex. |
 
 Vercel does not invoke the `dev` or `build` package scripts. `vercel.json` pins
 `"devCommand": "next"` and `"buildCommand": "next build"`, so changes to those
@@ -31,3 +32,15 @@ separately.
 - `pnpm test:convex` — run only the `convex/**/*.test.ts` suites.
 
 `pnpm test` also includes the Convex Vitest suites.
+
+## Supabase migration
+
+`pnpm migrate:supabase` is always a dry run unless `--execute` is present. An
+executing run also requires an explicit Clerk subject:
+
+```sh
+pnpm migrate:supabase -- --execute --owner user_123
+```
+
+The command reports each mindmap independently. Validation rejections include
+the offending node IDs and do not prevent later maps from being reported.

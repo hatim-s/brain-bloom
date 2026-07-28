@@ -75,7 +75,7 @@ function getCurrentBranch(
  * The pending state is the one place in the product that spends the bloom
  * accent on chrome, because here the chrome *is* the AI activity.
  */
-export default function NodeAiEdit() {
+function NodeAiEdit() {
   const aiEditNode = useMindmapFlow((state) => state.aiEditNode);
   const nodesMap = useMindmapFlow((state) => state.nodesMap);
   const prefersReducedMotion = useReducedMotion();
@@ -125,7 +125,8 @@ export default function NodeAiEdit() {
           node.type as NodeTypes.LEFT | NodeTypes.RIGHT,
           edgesMap[node.id],
           node.id,
-          node.data
+          node.data,
+          { source: "ai" }
         );
       });
       setAiEditNode(null);
@@ -197,3 +198,5 @@ export default function NodeAiEdit() {
     </Box>
   );
 }
+
+export { NodeAiEdit };

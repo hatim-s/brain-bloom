@@ -36,10 +36,11 @@ describe("SaveMindmap", () => {
     renderStatusPill();
 
     const status = screen.getByRole("status");
+    const pill = status.firstElementChild;
 
     expect(status.textContent).toBe("Saved");
     expect(status.dataset.syncState).toBe("idle");
-    expect(status.className).toContain("pointer-events-none");
+    expect(pill?.className).toContain("pointer-events-none");
   });
 
   it("reports queued and in-flight writes with one 'Saving…' label", () => {
@@ -58,30 +59,56 @@ describe("SaveMindmap", () => {
     expect(screen.getByRole("status").dataset.syncState).toBe("saving");
   });
 
-  it("announces the failure and its reason when a write fails", () => {
+  it("announces a transient failure with an immediate retry button", async () => {
+    const user = userEvent.setup();
     renderStatusPill();
 
     act(() => store.getState().actions.markSyncState("error", "Network down"));
 
     const status = screen.getByRole("status");
+    const retryButton = screen.getByRole("button", {
+      name: "Not saved — retrying. Click to retry now.",
+    });
 
     expect(status.dataset.syncState).toBe("error");
-    expect(status.textContent).toBe("Not saved. Network down");
-    // The error state is the only one that accepts pointers, because it is the
-    // only one with a tooltip to reveal.
-    expect(status.className).not.toContain("pointer-events-none");
+    expect(status.textContent).toBe(
+      "Not saved — retrying. Click to retry now."
+    );
+    expect(retryButton.className).not.toContain("pointer-events-none");
+
+    await user.click(retryButton);
+    expect(store.getState().syncRetryNonce).toBe(1);
   });
 
-  it("reveals the failure detail in a tooltip on hover", async () => {
+  it("reveals the failure detail in a tooltip on keyboard focus", async () => {
     const user = userEvent.setup();
     renderStatusPill();
 
     act(() => store.getState().actions.markSyncState("error", "Network down"));
-    await user.hover(screen.getByRole("status"));
+    await user.tab();
 
     const tooltip = await screen.findByRole("tooltip");
 
     expect(tooltip.textContent).toContain("Network down");
+  });
+
+  it("warns that rejected edits live only in the current screen", () => {
+    renderStatusPill();
+
+    act(() =>
+      store
+        .getState()
+        .actions.markSyncRejected("Invalid op: parent is on another side")
+    );
+
+    expect(screen.getByRole("status").textContent).toBe(
+      "Some changes couldn't be saved and live only on this screen. Reload to resync."
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Some changes couldn't be saved and live only on this screen. Reload to resync.",
+      })
+    ).toBeDefined();
   });
 
   it("returns to 'Saved' once the retry succeeds", () => {

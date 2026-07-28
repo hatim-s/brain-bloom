@@ -49,6 +49,95 @@ describe("mindmaps", () => {
     });
   });
 
+  it("atomically creates generated nodes with one AI operation", async () => {
+    const { t, asAlice } = createHarness();
+    const created = await asAlice.mutation(api.mindmaps.createWithNodes, {
+      name: "Generated plan",
+      nodes: [
+        {
+          nodeId: "root",
+          parentId: null,
+          type: "root",
+          title: "Generated plan",
+          description: "A generated root",
+          order: 0,
+        },
+        {
+          nodeId: "left-1",
+          parentId: "root",
+          type: "left",
+          title: "First idea",
+          order: 0,
+        },
+      ],
+    });
+    const result = await asAlice.query(api.mindmaps.get, {
+      mindmapId: created.mindmapId,
+    });
+    const operations = await t.run((ctx) =>
+      ctx.db
+        .query("operations")
+        .withIndex("by_mindmap_seq", (query) =>
+          query.eq("mindmapId", created.mindmapId)
+        )
+        .collect()
+    );
+
+    expect(result.nodes).toHaveLength(2);
+    expect(result.nodes.find((node) => node.nodeId === "root")).toMatchObject({
+      title: "Generated plan",
+      description: "A generated root",
+    });
+    expect(result.nodes.find((node) => node.nodeId === "left-1")).toMatchObject(
+      {
+        parentId: "root",
+        type: "left",
+        title: "First idea",
+      }
+    );
+    expect(operations).toHaveLength(1);
+    expect(operations[0]).toMatchObject({
+      description: "Generated mindmap",
+      source: "ai",
+      actor: "alice",
+      seq: 1,
+    });
+  });
+
+  it("rolls back the mindmap when generated nodes are rejected", async () => {
+    const { t, asAlice } = createHarness();
+
+    await expect(
+      asAlice.mutation(api.mindmaps.createWithNodes, {
+        name: "Invalid generated plan",
+        nodes: [
+          {
+            nodeId: "left-1",
+            parentId: "root",
+            type: "left",
+            title: "Left parent",
+            order: 0,
+          },
+          {
+            nodeId: "right-1",
+            parentId: "left-1",
+            type: "right",
+            title: "Wrong-side child",
+            order: 0,
+          },
+        ],
+      })
+    ).rejects.toThrow("parent is on another side");
+
+    const rows = await t.run(async (ctx) => ({
+      mindmaps: await ctx.db.query("mindmaps").collect(),
+      nodes: await ctx.db.query("nodes").collect(),
+      operations: await ctx.db.query("operations").collect(),
+    }));
+
+    expect(rows).toEqual({ mindmaps: [], nodes: [], operations: [] });
+  });
+
   it("gets a mindmap by its public id", async () => {
     const { asAlice } = createHarness();
     const created = await asAlice.mutation(api.mindmaps.create, {

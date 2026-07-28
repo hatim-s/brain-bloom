@@ -4,6 +4,7 @@ import { appendPendingOp, describePendingOps, type NodeOp } from "./pendingOps";
 
 const createOp: NodeOp = {
   kind: "create",
+  source: "user",
   node: {
     nodeId: "left-1",
     parentId: "root",
@@ -19,6 +20,7 @@ describe("appendPendingOp", () => {
     const queue: NodeOp[] = [createOp];
     const result = appendPendingOp(queue, {
       kind: "update",
+      source: "user",
       nodeId: "right-1",
       patch: { title: "Other" },
     });
@@ -32,12 +34,14 @@ describe("appendPendingOp", () => {
       [
         {
           kind: "update",
+          source: "user",
           nodeId: "left-1",
           patch: { title: "First", description: "Detail" },
         },
       ],
       {
         kind: "update",
+        source: "user",
         nodeId: "left-1",
         patch: { title: "Final", link: null },
       }
@@ -46,6 +50,7 @@ describe("appendPendingOp", () => {
     expect(result).toEqual([
       {
         kind: "update",
+        source: "user",
         nodeId: "left-1",
         patch: { title: "Final", description: "Detail", link: null },
       },
@@ -55,6 +60,7 @@ describe("appendPendingOp", () => {
   it("folds an update and null removal into the preceding create", () => {
     const result = appendPendingOp([createOp], {
       kind: "update",
+      source: "user",
       nodeId: "left-1",
       patch: { title: "Final", description: null, link: "https://example.com" },
     });
@@ -62,6 +68,7 @@ describe("appendPendingOp", () => {
     expect(result).toEqual([
       {
         kind: "create",
+        source: "user",
         node: {
           nodeId: "left-1",
           parentId: "root",
@@ -73,16 +80,50 @@ describe("appendPendingOp", () => {
       },
     ]);
   });
+
+  it("does not coalesce across a flushed watermark or source boundary", () => {
+    const protectedResult = appendPendingOp(
+      [
+        {
+          kind: "update",
+          source: "user",
+          nodeId: "left-1",
+          patch: { title: "In flight" },
+        },
+      ],
+      {
+        kind: "update",
+        source: "user",
+        nodeId: "left-1",
+        patch: { title: "New edit" },
+      },
+      1
+    );
+    const mixedSourceResult = appendPendingOp(protectedResult, {
+      kind: "update",
+      source: "ai",
+      nodeId: "left-1",
+      patch: { description: "Generated" },
+    });
+
+    expect(protectedResult).toHaveLength(2);
+    expect(mixedSourceResult).toHaveLength(3);
+  });
 });
 
 describe("describePendingOps", () => {
   it("summarizes each operation kind with correct pluralization", () => {
     expect(describePendingOps([createOp])).toBe("Added 1 node");
-    expect(describePendingOps([createOp, createOp])).toBe("Added 2 nodes");
+    expect(describePendingOps([createOp, createOp])).toBe("Added 1 node");
     expect(
       describePendingOps([
         createOp,
-        { kind: "update", nodeId: "left-2", patch: { title: "Edited" } },
+        {
+          kind: "update",
+          source: "user",
+          nodeId: "left-2",
+          patch: { title: "Edited" },
+        },
       ])
     ).toBe("Added 1 node, Edited 1 node");
   });

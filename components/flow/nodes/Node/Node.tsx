@@ -14,7 +14,7 @@ import { Typography } from "@/components/ui/typography";
 import { cn } from "@/lib/utils";
 
 import { useMindmapFlow } from "../../providers/MindmapFlowProvider";
-import NodeAiEdit from "./NodeAiEdit";
+import { NodeAiEdit } from "./NodeAiEdit";
 import NodeDataInput from "./NodeDataInput";
 
 /**

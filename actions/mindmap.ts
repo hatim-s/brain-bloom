@@ -12,9 +12,9 @@ import {
   PartialBaseFlowEdge as FlowEdgeSnapshot,
   PartialBaseFlowNode as FlowNodeSnapshot,
 } from "@/components/flow/mindmap/mindmapNodesToFlowNodes";
-import { NodeOp } from "@/components/flow/mindmap/pendingOps";
 import { NodeTypes } from "@/components/flow/types";
 import { api } from "@/convex/_generated/api";
+import type { NodeSnapshot } from "@/convex/lib/nodeOps";
 import { getConvexAuthToken } from "@/lib/convex-server";
 import { AIMindmap } from "@/types/AI";
 
@@ -72,26 +72,27 @@ function dfsHelper(
   });
 }
 
-/** Converts generated flow records into the operation wire format. */
-function createGeneratedNodeOps(
+/** Converts generated flow records into complete persisted node snapshots. */
+function createGeneratedNodeSnapshots(
   nodes: FlowNodeSnapshot[],
   edges: FlowEdgeSnapshot[]
-): NodeOp[] {
+): NodeSnapshot[] {
   const siblingCounts = new Map<string, number>();
-  const ops: NodeOp[] = [];
+  const snapshots: NodeSnapshot[] = [];
 
   for (const node of nodes) {
     if (node.id === ROOT_NODE_ID) {
-      const patch = {
+      snapshots.push({
+        nodeId: ROOT_NODE_ID,
+        parentId: null,
+        type: "root",
+        title: node.data.title,
         ...(node.data.description === undefined
           ? {}
           : { description: node.data.description }),
         ...(node.data.link === undefined ? {} : { link: node.data.link }),
-      };
-
-      if (Object.keys(patch).length > 0) {
-        ops.push({ kind: "update", nodeId: ROOT_NODE_ID, patch });
-      }
+        order: 0,
+      });
       continue;
     }
 
@@ -102,52 +103,45 @@ function createGeneratedNodeOps(
 
     const order = siblingCounts.get(parentId) ?? 0;
     siblingCounts.set(parentId, order + 1);
-    ops.push({
-      kind: "create",
-      node: {
-        nodeId: node.id,
-        parentId,
-        type: node.type,
-        title: node.data.title,
-        ...(node.data.description === undefined
-          ? {}
-          : { description: node.data.description }),
-        ...(node.data.link === undefined ? {} : { link: node.data.link }),
-        order,
-      },
+    snapshots.push({
+      nodeId: node.id,
+      parentId,
+      type: node.type,
+      title: node.data.title,
+      ...(node.data.description === undefined
+        ? {}
+        : { description: node.data.description }),
+      ...(node.data.link === undefined ? {} : { link: node.data.link }),
+      order,
     });
   }
 
-  return ops;
+  return snapshots;
 }
 
-/** Creates the Convex mindmap and applies its generated node batch. */
+/** Persists a generated mindmap and every node in one Convex transaction. */
 async function persistGeneratedMindmap(
   name: string,
   nodes: FlowNodeSnapshot[],
   edges: FlowEdgeSnapshot[]
 ) {
   const token = await getConvexAuthToken();
-  const created = await fetchMutation(api.mindmaps.create, { name }, { token });
-  const ops = createGeneratedNodeOps(nodes, edges);
-
-  if (ops.length > 0) {
-    await fetchMutation(
-      api.ops.apply,
-      {
-        mindmapId: created.mindmapId,
-        ops,
-        description: `Generated ${nodes.length} ${nodes.length === 1 ? "node" : "nodes"}`,
-        source: "user",
-      },
-      { token }
-    );
+  if (token === null) {
+    throw new Error("Convex auth is not configured — see docs/ENV.md");
   }
 
-  return created;
+  return fetchMutation(
+    api.mindmaps.createWithNodes,
+    {
+      name,
+      nodes: createGeneratedNodeSnapshots(nodes, edges),
+    },
+    { token }
+  );
 }
 
-export async function createMindmapFromAI(userPrompt: string) {
+/** Generates and atomically persists a new mindmap from one prompt. */
+async function createMindmapFromAI(userPrompt: string) {
   const { mindmap: aiMindmap, rawOutput } = await generateAIMindmap(userPrompt);
 
   const rootNode = aiMindmap.find((node) => node.nodeId === "root");
@@ -203,7 +197,8 @@ export async function createMindmapFromAI(userPrompt: string) {
   };
 }
 
-export async function editMindmapWithAI(
+/** Generates a local branch edit whose operations are saved by canvas sync. */
+async function editMindmapWithAI(
   userPrompt: string,
   currentBranch: AIMindmap[],
   activeNodeId: string
@@ -253,3 +248,5 @@ export async function editMindmapWithAI(
     rawOutput,
   };
 }
+
+export { createMindmapFromAI, editMindmapWithAI };

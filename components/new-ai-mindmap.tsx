@@ -11,20 +11,33 @@ import { PromptInput } from "./prompt-input";
 import { Button } from "./ui/button";
 import { Stack } from "./ui/stack";
 
-export function AIMindmapInput() {
+/** Converts a generation failure into concise, user-visible copy. */
+function getGenerationErrorMessage(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : "Sprig couldn't grow this map. Please try again.";
+}
+
+/** Prompt form that creates and navigates to one atomic AI mindmap. */
+function AIMindmapInput() {
   const [userPrompt, setUserPrompt] = useState("");
+  const [generationError, setGenerationError] = useState<string | null>(null);
   const router = useRouter();
 
   const [isPending, startTransition] = useTransition();
 
   const handleSubmit = useEventCallback(async () => {
     startTransition(async () => {
-      const aiMindmap = await createMindmapFromAI(userPrompt);
-      // console.log({ userPrompt, aiMindmap });
+      setGenerationError(null);
 
-      const publicId = aiMindmap.data?.publicId;
-      if (publicId) {
+      try {
+        const aiMindmap = await createMindmapFromAI(userPrompt);
+        const publicId = aiMindmap.data.publicId;
         router.push(`/${publicId}`);
+        // Refresh the shared server layout so listMine includes the new map.
+        router.refresh();
+      } catch (error) {
+        setGenerationError(getGenerationErrorMessage(error));
       }
     });
   });
@@ -54,6 +67,13 @@ export function AIMindmapInput() {
           "Grow the map"
         )}
       </Button>
+      {generationError ? (
+        <p className="text-sm font-medium text-destructive" role="alert">
+          {generationError}
+        </p>
+      ) : null}
     </Stack>
   );
 }
+
+export { AIMindmapInput };

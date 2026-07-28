@@ -7,18 +7,37 @@ type PendingNodePatch = Partial<
   link?: string | null;
 };
 
-type NodeOp =
-  | { kind: "create"; node: NodeSnapshot }
-  | { kind: "update"; nodeId: string; patch: PendingNodePatch }
-  | { kind: "delete"; nodeId: string };
+type PendingOpSource = "user" | "ai";
 
 /**
- * Appends one wire operation while collapsing adjacent edits to one node.
+ * One queued node operation with the actor that originated the local change.
  */
-function appendPendingOp(queue: NodeOp[], op: NodeOp): NodeOp[] {
-  const previous = queue.at(-1);
+type NodeOp = (
+  | { kind: "create"; node: NodeSnapshot }
+  | { kind: "update"; nodeId: string; patch: PendingNodePatch }
+  | { kind: "delete"; nodeId: string }
+) & { source: PendingOpSource };
 
-  if (op.kind !== "update" || previous === undefined) {
+/**
+ * Appends one operation while collapsing adjacent, unflushed edits to one node.
+ *
+ * The watermark protects the prefix already captured by an in-flight flush.
+ * Appending across it could mutate data that commit-by-count later removes.
+ */
+function appendPendingOp(
+  queue: NodeOp[],
+  op: NodeOp,
+  flushedWatermark = 0
+): NodeOp[] {
+  const previous = queue.at(-1);
+  const previousIsProtected = queue.length <= flushedWatermark;
+
+  if (
+    op.kind !== "update" ||
+    previous === undefined ||
+    previousIsProtected ||
+    previous.source !== op.source
+  ) {
     return [...queue, op];
   }
 
@@ -44,7 +63,10 @@ function appendPendingOp(queue: NodeOp[], op: NodeOp): NodeOp[] {
       }
     }
 
-    return [...queue.slice(0, -1), { kind: "create", node: nextNode }];
+    return [
+      ...queue.slice(0, -1),
+      { kind: "create", node: nextNode, source: op.source },
+    ];
   }
 
   return [...queue, op];
@@ -52,10 +74,23 @@ function appendPendingOp(queue: NodeOp[], op: NodeOp): NodeOp[] {
 
 /** Produces the compact history description sent with one operation batch. */
 function describePendingOps(ops: NodeOp[]): string {
-  const counts = ops.reduce(
-    (summary, op) => ({ ...summary, [op.kind]: summary[op.kind] + 1 }),
-    { create: 0, update: 0, delete: 0 }
-  );
+  const nodeIdsByKind = {
+    create: new Set<string>(),
+    update: new Set<string>(),
+    delete: new Set<string>(),
+  };
+
+  for (const op of ops) {
+    nodeIdsByKind[op.kind].add(
+      op.kind === "create" ? op.node.nodeId : op.nodeId
+    );
+  }
+
+  const counts = {
+    create: nodeIdsByKind.create.size,
+    update: nodeIdsByKind.update.size,
+    delete: nodeIdsByKind.delete.size,
+  };
   const descriptions = [
     counts.create > 0
       ? `Added ${counts.create} ${counts.create === 1 ? "node" : "nodes"}`
@@ -76,4 +111,5 @@ export {
   describePendingOps,
   type NodeOp,
   type PendingNodePatch,
+  type PendingOpSource,
 };

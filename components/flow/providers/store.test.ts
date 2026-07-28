@@ -62,6 +62,7 @@ describe("createMindmapStore", () => {
     expect(state.pendingOps).toEqual([
       {
         kind: "create",
+        source: "user",
         node: {
           nodeId: "r-grandchild",
           parentId: "r-child",
@@ -93,6 +94,7 @@ describe("createMindmapStore", () => {
     expect(state.pendingOps).toEqual([
       {
         kind: "update",
+        source: "user",
         nodeId: "r-child",
         patch: {
           title: "Updated right child",
@@ -110,7 +112,8 @@ describe("createMindmapStore", () => {
       description: "Existing",
       link: "https://example.com",
     });
-    store.getState().actions.drainPendingOps();
+    const firstBatch = store.getState().actions.peekPendingOps();
+    store.getState().actions.commitFlushedOps(firstBatch!.count);
 
     store.getState().actions.onUpdateNode("r-child", {
       title: "Right child",
@@ -119,37 +122,48 @@ describe("createMindmapStore", () => {
     expect(store.getState().pendingOps).toEqual([
       {
         kind: "update",
+        source: "user",
         nodeId: "r-child",
         patch: { description: null, link: null },
       },
     ]);
   });
 
-  it("drains atomically and prepends a failed batch ahead of newer edits", () => {
+  it("peeks a protected prefix and commits exactly its successful count", () => {
     const store = createFixtureStore();
     store.getState().actions.onUpdateNode("l-child", { title: "First edit" });
-    const drained = store.getState().actions.drainPendingOps();
+    const peeked = store.getState().actions.peekPendingOps();
 
-    expect(drained).toEqual({
+    expect(peeked).toEqual({
       ops: [
         {
           kind: "update",
+          source: "user",
           nodeId: "l-child",
           patch: { title: "First edit" },
         },
       ],
-      description: "Edited 1 node",
+      count: 1,
     });
-    expect(store.getState().pendingOps).toEqual([]);
+    expect(store.getState().pendingOps).toEqual(peeked!.ops);
+    expect(store.getState().flushedWatermark).toBe(1);
 
-    store.getState().actions.onUpdateNode("r-child", { title: "Newer edit" });
-    store.getState().actions.restorePendingOps(drained!.ops);
+    store.getState().actions.onUpdateNode("l-child", { title: "Newer edit" });
 
-    expect(store.getState().pendingOps.map((op) => op.kind)).toEqual([
-      "update",
-      "update",
+    expect(store.getState().pendingOps).toHaveLength(2);
+    expect(store.getState().pendingOps[0]).toEqual(peeked!.ops[0]);
+
+    store.getState().actions.commitFlushedOps(peeked!.count);
+
+    expect(store.getState().pendingOps).toEqual([
+      {
+        kind: "update",
+        source: "user",
+        nodeId: "l-child",
+        patch: { title: "Newer edit" },
+      },
     ]);
-    expect(store.getState().pendingOps[0]).toEqual(drained!.ops[0]);
+    expect(store.getState().flushedWatermark).toBe(0);
   });
 
   it("resyncs the owning dagre node height when node data changes", () => {

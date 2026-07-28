@@ -1,27 +1,82 @@
 "use client";
 
 import { useMutation } from "convex/react";
+import { ConvexError } from "convex/values";
 import { useEffect } from "react";
+import type { StoreApi } from "zustand";
 
 import { api } from "@/convex/_generated/api";
 
+import { describePendingOps, type NodeOp } from "../mindmap/pendingOps";
 import { useMindmapStoreApi } from "../providers/MindmapFlowProvider";
+import type { MindmapStore } from "../providers/store";
 
 const DEBOUNCE_MS = 1_500;
 const MAX_WAIT_MS = 5_000;
-const RETRY_DELAYS_MS = [2_000, 4_000, 8_000] as const;
+const RETRY_DELAYS_MS = [2_000, 4_000, 8_000, 30_000] as const;
+
+/**
+ * Coordinates flush ownership across StrictMode effect instances per store.
+ */
+const flushMutex = new WeakMap<StoreApi<MindmapStore>, boolean>();
+
+type PendingRun = {
+  count: number;
+  ops: NodeOp[];
+  source: NodeOp["source"];
+};
 
 /** Converts an unknown mutation failure into the store's display-safe text. */
 function getSyncErrorMessage(error: unknown): string {
+  if (error instanceof ConvexError) {
+    return typeof error.data === "string"
+      ? error.data
+      : "The server rejected these changes";
+  }
+
   return error instanceof Error ? error.message : "Failed to save mindmap";
 }
 
+/** Splits a queue snapshot into ordered runs with one provenance value each. */
+function groupPendingOpsBySource(ops: NodeOp[]): PendingRun[] {
+  const runs: PendingRun[] = [];
+
+  for (const op of ops) {
+    const currentRun = runs.at(-1);
+
+    if (currentRun?.source === op.source) {
+      currentRun.ops.push(op);
+      currentRun.count += 1;
+    } else {
+      runs.push({ count: 1, ops: [op], source: op.source });
+    }
+  }
+
+  return runs;
+}
+
+/** Removes client-only provenance before sending a run to Convex. */
+function toWireOps(ops: NodeOp[]): Array<Omit<NodeOp, "source">> {
+  return ops.map((op) => {
+    if (op.kind === "create") {
+      return { kind: op.kind, node: op.node };
+    }
+
+    if (op.kind === "update") {
+      return { kind: op.kind, nodeId: op.nodeId, patch: op.patch };
+    }
+
+    return { kind: op.kind, nodeId: op.nodeId };
+  });
+}
+
 /**
- * Flushes recorded canvas operations to Convex with bounded retry backoff.
+ * Peeks and sends recorded canvas operations without removing unsaved data.
  *
- * Browser lifecycle events can only start the async mutation; Convex does not
- * expose a beacon-compatible transport. The persistent dirty/error state is
- * therefore the source of truth when a page closes before the request settles.
+ * Browser teardown has no beacon-compatible Convex transport. A request that
+ * is killed after pagehide can therefore remain unsaved, but its queue is
+ * retained for bfcache recovery. A true tab close still has the unavoidable
+ * residual risk that both the request and in-memory queue disappear.
  */
 function useMindmapSync(): void {
   const store = useMindmapStoreApi();
@@ -32,8 +87,6 @@ function useMindmapSync(): void {
     let maxWaitTimer: ReturnType<typeof setTimeout> | undefined;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let consecutiveFailures = 0;
-    let isFlushing = false;
-    let isRestoring = false;
     let isDisposed = false;
 
     /** Clears trailing and max-wait timers for the current mutation burst. */
@@ -44,76 +97,159 @@ function useMindmapSync(): void {
       maxWaitTimer = undefined;
     };
 
-    /** Drains and sends the current queue, restoring it on mutation failure. */
-    const flush = async (): Promise<void> => {
-      if (isFlushing || isDisposed) return;
+    /** Schedules trailing and maximum-wait flushes for pending user edits. */
+    function schedulePending(): void {
+      if (isDisposed) return;
 
-      clearBurstTimers();
-      const batch = store.getState().actions.drainPendingOps();
+      if (debounceTimer !== undefined) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        // Null before flushing so an in-flight early return can re-arm it.
+        debounceTimer = undefined;
+        void flush();
+      }, DEBOUNCE_MS);
+      maxWaitTimer ??= setTimeout(() => {
+        // Null before flushing so an in-flight early return can re-arm it.
+        maxWaitTimer = undefined;
+        void flush();
+      }, MAX_WAIT_MS);
+    }
 
-      if (batch === null) return;
+    /** Schedules the next transient-failure retry with a permanent 30s cap. */
+    function scheduleRetry(): void {
+      const delayIndex = Math.min(
+        consecutiveFailures - 1,
+        RETRY_DELAYS_MS.length - 1
+      );
+      retryTimer = setTimeout(() => {
+        retryTimer = undefined;
+        void flush();
+      }, RETRY_DELAYS_MS[delayIndex]);
+    }
 
-      isFlushing = true;
-      store.getState().actions.markSyncState("saving");
-
-      try {
+    /** Sends one immutable snapshot without committing any store state. */
+    const sendBestEffortSnapshot = async (ops: NodeOp[]): Promise<void> => {
+      for (const run of groupPendingOpsBySource(ops)) {
         await applyOps({
           mindmapId: store.getState().mindmapDB._id,
-          ops: batch.ops,
-          description: batch.description,
-          source: "user",
+          ops: toWireOps(run.ops),
+          description: describePendingOps(run.ops),
+          source: run.source,
         });
-        consecutiveFailures = 0;
-
-        if (store.getState().pendingOps.length === 0) {
-          store.getState().actions.markSyncState("idle");
-        } else {
-          store.getState().actions.markSyncState("dirty");
-          schedulePending();
-        }
-      } catch (error) {
-        // Edits made during the failed request may already have timers. Keep
-        // the restored combined queue behind the explicit retry backoff.
-        clearBurstTimers();
-        isRestoring = true;
-        store.getState().actions.restorePendingOps(batch.ops);
-        isRestoring = false;
-        consecutiveFailures += 1;
-        store
-          .getState()
-          .actions.markSyncState("error", getSyncErrorMessage(error));
-
-        const retryDelay = RETRY_DELAYS_MS[consecutiveFailures - 1];
-        if (retryDelay !== undefined) {
-          retryTimer = setTimeout(() => void flush(), retryDelay);
-        }
-      } finally {
-        isFlushing = false;
       }
     };
 
-    /** Schedules trailing and maximum-wait flushes for pending user edits. */
-    function schedulePending(): void {
-      if (debounceTimer !== undefined) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => void flush(), DEBOUNCE_MS);
-      maxWaitTimer ??= setTimeout(() => void flush(), MAX_WAIT_MS);
+    /** Peeks and sends the current queue, committing only successful prefixes. */
+    async function flush(): Promise<void> {
+      if (isDisposed) return;
+
+      if (flushMutex.get(store)) {
+        // Both handles were nulled by their callbacks before reaching here.
+        // Re-arming prevents a long in-flight request from parking newer edits.
+        if (store.getState().pendingOps.length > 0) {
+          schedulePending();
+        }
+        return;
+      }
+
+      clearBurstTimers();
+      if (retryTimer !== undefined) clearTimeout(retryTimer);
+      retryTimer = undefined;
+
+      const batch = store.getState().actions.peekPendingOps();
+      if (batch === null) return;
+
+      flushMutex.set(store, true);
+      if (store.getState().syncState !== "error") {
+        store.getState().actions.markSyncState("saving");
+      }
+
+      try {
+        for (const run of groupPendingOpsBySource(batch.ops)) {
+          try {
+            await applyOps({
+              mindmapId: store.getState().mindmapDB._id,
+              ops: toWireOps(run.ops),
+              description: describePendingOps(run.ops),
+              source: run.source,
+            });
+          } catch (error) {
+            if (isDisposed) return;
+
+            if (error instanceof ConvexError) {
+              // This exact run can never pass the same deterministic server
+              // validation, so discard only its protected prefix.
+              store.getState().actions.commitFlushedOps(run.count);
+              store
+                .getState()
+                .actions.markSyncRejected(getSyncErrorMessage(error));
+              consecutiveFailures = 0;
+              continue;
+            }
+
+            consecutiveFailures += 1;
+            clearBurstTimers();
+            // No request can still commit this prefix, so later local edits may
+            // safely coalesce again while the retained batch waits to retry.
+            store.getState().actions.releaseFlushedOps();
+            if (!store.getState().desyncedSinceRejection) {
+              store
+                .getState()
+                .actions.markSyncState("error", getSyncErrorMessage(error));
+            }
+            scheduleRetry();
+            return;
+          }
+
+          if (isDisposed) return;
+
+          store.getState().actions.commitFlushedOps(run.count);
+          consecutiveFailures = 0;
+        }
+
+        if (isDisposed) return;
+
+        const state = store.getState();
+        if (state.desyncedSinceRejection) {
+          // A successful independent edit does not heal a rejected local edit.
+          state.actions.markSyncState(
+            "error",
+            state.lastSyncError ?? "The server rejected some changes"
+          );
+        } else if (state.pendingOps.length === 0) {
+          state.actions.markSyncState("idle");
+        } else {
+          state.actions.markSyncState("dirty");
+          schedulePending();
+        }
+      } finally {
+        flushMutex.delete(store);
+      }
     }
 
     const unsubscribe = store.subscribe((state, previousState) => {
+      if (state.syncRetryNonce !== previousState.syncRetryNonce) {
+        if (retryTimer !== undefined) clearTimeout(retryTimer);
+        retryTimer = undefined;
+        void flush();
+        return;
+      }
+
       if (
         state.pendingOps === previousState.pendingOps ||
-        state.pendingOps.length === 0 ||
-        isRestoring
+        state.pendingOps.length === 0
       ) {
         return;
       }
 
-      // A fresh canvas mutation releases a queue held after three retries.
-      consecutiveFailures = 0;
-      if (retryTimer !== undefined) clearTimeout(retryTimer);
-      retryTimer = undefined;
-      state.actions.markSyncState("dirty");
-      schedulePending();
+      // Preserve visible errors during backoff and after a rejection. The next
+      // successful attempt, rather than a keystroke, may clear a transient one.
+      if (state.syncState !== "error") {
+        state.actions.markSyncState("dirty");
+      }
+
+      if (retryTimer === undefined) {
+        schedulePending();
+      }
     });
 
     /** Starts the only best-effort flush available during browser teardown. */
@@ -121,22 +257,49 @@ function useMindmapSync(): void {
       void flush();
     };
 
+    /** Restores a bfcache page from queue truth instead of stale "saving". */
+    const recoverFromBackForwardCache = (event: PageTransitionEvent) => {
+      if (!event.persisted || isDisposed) return;
+
+      const state = store.getState();
+      if (state.pendingOps.length > 0) {
+        state.actions.markSyncState("dirty");
+        schedulePending();
+      } else {
+        state.actions.markSyncState("idle");
+      }
+    };
+
     window.addEventListener("beforeunload", flushBeforeExit);
     window.addEventListener("pagehide", flushBeforeExit);
+    window.addEventListener("pageshow", recoverFromBackForwardCache);
 
     if (store.getState().pendingOps.length > 0) {
       schedulePending();
     }
 
     return () => {
+      // If no request owns the queue, capture one final immutable snapshot
+      // before disposal. It intentionally performs no later store commits.
+      const finalBatch = flushMutex.get(store)
+        ? null
+        : store.getState().actions.peekPendingOps();
+
       isDisposed = true;
       unsubscribe();
       clearBurstTimers();
       if (retryTimer !== undefined) clearTimeout(retryTimer);
       window.removeEventListener("beforeunload", flushBeforeExit);
       window.removeEventListener("pagehide", flushBeforeExit);
+      window.removeEventListener("pageshow", recoverFromBackForwardCache);
+
+      if (finalBatch !== null) {
+        void sendBestEffortSnapshot(finalBatch.ops).catch(() => {
+          // Teardown is best effort and no mounted surface remains to report it.
+        });
+      }
     };
   }, [applyOps, store]);
 }
 
-export { getSyncErrorMessage, useMindmapSync };
+export { getSyncErrorMessage, groupPendingOpsBySource, useMindmapSync };

@@ -1,19 +1,15 @@
 import { auth } from "@clerk/nextjs/server";
+import { cache } from "react";
 
-/** Returns the current Clerk session's Convex JWT template token. */
-async function getConvexAuthToken(): Promise<string> {
+/** Returns one request-cached Clerk Convex JWT, or null when unconfigured. */
+const getConvexAuthToken = cache(async (): Promise<string | null> => {
   const { getToken, userId } = await auth();
 
   if (!userId) {
     throw new Error("You must be signed in to access mindmaps.");
   }
 
-  const token = await getToken({ template: "convex" });
-  if (!token) {
-    throw new Error("The Clerk Convex token template is unavailable.");
-  }
-
-  return token;
-}
+  return getToken({ template: "convex" });
+});
 
 export { getConvexAuthToken };

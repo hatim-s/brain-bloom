@@ -106,6 +106,37 @@ describe("migration.importMindmap", () => {
     });
     expect(await readImportedNodes(t)).toEqual([baseNodes[0]]);
   });
+
+  it("reports every wrong-side node and leaves the map untouched", async () => {
+    const t = createHarness();
+    const summary = await t.mutation(importMindmap, {
+      ...baseArgs,
+      nodes: [
+        ...baseNodes,
+        {
+          nodeId: "right-under-left",
+          parentId: "left-1",
+          type: "right",
+          title: "Wrong side",
+          order: 0,
+        },
+        {
+          nodeId: "left-under-right",
+          parentId: "right-under-left",
+          type: "left",
+          title: "Also wrong",
+          order: 0,
+        },
+      ],
+    });
+
+    expect(summary).toEqual({
+      status: "rejected",
+      error: "Migration nodes must have a root or same-side parent",
+      offendingNodeIds: ["right-under-left", "left-under-right"],
+    });
+    expect(await readImportedNodes(t)).toEqual([]);
+  });
 });
 
 /** Reads imported nodes without Convex system fields for stable assertions. */

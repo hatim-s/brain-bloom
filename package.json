@@ -20,7 +20,8 @@
     "fix:all": "pnpm lint:fix && pnpm format",
     "convex:dev": "convex dev",
     "convex:codegen": "convex codegen",
-    "test:convex": "vitest run convex"
+    "test:convex": "vitest run convex",
+    "migrate:supabase": "node --experimental-strip-types scripts/migrate-supabase-to-convex.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.6.2",

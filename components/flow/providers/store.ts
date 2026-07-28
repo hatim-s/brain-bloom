@@ -23,11 +23,7 @@ import {
   transformFlowNodesAndEdgesToMindmapNodes,
 } from "../mindmap/flowNodeToMindmapNode";
 import { transformMindmapNodesToFlowNodesAndEdges } from "../mindmap/mindmapNodesToFlowNodes";
-import {
-  appendPendingOp,
-  describePendingOps,
-  PendingNodePatch,
-} from "../mindmap/pendingOps";
+import { appendPendingOp, PendingNodePatch } from "../mindmap/pendingOps";
 import { BaseFlowNode, FlowNode, MindmapNode, NodeTypes } from "../types";
 import { MindmapFlowContext } from "./types";
 
@@ -119,7 +115,8 @@ function createMindmapStore({
       type,
       parentNodeId,
       id,
-      data
+      data,
+      options
     ) => {
       const currentMindmapNodesMap = get().mindmapNodesMap;
 
@@ -224,24 +221,29 @@ function createMindmapStore({
         mindmapNodesMap: updatedMindmapNodesMap,
         nodesMap: deriveNodesMap(updatedNodes),
         leveledNodes: deriveLeveledNodes(updatedMindmapNodesMap),
-        pendingOps: appendPendingOp(state.pendingOps, {
-          kind: "create",
-          node: {
-            nodeId: newNode.id,
-            parentId: parentNodeId,
-            type: newNode.type,
-            title: newNode.data.title,
-            ...(newNode.data.description === undefined
-              ? {}
-              : { description: newNode.data.description }),
-            ...(newNode.data.link === undefined
-              ? {}
-              : { link: newNode.data.link }),
-            order: siblingOrder,
+        pendingOps: appendPendingOp(
+          state.pendingOps,
+          {
+            kind: "create",
+            source: options?.source ?? "user",
+            node: {
+              nodeId: newNode.id,
+              parentId: parentNodeId,
+              type: newNode.type,
+              title: newNode.data.title,
+              ...(newNode.data.description === undefined
+                ? {}
+                : { description: newNode.data.description }),
+              ...(newNode.data.link === undefined
+                ? {}
+                : { link: newNode.data.link }),
+              order: siblingOrder,
+            },
           },
-        }),
-        syncState: "dirty",
-        lastSyncError: null,
+          state.flushedWatermark
+        ),
+        syncState: state.syncState === "error" ? "error" : "dirty",
+        lastSyncError: state.syncState === "error" ? state.lastSyncError : null,
       }));
 
       return newNode.id;
@@ -250,7 +252,8 @@ function createMindmapStore({
     /** Replaces one node's data across the flow and mindmap representations. */
     const onUpdateNode: MindmapFlowContext["actions"]["onUpdateNode"] = (
       nodeId,
-      data
+      data,
+      options
     ) => {
       set((state) => {
         const currentNode = state.nodesMap[nodeId];
@@ -290,13 +293,22 @@ function createMindmapStore({
           leveledNodes: deriveLeveledNodes(updatedMindmapNodesMap),
           ...(hasChanges
             ? {
-                pendingOps: appendPendingOp(state.pendingOps, {
-                  kind: "update",
-                  nodeId,
-                  patch,
-                }),
-                syncState: "dirty" as const,
-                lastSyncError: null,
+                pendingOps: appendPendingOp(
+                  state.pendingOps,
+                  {
+                    kind: "update",
+                    source: options?.source ?? "user",
+                    nodeId,
+                    patch,
+                  },
+                  state.flushedWatermark
+                ),
+                syncState:
+                  state.syncState === "error"
+                    ? ("error" as const)
+                    : ("dirty" as const),
+                lastSyncError:
+                  state.syncState === "error" ? state.lastSyncError : null,
               }
             : {}),
         };
@@ -318,24 +330,54 @@ function createMindmapStore({
       setAiEditNode: (aiEditNode) => set({ aiEditNode }),
       mindmapDB,
       pendingOps: [],
+      flushedWatermark: 0,
       lastSyncError: null,
+      desyncedSinceRejection: false,
+      syncRetryNonce: 0,
       syncState: "idle",
       actions: {
         onNodesChange,
         onAddNode,
         onUpdateNode,
-        drainPendingOps: () => {
+        peekPendingOps: () => {
           const ops = get().pendingOps;
 
           if (ops.length === 0) {
             return null;
           }
 
-          set({ pendingOps: [] });
-          return { ops, description: describePendingOps(ops) };
+          // Protect exactly this prefix from coalescing until it is committed.
+          set({ flushedWatermark: ops.length });
+          return { ops: [...ops], count: ops.length };
         },
-        restorePendingOps: (ops) => {
-          set((state) => ({ pendingOps: [...ops, ...state.pendingOps] }));
+        commitFlushedOps: (count) => {
+          set((state) => {
+            if (
+              count < 0 ||
+              count > state.flushedWatermark ||
+              count > state.pendingOps.length
+            ) {
+              throw new Error("Cannot commit outside the flushed prefix");
+            }
+
+            return {
+              pendingOps: state.pendingOps.slice(count),
+              flushedWatermark: state.flushedWatermark - count,
+            };
+          });
+        },
+        releaseFlushedOps: () => {
+          set({ flushedWatermark: 0 });
+        },
+        retrySync: () => {
+          set((state) => ({ syncRetryNonce: state.syncRetryNonce + 1 }));
+        },
+        markSyncRejected: (error) => {
+          set({
+            desyncedSinceRejection: true,
+            syncState: "error",
+            lastSyncError: error,
+          });
         },
         markSyncState: (syncState, error) => {
           set({
