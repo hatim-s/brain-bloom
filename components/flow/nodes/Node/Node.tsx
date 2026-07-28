@@ -104,7 +104,8 @@ const BaseNode = (props: NodeProps & { direction: "left" | "right" }) => {
   const targetPosition =
     props.direction === "left" ? Position.Right : Position.Left;
 
-  const { selectedNode, aiEditNode: isAiEditing } = useMindmapFlow();
+  const selectedNode = useMindmapFlow((state) => state.selectedNode);
+  const isAiEditing = useMindmapFlow((state) => state.aiEditNode);
 
   return (
     <Popover open={selectedNode === props.id || isAiEditing === props.id}>

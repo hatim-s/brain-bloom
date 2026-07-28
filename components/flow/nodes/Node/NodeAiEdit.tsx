@@ -76,7 +76,8 @@ function getCurrentBranch(
  * accent on chrome, because here the chrome *is* the AI activity.
  */
 export default function NodeAiEdit() {
-  const { aiEditNode, nodesMap } = useMindmapFlow();
+  const aiEditNode = useMindmapFlow((state) => state.aiEditNode);
+  const nodesMap = useMindmapFlow((state) => state.nodesMap);
   const prefersReducedMotion = useReducedMotion();
 
   const [value, setValue] = useState("");
@@ -91,13 +92,11 @@ export default function NodeAiEdit() {
     }
   );
 
-  const {
-    mindmapNodesMap,
-    activeNode: activeNodeId,
-    setAiEditNode,
-    actions: { onAddNode },
-    edges,
-  } = useMindmapFlow();
+  const mindmapNodesMap = useMindmapFlow((state) => state.mindmapNodesMap);
+  const activeNodeId = useMindmapFlow((state) => state.activeNode);
+  const setAiEditNode = useMindmapFlow((state) => state.setAiEditNode);
+  const onAddNode = useMindmapFlow((state) => state.actions.onAddNode);
+  const edges = useMindmapFlow((state) => state.edges);
 
   const handleSubmit = useEventCallback(async () => {
     const currentBranch = getCurrentBranch(mindmapNodesMap, activeNodeId);

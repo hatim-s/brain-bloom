@@ -23,10 +23,8 @@ function NodeDataInputForm({
   const [description, setDescription] = useState(_description ?? "");
   const [link, setLink] = useState(_link ?? "");
 
-  const {
-    setSelectedNode,
-    actions: { onUpdateNode },
-  } = useMindmapFlow();
+  const setSelectedNode = useMindmapFlow((state) => state.setSelectedNode);
+  const onUpdateNode = useMindmapFlow((state) => state.actions.onUpdateNode);
 
   const handleSave = useCallback(() => {
     setSelectedNode(null);
@@ -125,7 +123,8 @@ function NodeDataInputForm({
 }
 
 export default function NodeDataInput() {
-  const { selectedNode, nodesMap } = useMindmapFlow();
+  const selectedNode = useMindmapFlow((state) => state.selectedNode);
+  const nodesMap = useMindmapFlow((state) => state.nodesMap);
 
   // selectedNode is not null
   const node = nodesMap[selectedNode!];

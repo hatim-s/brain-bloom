@@ -38,23 +38,20 @@ const nodeTypes: XYNodeTypes = {
 };
 
 export function MindmapFlow() {
-  const {
-    nodes,
-    edges,
-    mindmapNodesMap,
-    leveledNodes,
-    activeNode,
-    setActiveNode,
-    selectedNode,
-    aiEditNode,
-    setSelectedNode,
-    setAiEditNode,
-    actions: {
-      // onEdgesChange, onConnect,
-      onNodesChange: originalOnNodesChange,
-      onAddNode,
-    },
-  } = useMindmapFlow();
+  const nodes = useMindmapFlow((state) => state.nodes);
+  const edges = useMindmapFlow((state) => state.edges);
+  const mindmapNodesMap = useMindmapFlow((state) => state.mindmapNodesMap);
+  const leveledNodes = useMindmapFlow((state) => state.leveledNodes);
+  const activeNode = useMindmapFlow((state) => state.activeNode);
+  const setActiveNode = useMindmapFlow((state) => state.setActiveNode);
+  const selectedNode = useMindmapFlow((state) => state.selectedNode);
+  const aiEditNode = useMindmapFlow((state) => state.aiEditNode);
+  const setSelectedNode = useMindmapFlow((state) => state.setSelectedNode);
+  const setAiEditNode = useMindmapFlow((state) => state.setAiEditNode);
+  const originalOnNodesChange = useMindmapFlow(
+    (state) => state.actions.onNodesChange
+  );
+  const onAddNode = useMindmapFlow((state) => state.actions.onAddNode);
 
   useMindmapNavigation({
     mindmapNodesMap,
