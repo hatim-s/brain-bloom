@@ -6,7 +6,7 @@ import { POST } from "./route";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
-  createClaudeChatStream: vi.fn(),
+  createAIChatStream: vi.fn(),
   fetchMutation: vi.fn(),
   fetchQuery: vi.fn(),
   getConvexAuthToken: vi.fn(),
@@ -43,12 +43,10 @@ vi.mock("convex/nextjs", () => ({
 vi.mock("@/lib/convex-server", () => ({
   getConvexAuthToken: mocks.getConvexAuthToken,
 }));
-vi.mock("@/lib/claude-agent", () => ({
-  isClaudeConfigured: () => Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN),
-}));
-vi.mock("@/lib/ai/claudeChat", () => {
+vi.mock("@/lib/ai/providerRouter", () => {
   return {
-    createClaudeChatStream: mocks.createClaudeChatStream,
+    createAIChatStream: mocks.createAIChatStream,
+    isAIConfigured: () => process.env.TEST_AI_CONFIGURED === "true",
   };
 });
 
@@ -85,7 +83,7 @@ function createMindmapResult() {
 
 describe("POST /api/chat", () => {
   beforeEach(() => {
-    process.env.CLAUDE_CODE_OAUTH_TOKEN = "oauth-token";
+    process.env.TEST_AI_CONFIGURED = "true";
     mocks.auth.mockResolvedValue({
       userId: "user-1",
       getToken: vi.fn(async () => "convex-token"),
@@ -93,7 +91,7 @@ describe("POST /api/chat", () => {
     mocks.getConvexAuthToken.mockResolvedValue("convex-token");
     mocks.fetchQuery.mockResolvedValue(createMindmapResult());
     mocks.streamOptions = undefined;
-    mocks.createClaudeChatStream.mockImplementation((options) => {
+    mocks.createAIChatStream.mockImplementation((options) => {
       mocks.streamOptions = options;
       return new ReadableStream({
         start(controller) {
@@ -105,12 +103,12 @@ describe("POST /api/chat", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
-    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    delete process.env.TEST_AI_CONFIGURED;
   });
 
   it("returns 401 JSON before reading configuration for an unauthenticated user", async () => {
     mocks.auth.mockResolvedValue({ userId: null });
-    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    delete process.env.TEST_AI_CONFIGURED;
 
     const response = await POST(
       createRequest({ mindmapId: "map-1", messages: [userMessage] })
@@ -124,8 +122,8 @@ describe("POST /api/chat", () => {
     expect(mocks.fetchQuery).not.toHaveBeenCalled();
   });
 
-  it("returns 503 JSON when the Claude OAuth token is absent", async () => {
-    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  it("returns 503 JSON when the selected AI provider is not configured", async () => {
+    delete process.env.TEST_AI_CONFIGURED;
 
     const response = await POST(
       createRequest({ mindmapId: "map-1", messages: [userMessage] })
@@ -151,7 +149,7 @@ describe("POST /api/chat", () => {
       title: "Build a launch plan",
     });
     expect(response.headers.get("x-sprig-thread-id")).toBe("thread-1");
-    expect(mocks.createClaudeChatStream).toHaveBeenCalledWith(
+    expect(mocks.createAIChatStream).toHaveBeenCalledWith(
       expect.objectContaining({
         instructions: expect.stringContaining("[nodeId:root]"),
         messages: [userMessage],
@@ -169,7 +167,7 @@ describe("POST /api/chat", () => {
 
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({ error: "Not found" });
-    expect(mocks.createClaudeChatStream).not.toHaveBeenCalled();
+    expect(mocks.createAIChatStream).not.toHaveBeenCalled();
   });
 
   it("returns a 403 JSON response when Convex rejects access", async () => {
@@ -181,7 +179,7 @@ describe("POST /api/chat", () => {
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: "Forbidden" });
-    expect(mocks.createClaudeChatStream).not.toHaveBeenCalled();
+    expect(mocks.createAIChatStream).not.toHaveBeenCalled();
   });
 
   it("persists full UI parts and links the earliest applied operation", async () => {
@@ -275,7 +273,7 @@ describe("POST /api/chat", () => {
     await expect(response.json()).resolves.toEqual({
       error: "thread belongs to a different mindmap",
     });
-    expect(mocks.createClaudeChatStream).not.toHaveBeenCalled();
+    expect(mocks.createAIChatStream).not.toHaveBeenCalled();
   });
 
   it("rejects requests over the JSON byte ceiling", async () => {
@@ -295,7 +293,7 @@ describe("POST /api/chat", () => {
     await expect(response.json()).resolves.toEqual({
       error: "Request too large",
     });
-    expect(mocks.createClaudeChatStream).not.toHaveBeenCalled();
+    expect(mocks.createAIChatStream).not.toHaveBeenCalled();
   });
 
   it("rejects more than 40 messages and oversized text parts", async () => {
@@ -322,6 +320,6 @@ describe("POST /api/chat", () => {
 
     expect(tooMany.status).toBe(400);
     expect(longPart.status).toBe(400);
-    expect(mocks.createClaudeChatStream).not.toHaveBeenCalled();
+    expect(mocks.createAIChatStream).not.toHaveBeenCalled();
   });
 });

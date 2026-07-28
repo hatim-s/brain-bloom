@@ -10,14 +10,13 @@ import { z } from "zod";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { createClaudeChatStream } from "@/lib/ai/claudeChat";
+import { createAIChatStream, isAIConfigured } from "@/lib/ai/providerRouter";
 import { serializeMindmap } from "@/lib/ai/serializeMindmap";
 import {
   type AppliedOperation,
   createMindmapTools,
   type MindmapToolConvexLayer,
 } from "@/lib/ai/tools";
-import { isClaudeConfigured } from "@/lib/claude-agent";
 import { getConvexAuthToken } from "@/lib/convex-server";
 
 const THREAD_TITLE_LENGTH = 60;
@@ -176,7 +175,7 @@ async function POST(request: Request): Promise<Response> {
     return jsonError("Unauthenticated", 401);
   }
 
-  if (!isClaudeConfigured()) {
+  if (!isAIConfigured()) {
     return jsonError("AI is not configured", 503);
   }
 
@@ -270,7 +269,7 @@ async function POST(request: Request): Promise<Response> {
         }
       },
     });
-    const stream = createClaudeChatStream({
+    const stream = createAIChatStream({
       abortSignal: request.signal,
       instructions: createInstructions(
         serializeMindmap(currentMindmap),

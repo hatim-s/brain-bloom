@@ -13,17 +13,18 @@ mindmap, supports AI-assisted branch editing, and stores mindmaps in Convex.
 - A Clerk `convex` JWT template for authenticated Convex reads; see
   [`docs/ENV.md`](docs/ENV.md). Keyless Clerk instances cannot create this
   template until they have been claimed.
-- A dev-local Claude Code subscription token for AI generation and editing
+- A Claude Code or Codex subscription login for AI generation and editing
 
 ### Setup
 
 1. Copy `.env.example` to `.env.local`.
-2. Run `claude setup-token`, then set its output as
-   `CLAUDE_CODE_OAUTH_TOKEN` in `.env.local`.
-3. Set `CONVEX_DEPLOYMENT` and
+2. Set `SPRIG_AI_PROVIDER=claude` (the default) or `SPRIG_AI_PROVIDER=codex`.
+3. For Claude, run `claude setup-token` and set its output as
+   `CLAUDE_CODE_OAUTH_TOKEN`. For Codex, run `codex login` on the app server.
+4. Set `CONVEX_DEPLOYMENT` and
    `NEXT_PUBLIC_CONVEX_URL`.
-4. Install the existing dependencies with `pnpm install`.
-5. Start the development server with `pnpm dev`.
+5. Install the existing dependencies with `pnpm install`.
+6. Start the development server with `pnpm dev`.
 
 The application is then available at
 [http://localhost:3000](http://localhost:3000).

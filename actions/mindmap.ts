@@ -25,7 +25,7 @@ import {
   generatedMindmapSchema,
   type GeneratedTreeNode,
 } from "@/lib/ai/generatedTree";
-import { generateClaudeStructured } from "@/lib/claude-agent";
+import { generateAIStructured } from "@/lib/ai/providerRouter";
 import { getConvexAuthToken } from "@/lib/convex-server";
 import { AIMindmap } from "@/types/AI";
 
@@ -76,14 +76,14 @@ function flattenGeneratedMindmap(
   ];
 }
 
-/** Generates and validates a strict nested mindmap with the Claude Agent SDK. */
+/** Generates and validates a strict nested mindmap with the selected provider. */
 async function generateAIMindmap(userPrompt: string) {
   if (!userPrompt) {
     throw new Error("User prompt is required");
   }
 
   try {
-    const result = await generateClaudeStructured({
+    const result = await generateAIStructured({
       instructions: MINDMAP_GENERATION_INSTRUCTIONS,
       prompt: userPrompt,
       schema: generatedMindmapSchema,
