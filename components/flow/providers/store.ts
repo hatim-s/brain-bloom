@@ -369,6 +369,22 @@ function createMindmapStore({
           set({ aiEditNode });
         }
       },
+      aiTouchedNodeIds: [],
+      setAiTouchedNodeIds: (nodeIds) => {
+        if (readOnly) {
+          warnReadOnlyMutation("setAiTouchedNodeIds");
+          return;
+        }
+
+        // Only ids the canvas actually holds can bloom. The AI writes straight
+        // to Convex, so a freshly created node has no client node to flash
+        // until the canvas is re-seeded from the server.
+        const knownNodeIds = nodeIds.filter(
+          (nodeId) => get().nodesMap[nodeId] !== undefined
+        );
+
+        set({ aiTouchedNodeIds: knownNodeIds });
+      },
       mindmapDB,
       pendingOps: [],
       flushedWatermark: 0,

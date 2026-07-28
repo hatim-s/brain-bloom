@@ -32,6 +32,15 @@ type MindmapFlowContext = {
   aiEditNode: string | null;
   setAiEditNode: (nodeId: string | null) => void;
 
+  /**
+   * Nodes the model just created or edited, held only long enough to bloom.
+   *
+   * The canvas reads this to add `.sprig-ai-touched`; the flash is transient by
+   * design, so whoever sets it is also responsible for clearing it.
+   */
+  aiTouchedNodeIds: string[];
+  setAiTouchedNodeIds: (nodeIds: string[]) => void;
+
   mindmapDB: MindmapDB;
   pendingOps: NodeOp[];
   flushedWatermark: number;

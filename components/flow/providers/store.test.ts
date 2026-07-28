@@ -337,6 +337,34 @@ describe("createMindmapStore", () => {
 
     expect(toNodePositions(state.nodes)).toEqual(toNodePositions(batchNodes));
   });
+
+  it("blooms only the AI-touched nodes the canvas actually holds", () => {
+    const store = createFixtureStore();
+
+    // The model writes straight to Convex, so an id it just created has no
+    // node on this canvas until the page is re-seeded from the server.
+    store.getState().setAiTouchedNodeIds(["l-child", "l-not-loaded-yet"]);
+
+    expect(store.getState().aiTouchedNodeIds).toEqual(["l-child"]);
+
+    store.getState().setAiTouchedNodeIds([]);
+
+    expect(store.getState().aiTouchedNodeIds).toEqual([]);
+  });
+
+  it("ignores AI bloom state on a read-only canvas", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const store = createMindmapStore({
+      ...createStoreFixture(),
+      readOnly: true,
+    });
+
+    store.getState().setAiTouchedNodeIds(["l-child"]);
+
+    expect(store.getState().aiTouchedNodeIds).toEqual([]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
 });
 
 /** Creates a fresh store so mutable dagre graphs never cross test cases. */

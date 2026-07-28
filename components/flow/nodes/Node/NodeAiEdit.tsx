@@ -1,4 +1,3 @@
-import { LoaderCircle } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { useMemo, useRef, useState, useTransition } from "react";
 
@@ -72,8 +71,9 @@ function getCurrentBranch(
 /**
  * Prompt box for extending a branch with the model.
  *
- * The pending state is the one place in the product that spends the bloom
- * accent on chrome, because here the chrome *is* the AI activity.
+ * It is the in-canvas shorthand for what the Sprig panel does at length, so it
+ * borrows the panel's vocabulary: mono status copy and the same bloom pulse
+ * dot, rather than a spinner of its own.
  */
 function NodeAiEdit() {
   const aiEditNode = useMindmapFlow((state) => state.aiEditNode);
@@ -174,23 +174,28 @@ function NodeAiEdit() {
   return (
     <Box>
       <AutosizeTextarea
-        className="h-full w-full !min-h-[30px] !outline-hidden !border-none resize-none"
+        // The focus ring is never suppressed; it is only pulled flush with the
+        // popover edge, which the borderless field sits directly against.
+        className="h-full w-full !min-h-[30px] !border-none resize-none rounded-md px-3 py-2.5 text-sm focus-visible:outline-offset-0"
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        placeholder="Ask the model to grow this branch"
+        placeholder="Ask Sprig to grow this branch"
         ref={textareaRef}
       />
       {isPending && (
         <motion.div
-          className="absolute top-0 left-0 flex flex-row items-center justify-center gap-x-2 rounded-md bg-popover text-bloom"
+          className="absolute top-0 left-0 flex flex-row items-center justify-center gap-x-2 rounded-md bg-popover"
           style={textAreaDimensions}
           initial={prefersReducedMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
         >
-          <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
-          <Typography className="text-sm font-medium" variant="p">
+          <span aria-hidden="true" className="sprig-bloom-dot" />
+          <Typography
+            className="font-mono text-[11px] uppercase tracking-[0.09em] text-muted-foreground"
+            variant="p"
+          >
             Growing this branch
           </Typography>
         </motion.div>

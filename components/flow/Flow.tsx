@@ -14,6 +14,9 @@ import {
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
+import { AiPanelLayout } from "@/components/ai-panel/AiPanelLayout";
+import { AI_TOUCH_DURATION_MS } from "@/components/ai-panel/constants";
+import { cn } from "@/lib/utils";
 import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 import { Stack } from "../ui/stack";
 import { SaveMindmap } from "./components/SaveMindmap";
@@ -55,6 +58,10 @@ export function MindmapFlow() {
   const setActiveNode = useMindmapFlow((state) => state.setActiveNode);
   const selectedNode = useMindmapFlow((state) => state.selectedNode);
   const aiEditNode = useMindmapFlow((state) => state.aiEditNode);
+  const aiTouchedNodeIds = useMindmapFlow((state) => state.aiTouchedNodeIds);
+  const setAiTouchedNodeIds = useMindmapFlow(
+    (state) => state.setAiTouchedNodeIds
+  );
   const setSelectedNode = useMindmapFlow((state) => state.setSelectedNode);
   const setAiEditNode = useMindmapFlow((state) => state.setAiEditNode);
   const originalOnNodesChange = useMindmapFlow(
@@ -109,6 +116,31 @@ export function MindmapFlow() {
     setSelectedNode(null);
     setAiEditNode(null);
   }, [setActiveNode, setSelectedNode, setAiEditNode]);
+
+  // The bloom is a pulse of attention, not a badge, so the class is removed
+  // once the animation in flow.css has settled.
+  useEffect(() => {
+    if (aiTouchedNodeIds.length === 0) return;
+
+    const timer = setTimeout(
+      () => setAiTouchedNodeIds([]),
+      AI_TOUCH_DURATION_MS
+    );
+
+    return () => clearTimeout(timer);
+  }, [aiTouchedNodeIds, setAiTouchedNodeIds]);
+
+  const renderedNodes = useMemo(() => {
+    if (aiTouchedNodeIds.length === 0) return nodes;
+
+    const touchedNodeIds = new Set(aiTouchedNodeIds);
+
+    return nodes.map((node) =>
+      touchedNodeIds.has(node.id)
+        ? { ...node, className: cn(node.className, "sprig-ai-touched") }
+        : node
+    );
+  }, [aiTouchedNodeIds, nodes]);
 
   const prevActiveNode = useRef<string | null>(null);
 
@@ -182,7 +214,7 @@ export function MindmapFlow() {
         deleteKeyCode={null}
         minZoom={0.1}
         disableKeyboardA11y
-        nodes={nodes}
+        nodes={renderedNodes}
         edges={edges}
         // disabling edge selection, node selection is enabled at the node level
         elementsSelectable={false}
@@ -244,7 +276,15 @@ export default function Flow({
         initialNodes={initialNodes.length ? initialNodes : INITIAL_NODES}
         initialEdges={initialEdges.length ? initialEdges : INITIAL_EDGES}
       >
-        <MindmapFlow />
+        {/* Only an owner can edit, so only an owner gets the AI panel; a
+            read-only canvas keeps the full width it had before P8. */}
+        {readOnly ? (
+          <MindmapFlow />
+        ) : (
+          <AiPanelLayout>
+            <MindmapFlow />
+          </AiPanelLayout>
+        )}
       </MindmapFlowProvider>
     </ReactFlowProvider>
   );
