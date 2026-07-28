@@ -13,7 +13,7 @@ import { Wordmark } from "@/components/wordmark";
  */
 function NotFound() {
   return (
-    <main className="relative h-full w-full overflow-hidden">
+    <main className="relative h-svh w-full overflow-hidden">
       <DotField />
       <div className="relative flex h-full w-full justify-center overflow-y-auto px-6 py-12">
         <div className="my-auto flex w-full max-w-md flex-col gap-8">

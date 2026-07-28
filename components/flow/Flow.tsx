@@ -174,6 +174,12 @@ export function MindmapFlow() {
       <ReactFlow
         nodesDraggable={false}
         nodesConnectable={false}
+        nodesFocusable={!readOnly}
+        edgesFocusable={false}
+        // Node deletion has no pending-op or backend path yet. Disable the
+        // XYFlow default in every mode so Backspace cannot create local-only
+        // destruction.
+        deleteKeyCode={null}
         minZoom={0.1}
         disableKeyboardA11y
         nodes={nodes}

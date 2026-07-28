@@ -40,7 +40,9 @@ function formatRelativeUpdatedAt(updatedAt: number, now: number): string {
     return agoPhrase(Math.floor(elapsed / WEEK_MS), "week");
   }
   if (elapsed < YEAR_MS) {
-    return agoPhrase(Math.floor(elapsed / MONTH_MS), "month");
+    // Thirty-day buckets can reach 12 before a 365-day year. Keep that
+    // unreachable phrase out of the UI and hand over to years at the boundary.
+    return agoPhrase(Math.min(11, Math.floor(elapsed / MONTH_MS)), "month");
   }
 
   return agoPhrase(Math.floor(elapsed / YEAR_MS), "year");

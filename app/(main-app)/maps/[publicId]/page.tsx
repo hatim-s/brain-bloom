@@ -9,6 +9,7 @@ import { Header } from "@/components/header";
 import { Stack } from "@/components/ui/stack";
 import { api } from "@/convex/_generated/api";
 import { getConvexAuthToken } from "@/lib/convex-server";
+import { ConvexClientProvider } from "@/providers/ConvexClientProvider";
 
 type MindmapPageParams = Promise<{ publicId: string }>;
 
@@ -41,7 +42,13 @@ async function MindmapCanvas({ params }: { params: MindmapPageParams }) {
     <>
       <Header mindmap={result.mindmap} />
       <Stack className="flex-1 relative">
-        <Flow mindmap={result.mindmap} nodes={result.nodes} />
+        <ConvexClientProvider>
+          <Flow
+            mindmap={result.mindmap}
+            nodes={result.nodes}
+            readOnly={!result.mindmap.isOwner}
+          />
+        </ConvexClientProvider>
       </Stack>
     </>
   );

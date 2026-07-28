@@ -1,10 +1,11 @@
 import { fetchQuery } from "convex/nextjs";
 import { PropsWithChildren, Suspense } from "react";
 
-import { FloatingSidebar } from "@/components/sidebar";
+import { ActiveFloatingSidebar, FloatingSidebar } from "@/components/sidebar";
+import { SidebarProvider } from "@/components/sidebar/sidebar-provider";
+import { Toaster } from "@/components/ui/sonner";
 import { api } from "@/convex/_generated/api";
 import { getConvexAuthToken } from "@/lib/convex-server";
-import { ConvexClientProvider } from "@/providers/ConvexClientProvider";
 
 /** Loads the authenticated navigation list inside the layout's dynamic island. */
 async function MindmapSidebar() {
@@ -14,28 +15,29 @@ async function MindmapSidebar() {
       ? []
       : await fetchQuery(api.mindmaps.listMine, {}, { token });
 
-  return <FloatingSidebar mindmaps={mindmaps} />;
+  return <ActiveFloatingSidebar mindmaps={mindmaps} />;
 }
 
 /**
- * Keeps the protected app frame prerenderable while its sidebar streams in.
- * ConvexClientProvider mounts here, not in the root layout: constructing the
- * browser ConvexReactClient during the static prerender of public routes trips
- * cacheComponents' Math.random guard, and only this group uses client hooks.
+ * Keeps protected-only chrome out of public and authentication surfaces.
+ *
+ * The sidebar owns its request-time Suspense boundary while children remain
+ * outside it, so route-level static shells such as the dashboard heading and
+ * card skeleton reach the first response. Editable canvases mount their Convex
+ * client inside their existing route boundary, where the random client
+ * construction is safe without swallowing sibling static content.
  */
 function MainAppLayout({ children }: PropsWithChildren) {
   return (
-    // The boundary sits ABOVE the provider: constructing ConvexReactClient
-    // involves randomness, which cacheComponents only permits inside a
-    // Suspense hole. The whole group is auth-gated and dynamic regardless.
-    <Suspense fallback={null}>
-      <ConvexClientProvider>
-        <Suspense fallback={<FloatingSidebar mindmaps={[]} />}>
-          <MindmapSidebar />
-        </Suspense>
-        {children}
-      </ConvexClientProvider>
-    </Suspense>
+    <SidebarProvider>
+      {/* The fallback must stay hook-free: FloatingSidebar reads useParams(),
+          which is request-time data and cannot render in the static shell. */}
+      <Suspense fallback={<FloatingSidebar mindmaps={[]} />}>
+        <MindmapSidebar />
+      </Suspense>
+      {children}
+      <Toaster position="bottom-right" richColors expand />
+    </SidebarProvider>
   );
 }
 

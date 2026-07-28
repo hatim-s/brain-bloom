@@ -56,6 +56,22 @@ describe("MindmapFlowProvider", () => {
       )
     ).not.toThrow();
   });
+
+  it("mounts an authenticated non-owner in read-only mode", () => {
+    const fixture = createProviderFixture();
+    const nonOwnerMindmap = { ...fixture.mindmapDB, isOwner: false };
+    const view = render(
+      <MindmapFlowProvider
+        {...fixture}
+        mindmapDB={nonOwnerMindmap}
+        readOnly={!nonOwnerMindmap.isOwner}
+      >
+        <ReadOnlyProbe />
+      </MindmapFlowProvider>
+    );
+
+    expect(view.getByTestId("read-only").textContent).toBe("true");
+  });
 });
 
 /** Exposes selected store writes while recording renders of the active slice. */
@@ -82,6 +98,12 @@ function StoreProbe({ onRender }: { onRender: () => void }) {
 function OutsideProviderProbe() {
   useMindmapFlow((state) => state.activeNode);
   return null;
+}
+
+/** Exposes the provider's ownership-derived interaction mode. */
+function ReadOnlyProbe() {
+  const readOnly = useMindmapFlow((state) => state.readOnly);
+  return <output data-testid="read-only">{String(readOnly)}</output>;
 }
 
 /** Creates a minimal rooted mindmap for provider wiring tests. */

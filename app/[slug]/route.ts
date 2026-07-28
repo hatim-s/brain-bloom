@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-/** Permanently maps a legacy root slug to its canonical canvas route. */
+/** Temporarily maps a legacy root slug to its canonical canvas route. */
 async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
@@ -8,7 +8,9 @@ async function GET(
   const { slug } = await params;
   const destination = new URL(`/maps/${encodeURIComponent(slug)}`, request.url);
 
-  return NextResponse.redirect(destination, 308);
+  // Only GET is exported, so method preservation buys nothing. A 307 also
+  // avoids browsers permanently caching a legacy slug mapping.
+  return NextResponse.redirect(destination, 307);
 }
 
 export { GET };

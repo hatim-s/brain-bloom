@@ -22,6 +22,7 @@ describe("formatRelativeUpdatedAt", () => {
     ["four weeks", NOW - 28 * DAY, "4 weeks ago"],
     ["thirty days", NOW - 30 * DAY, "1 month ago"],
     ["eleven months", NOW - 330 * DAY, "11 months ago"],
+    ["the day before one year", NOW - 364 * DAY, "11 months ago"],
     ["one year", NOW - 365 * DAY, "1 year ago"],
     ["three years", NOW - 3 * 365 * DAY, "3 years ago"],
   ])("renders %s", (_label, updatedAt, expected) => {

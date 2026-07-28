@@ -1,5 +1,10 @@
 const PUBLIC_AUTH_PATHS = ["/sign-in", "/sign-up"] as const;
 const PUBLIC_PATH_PREFIXES = [...PUBLIC_AUTH_PATHS, "/share"] as const;
+const PUBLIC_METADATA_PATHS = [
+  "/robots.txt",
+  "/sitemap.xml",
+  "/favicon.ico",
+] as const;
 
 /**
  * Accepts only same-origin, root-relative destinations.
@@ -39,7 +44,11 @@ function buildAuthPageUrl(
 
 /** Matches public pages and their optional catch-all path segments. */
 function isPublicPath(pathname: string): boolean {
-  if (pathname === "/") {
+  if (
+    pathname === "/" ||
+    PUBLIC_METADATA_PATHS.some((publicPath) => pathname === publicPath) ||
+    pathname.startsWith("/opengraph-image")
+  ) {
     return true;
   }
 

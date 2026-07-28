@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { requireOwner, requireReadable, requireUser } from "./lib/access";
@@ -90,6 +90,26 @@ function projectMindmap(
     isOwner: subject === mindmap.ownerId,
   };
 }
+
+/** Keeps public node reads limited to fields the canvas can render. */
+function projectRenderableNode(node: Doc<"nodes">): NodeSnapshot {
+  return {
+    nodeId: node.nodeId,
+    parentId: node.parentId,
+    type: node.type,
+    title: node.title,
+    ...(node.description === undefined
+      ? {}
+      : { description: node.description }),
+    ...(node.link === undefined ? {} : { link: node.link }),
+    order: node.order,
+  };
+}
+
+type SharedMindmapResult = {
+  mindmap: ReturnType<typeof projectMindmap>;
+  nodes: NodeSnapshot[];
+};
 
 /**
  * Inserts one private mindmap and its canonical root for an authenticated owner.
@@ -263,7 +283,7 @@ export const getByPublicId = query({
  */
 export const getShared = query({
   args: { publicId: v.string() },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<SharedMindmapResult> => {
     const resolvedMindmap = await ctx.db
       .query("mindmaps")
       .withIndex("by_publicId", (q) => q.eq("publicId", args.publicId))
@@ -281,7 +301,7 @@ export const getShared = query({
 
     return {
       mindmap: projectMindmap(resolvedMindmap, null),
-      nodes: sortNodesByParentAndOrder(nodes),
+      nodes: sortNodesByParentAndOrder(nodes.map(projectRenderableNode)),
     };
   },
 });

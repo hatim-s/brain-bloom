@@ -15,13 +15,18 @@ const CARD_GRID_CLASS = "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3";
 
 /** Every card is the same block: a hairline, the card surface, one height. */
 const CARD_CLASS =
-  "flex h-full min-h-[8.5rem] flex-col gap-3 rounded-lg p-5 transition-colors duration-200 ease-organic motion-reduce:transition-none";
+  "flex h-full min-h-[8.5rem] flex-col gap-3 rounded-lg p-5 transition-colors duration-200 ease-organic focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none";
 
 /** Spells out a timestamp for the hover title, behind the relative phrase. */
 function formatExactUpdatedAt(updatedAt: number): string {
   return new Intl.DateTimeFormat("en", {
-    dateStyle: "medium",
-    timeStyle: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
+    timeZone: "UTC",
+    timeZoneName: "short",
+    year: "numeric",
   }).format(new Date(updatedAt));
 }
 
@@ -39,7 +44,10 @@ function MindmapCard({ mindmap, now }: { mindmap: MindmapDB; now: number }) {
         className={`${CARD_CLASS} border border-line-strong bg-card text-card-foreground hover:bg-accent`}
         href={`/maps/${mindmap.publicId}`}
       >
-        <h2 className="line-clamp-2 text-base font-medium leading-snug">
+        <h2
+          className="line-clamp-2 text-base font-medium leading-snug"
+          title={mindmap.name}
+        >
           {mindmap.name}
         </h2>
         <p className="mt-auto font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
@@ -127,7 +135,7 @@ function MindmapListSkeleton() {
       {[0, 1, 2].map((card) => (
         <div
           aria-hidden="true"
-          className="min-h-[8.5rem] rounded-lg border border-border bg-card"
+          className="min-h-[8.5rem] rounded-lg border border-line-strong bg-card"
           key={card}
         />
       ))}

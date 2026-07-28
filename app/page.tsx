@@ -112,11 +112,19 @@ function MindmapGlyph() {
 /** Public, statically prerenderable introduction to Sprig. */
 function Home() {
   return (
-    <main className="h-full w-full overflow-y-auto">
+    <div className="h-full w-full overflow-y-auto">
       <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col gap-16 px-8 py-12">
-        <Wordmark />
+        <header>
+          <Link
+            aria-label="Sprig home"
+            className="inline-flex rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            href="/"
+          >
+            <Wordmark />
+          </Link>
+        </header>
 
-        <section className="my-auto grid w-full items-center gap-14 md:grid-cols-[minmax(0,1fr)_auto] md:gap-16">
+        <main className="my-auto grid w-full items-center gap-14 md:grid-cols-[minmax(0,1fr)_auto] md:gap-16">
           <div className="flex max-w-xl flex-col items-start gap-5">
             <h1 className="text-4xl font-semibold leading-[1.1] tracking-tight sm:text-5xl">
               Grow an idea into a map you can see.
@@ -140,7 +148,7 @@ function Home() {
           <div className="flex justify-start md:justify-end">
             <MindmapGlyph />
           </div>
-        </section>
+        </main>
 
         <footer className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border pt-6">
           <Wordmark className="text-xs" />
@@ -149,7 +157,7 @@ function Home() {
           </p>
         </footer>
       </div>
-    </main>
+    </div>
   );
 }
 

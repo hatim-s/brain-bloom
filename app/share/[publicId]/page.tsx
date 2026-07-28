@@ -9,8 +9,16 @@ import { api } from "@/convex/_generated/api";
 
 type SharedMindmapPageParams = Promise<{ publicId: string }>;
 
-/** Loads a public shared map without consulting Clerk authentication. */
-async function SharedMindmapCanvas({
+/**
+ * Resolves and renders a public shared map without consulting Clerk.
+ *
+ * The lookup lives inside the Suspense hole because cacheComponents rejects
+ * blocking routes outright. The concession: an unknown or revoked share
+ * answers HTTP 200 with 404 content — but Next injects
+ * `<meta name="robots" content="noindex">` when notFound() fires in a
+ * streamed boundary, so crawlers still drop the page.
+ */
+async function SharedMindmapContent({
   params,
 }: {
   params: SharedMindmapPageParams;
@@ -41,20 +49,12 @@ async function SharedMindmapCanvas({
   );
 }
 
-/** Public static shell that streams only maps explicitly marked shared. */
+/** Static shell: the frame prerenders; the map itself streams in. */
 function SharedMindmapPage({ params }: { params: SharedMindmapPageParams }) {
   return (
-    <main className="flex h-full w-full flex-col">
-      <Suspense
-        fallback={
-          <div
-            aria-label="Loading shared mindmap"
-            className="h-full w-full bg-background"
-            role="status"
-          />
-        }
-      >
-        <SharedMindmapCanvas params={params} />
+    <main className="flex h-svh w-full flex-col">
+      <Suspense fallback={null}>
+        <SharedMindmapContent params={params} />
       </Suspense>
     </main>
   );

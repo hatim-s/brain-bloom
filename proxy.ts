@@ -1,7 +1,11 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
-import { acceptsJsonOverHtml, isPublicPath } from "@/lib/auth-routing";
+import {
+  acceptsJsonOverHtml,
+  isPublicPath,
+  sanitizeRedirectUrl,
+} from "@/lib/auth-routing";
 
 const proxy = clerkMiddleware(async (auth, request) => {
   // Public landing, auth, and shared-map routes bypass Clerk protection.
@@ -23,7 +27,10 @@ const proxy = clerkMiddleware(async (auth, request) => {
 
   const destination = `${request.nextUrl.pathname}${request.nextUrl.search}`;
   const unauthenticatedUrl = new URL("/sign-in", request.url);
-  unauthenticatedUrl.searchParams.set("redirect_url", destination);
+  unauthenticatedUrl.searchParams.set(
+    "redirect_url",
+    sanitizeRedirectUrl(destination)
+  );
 
   return NextResponse.redirect(unauthenticatedUrl);
 });
@@ -37,7 +44,7 @@ export const config = {
      * - Next.js internals
      * - common static files, unless they are explicitly requested via search params
      */
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/((?!_next|robots\\.txt|sitemap\\.xml|favicon\\.ico|opengraph-image.*|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
     "/(api|trpc)(.*)",
   ],
 };

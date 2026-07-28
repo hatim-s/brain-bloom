@@ -16,11 +16,18 @@ describe("auth routing", () => {
     ["/", true],
     ["/share", true],
     ["/share/public-map", true],
+    ["/robots.txt", true],
+    ["/sitemap.xml", true],
+    ["/favicon.ico", true],
+    ["/opengraph-image", true],
+    ["/opengraph-image-abc123", true],
     ["/maps", false],
     ["/maps/private-map", false],
     ["/new", false],
     ["/sign-invitation", false],
     ["/shared", false],
+    ["/robots.txt/private", false],
+    ["/sitemap.xml/private", false],
     ["/api/chat", false],
   ])("matches public path %s as %s", (pathname, expected) => {
     expect(isPublicPath(pathname)).toBe(expected);
