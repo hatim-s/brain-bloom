@@ -22,17 +22,23 @@ describe("getNewNodeID", () => {
     expect(getNewNodeID(type)).toMatch(new RegExp(`^${prefix}`));
   });
 
-  it("preserves the current empty suffix and collision when randomness is zero", () => {
+  it("pads a zero random value to a five-character suffix", () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
 
-    const firstId = getNewNodeID(NodeTypes.LEFT);
-    const secondId = getNewNodeID(NodeTypes.LEFT);
-
-    // KNOWN BUG (P3): zero produces no five-character suffix, so both ids are bare
-    // prefixes and collide. P3 will harden node id generation.
-    expect(firstId).toBe("l-");
-    expect(secondId).toBe("l-");
+    expect(getNewNodeID(NodeTypes.LEFT)).toBe("l-00000");
   });
+
+  it.each([NodeTypes.LEFT, NodeTypes.RIGHT])(
+    "always creates valid, round-trippable %s node ids",
+    (type) => {
+      for (let index = 0; index < 500; index += 1) {
+        const id = getNewNodeID(type);
+
+        expect(id).toMatch(/^[lr]-[a-z0-9]{5}$/);
+        expect(getNodeTypeFromId(id)).toBe(type);
+      }
+    }
+  );
 });
 
 describe("getNodeTypeFromId", () => {

@@ -93,8 +93,12 @@ export function useMindmapNavigation({
 
   useKey("k", onStartAiEditing, { isCtrlKey: true, isMetaKey: true });
 
-  useKey("Escape", () => {
-    setSelectedNode(null);
-    setAiEditNode(null);
-  });
+  useKey(
+    "Escape",
+    () => {
+      setSelectedNode(null);
+      setAiEditNode(null);
+    },
+    { allowWhenTyping: true }
+  );
 }

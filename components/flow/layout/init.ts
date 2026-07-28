@@ -1,4 +1,10 @@
-import { graphlib, layout } from "@dagrejs/dagre";
+import {
+  EdgeLabel,
+  GraphLabel,
+  graphlib,
+  layout,
+  NodeLabel,
+} from "@dagrejs/dagre";
 import { Edge } from "@xyflow/react";
 
 import { ROOT_NODE_ID } from "../const";
@@ -14,6 +20,8 @@ const GRAPHLIB_CONFIG = {
 const RANK_SEP = 300;
 const NODE_SEP = 50;
 
+type DagreGraph = graphlib.Graph<GraphLabel, NodeLabel, EdgeLabel>;
+
 export const NODE_DIMENSIONS = {
   height: 60,
   width: 300,
@@ -28,7 +36,8 @@ function edgeLabelRenderer() {
   return {};
 }
 
-function calculateNodeHeight(node: BaseFlowNode): number {
+/** Calculates the fixed rendered height dagre should reserve for a node. */
+export function calculateNodeHeight(node: BaseFlowNode): number {
   const baseHeight = 12 * 2; // top and bottom padding
   const titleHeight = 28; // text-xl height
   const descriptionHeight = 24 * 2; // text-base height, we only support 2 lines in view
@@ -55,13 +64,20 @@ function calculateNodeHeight(node: BaseFlowNode): number {
  * - multigraph: false
  *
  * @returns {
- *  leftGraph: graphlib.Graph<object>,
- *  rightGraph: graphlib.Graph<object>,
+ *  leftGraph: DagreGraph,
+ *  rightGraph: DagreGraph,
  * }
  */
-export function initGraphs() {
-  const leftGraph = new graphlib.Graph(GRAPHLIB_CONFIG);
-  const rightGraph = new graphlib.Graph(GRAPHLIB_CONFIG);
+export function initGraphs(): {
+  leftGraph: DagreGraph;
+  rightGraph: DagreGraph;
+} {
+  const leftGraph = new graphlib.Graph<GraphLabel, NodeLabel, EdgeLabel>(
+    GRAPHLIB_CONFIG
+  );
+  const rightGraph = new graphlib.Graph<GraphLabel, NodeLabel, EdgeLabel>(
+    GRAPHLIB_CONFIG
+  );
 
   // Set rank direction and spacing
   leftGraph.setGraph({
@@ -97,7 +113,7 @@ export function initGraphs() {
  * @returns The initial nodes with positions.
  */
 export function initLayout(
-  graphs: { leftGraph: graphlib.Graph; rightGraph: graphlib.Graph },
+  graphs: { leftGraph: DagreGraph; rightGraph: DagreGraph },
   initialNodes: BaseFlowNode[],
   initialEdges: Edge[]
 ): FlowNode[] {
@@ -149,15 +165,17 @@ export function initLayout(
 
   layout(leftGraph); // Assigns ranks and positions
   layout(rightGraph); // Assigns ranks and positions
+  reflectGraphVertically(leftGraph);
+  reflectGraphVertically(rightGraph);
 
   const leftGraphTranlations = {
-    x: -leftGraph.node(ROOT_NODE_ID).x,
-    y: -leftGraph.node(ROOT_NODE_ID).y,
+    x: -leftGraph.node(ROOT_NODE_ID).x!,
+    y: -leftGraph.node(ROOT_NODE_ID).y!,
   };
 
   const rightGraphTranlations = {
-    x: -rightGraph.node(ROOT_NODE_ID).x,
-    y: -rightGraph.node(ROOT_NODE_ID).y,
+    x: -rightGraph.node(ROOT_NODE_ID).x!,
+    y: -rightGraph.node(ROOT_NODE_ID).y!,
   };
 
   const initialNodesWithPositions = initialNodes.map((node) => {
@@ -180,8 +198,8 @@ export function initLayout(
     return {
       ...node,
       position: {
-        x: nodeWithPosition.x + translation.x,
-        y: nodeWithPosition.y + translation.y,
+        x: nodeWithPosition.x! + translation.x,
+        y: nodeWithPosition.y! + translation.y,
       },
     };
   });
@@ -194,14 +212,14 @@ export function initLayout(
  *
  * @description
  * The function adds a node to the graph and assigns it a position.
- * It then layouts the graph.
+ * It then layouts the graph and restores dagre 1.x vertical ordering.
  *
  * @param graph - The graph to add the node to.
  * @param node - The node to add to the graph.
  * @param edge - The edge to add to the graph.
  */
 export function addNodeToGraph(
-  graph: graphlib.Graph<object>,
+  graph: DagreGraph,
   node: BaseFlowNode,
   edge: Edge
 ) {
@@ -214,6 +232,7 @@ export function addNodeToGraph(
   graph.setEdge(edge.source, edge.target);
 
   layout(graph);
+  reflectGraphVertically(graph);
 }
 
 export function getNodeDimensions(node: BaseFlowNode) {
@@ -221,4 +240,17 @@ export function getNodeDimensions(node: BaseFlowNode) {
     width: 300, // Fixed width based on UI design
     height: calculateNodeHeight(node),
   };
+}
+
+/**
+ * Dagre 3.0 reversed sibling stacking, so mirror y about the root to preserve
+ * the 1.x visual order that breadth-first keyboard navigation assumes.
+ */
+function reflectGraphVertically(graph: DagreGraph): void {
+  const rootY = graph.node(ROOT_NODE_ID).y!;
+
+  graph.nodes().forEach((nodeId) => {
+    const node = graph.node(nodeId);
+    node.y = rootY - (node.y! - rootY);
+  });
 }

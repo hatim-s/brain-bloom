@@ -4,6 +4,7 @@ import { ROOT_NODE_ID } from "@/components/flow/const";
 import { generateLeveledNodes } from "@/components/flow/layout/generateLeveledNodes";
 import { MindmapNode, NodeTypes } from "@/components/flow/types";
 
+/** Verifies breadth-first level grouping for complete and desynced node maps. */
 describe("generateLeveledNodes", () => {
   it("groups a root and its left and right children by level", () => {
     const leftOne = createMindmapNode("l-one", NodeTypes.LEFT, ROOT_NODE_ID, 1);
@@ -29,13 +30,9 @@ describe("generateLeveledNodes", () => {
       [rightTwo.id]: rightTwo,
     };
 
-    // KNOWN BUG (P3): the algorithm pushes a level before testing for termination, so
-    // every result carries a trailing empty level. Asserted here to pin today's behavior;
-    // when P3 removes it, delete the trailing `[]` instead of reverting the fix.
     expect(generateLeveledNodes(nodes)).toEqual([
       [root],
       [leftOne, leftTwo, rightOne, rightTwo],
-      [],
     ]);
   });
 
@@ -60,23 +57,67 @@ describe("generateLeveledNodes", () => {
       [grandchild.id]: grandchild,
     };
 
-    // KNOWN BUG (P3): the algorithm pushes a level before testing for termination, so
-    // every result carries a trailing empty level. Asserted here to pin today's behavior;
-    // when P3 removes it, delete the trailing `[]` instead of reverting the fix.
     expect(generateLeveledNodes(nodes)).toEqual([
       [root],
       [child],
       [grandchild],
-      [],
     ]);
   });
 
-  // generateLeveledNodes currently loops forever on an empty map: the root lookup yields
-  // `undefined`, which is indistinguishable from the `null` level sentinel, so the queue
-  // never drains. Fixing that is P3's job (canvas hardening); this records the contract.
-  it.todo(
-    "returns an empty result for an empty node map instead of looping forever"
-  );
+  it("returns an empty result for an empty node map", () => {
+    expect(generateLeveledNodes({})).toEqual([]);
+  });
+
+  it("breaks a cycle when traversal revisits an enqueued node", () => {
+    const child = createMindmapNode(
+      "r-child",
+      NodeTypes.RIGHT,
+      ROOT_NODE_ID,
+      1
+    );
+    const root = createRootNode([child]);
+    child.children.set(root.id, root);
+
+    expect(
+      generateLeveledNodes({
+        [root.id]: root,
+        [child.id]: child,
+      })
+    ).toEqual([[root], [child]]);
+  });
+
+  it("includes a duplicated child once under the first parent encountered", () => {
+    const sharedChild = createMindmapNode(
+      "r-shared",
+      NodeTypes.RIGHT,
+      "r-first",
+      2
+    );
+    const firstParent = createMindmapNode(
+      "r-first",
+      NodeTypes.RIGHT,
+      ROOT_NODE_ID,
+      1,
+      [sharedChild]
+    );
+    const secondParent = createMindmapNode(
+      "r-second",
+      NodeTypes.RIGHT,
+      ROOT_NODE_ID,
+      1,
+      [sharedChild]
+    );
+    const root = createRootNode([firstParent, secondParent]);
+
+    expect(
+      generateLeveledNodes({
+        [root.id]: root,
+        [firstParent.id]: firstParent,
+        [secondParent.id]: secondParent,
+        [sharedChild.id]: sharedChild,
+      })
+    ).toEqual([[root], [firstParent, secondParent], [sharedChild]]);
+  });
 });
 
 function createRootNode(children: MindmapNode[]): MindmapNode {
@@ -106,3 +147,95 @@ function createMindmapNode(
     level,
   };
 }
+
+/** Verifies bilateral insertion order across breadth-first levels. */
+describe("generateLeveledNodes bilateral traversal", () => {
+  it("groups three bilateral levels in child insertion order", () => {
+    const leftAGrandchild = createMindmapNode(
+      "l-a-child",
+      NodeTypes.LEFT,
+      "l-a",
+      2
+    );
+    const rightAGrandchild = createMindmapNode(
+      "r-a-child",
+      NodeTypes.RIGHT,
+      "r-a",
+      2
+    );
+    const leftBGrandchild = createMindmapNode(
+      "l-b-child",
+      NodeTypes.LEFT,
+      "l-b",
+      2
+    );
+    const rightBGrandchild = createMindmapNode(
+      "r-b-child",
+      NodeTypes.RIGHT,
+      "r-b",
+      2
+    );
+    const leftA = createMindmapNode("l-a", NodeTypes.LEFT, ROOT_NODE_ID, 1, [
+      leftAGrandchild,
+    ]);
+    const rightA = createMindmapNode("r-a", NodeTypes.RIGHT, ROOT_NODE_ID, 1, [
+      rightAGrandchild,
+    ]);
+    const leftB = createMindmapNode("l-b", NodeTypes.LEFT, ROOT_NODE_ID, 1, [
+      leftBGrandchild,
+    ]);
+    const rightB = createMindmapNode("r-b", NodeTypes.RIGHT, ROOT_NODE_ID, 1, [
+      rightBGrandchild,
+    ]);
+    const root = createRootNode([leftA, rightA, leftB, rightB]);
+    const nodes = {
+      [root.id]: root,
+      [leftA.id]: leftA,
+      [rightA.id]: rightA,
+      [leftB.id]: leftB,
+      [rightB.id]: rightB,
+      [leftAGrandchild.id]: leftAGrandchild,
+      [rightAGrandchild.id]: rightAGrandchild,
+      [leftBGrandchild.id]: leftBGrandchild,
+      [rightBGrandchild.id]: rightBGrandchild,
+    };
+
+    expect(generateLeveledNodes(nodes)).toEqual([
+      [root],
+      [leftA, rightA, leftB, rightB],
+      [leftAGrandchild, rightAGrandchild, leftBGrandchild, rightBGrandchild],
+    ]);
+  });
+
+  it("skips a dangling child id and continues traversing valid children", () => {
+    const leftChild = createMindmapNode(
+      "l-child",
+      NodeTypes.LEFT,
+      ROOT_NODE_ID,
+      1
+    );
+    const danglingChild = createMindmapNode(
+      "r-missing",
+      NodeTypes.RIGHT,
+      ROOT_NODE_ID,
+      1
+    );
+    const rightChild = createMindmapNode(
+      "r-child",
+      NodeTypes.RIGHT,
+      ROOT_NODE_ID,
+      1
+    );
+    const root = createRootNode([leftChild, danglingChild, rightChild]);
+    const nodes = {
+      [root.id]: root,
+      [leftChild.id]: leftChild,
+      [rightChild.id]: rightChild,
+    };
+
+    expect(generateLeveledNodes(nodes)).toEqual([
+      [root],
+      [leftChild, rightChild],
+    ]);
+  });
+});

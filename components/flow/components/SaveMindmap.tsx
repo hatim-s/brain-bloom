@@ -15,7 +15,9 @@ import { useMindmapFlow } from "../providers/MindmapFlowProvider";
 
 /** Saves the current mindmap while exposing the full request as a transition. */
 const SaveMindmap = () => {
-  const { nodes, edges, mindmapDB } = useMindmapFlow();
+  const nodes = useMindmapFlow((state) => state.nodes);
+  const edges = useMindmapFlow((state) => state.edges);
+  const mindmapDB = useMindmapFlow((state) => state.mindmapDB);
 
   const [isPending, startTransition] = useTransition();
 

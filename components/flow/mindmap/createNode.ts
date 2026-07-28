@@ -8,11 +8,16 @@ const NODE_ID_SEPARATOR = "-";
 const LEFT_NODE_ID_PREFIX = "l";
 const RIGHT_NODE_ID_PREFIX = "r";
 
+/** Creates a side-prefixed node id with an exact five-character base-36 suffix. */
 export function getNewNodeID(type: NodeTypes) {
+  const suffix = Math.floor(Math.random() * 36 ** 5)
+    .toString(36)
+    .padStart(5, "0");
+
   return [
     type === NodeTypes.LEFT ? LEFT_NODE_ID_PREFIX : RIGHT_NODE_ID_PREFIX,
-    Math.random().toString(36).substring(2, 7),
-  ].join(NODE_ID_SEPARATOR); // need 5 characters for node id
+    suffix,
+  ].join(NODE_ID_SEPARATOR);
 }
 
 export function getNodeTypeFromId(id: string) {
