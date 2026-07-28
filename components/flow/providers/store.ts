@@ -369,6 +369,16 @@ function createMindmapStore({
           set({ aiEditNode });
         }
       },
+      aiTouchedNodeIds: [],
+      setAiTouchedNodeIds: (nodeIds) => {
+        if (readOnly) {
+          warnReadOnlyMutation("setAiTouchedNodeIds");
+          return;
+        }
+
+        // Created ids may arrive before their server-refreshed nodes mount.
+        set({ aiTouchedNodeIds: nodeIds });
+      },
       mindmapDB,
       pendingOps: [],
       flushedWatermark: 0,
@@ -412,6 +422,34 @@ function createMindmapStore({
         },
         retrySync: () => {
           set((state) => ({ syncRetryNonce: state.syncRetryNonce + 1 }));
+        },
+        flushNow: async () => {
+          const state = get();
+          return state.pendingOps.length === 0 && state.syncState === "idle";
+        },
+        registerFlushNow: (flushNow) => {
+          set((state) => ({
+            actions: { ...state.actions, flushNow },
+          }));
+
+          return () => {
+            if (get().actions.flushNow !== flushNow) {
+              return;
+            }
+
+            set((state) => ({
+              actions: {
+                ...state.actions,
+                flushNow: async () => {
+                  const current = get();
+                  return (
+                    current.pendingOps.length === 0 &&
+                    current.syncState === "idle"
+                  );
+                },
+              },
+            }));
+          };
         },
         markSyncRejected: (error) => {
           set({

@@ -7,7 +7,8 @@
 | `NEXT_PUBLIC_ENABLE_OAUTH` | `app/(auth-pages)/oauth-buttons.tsx` renders the Google and GitHub buttons on `/sign-in` and `/sign-up` only when this is exactly `"true"`. | Optional; leave unset in keyless development. | Set to `true` once P9 claims the Clerk instance and enables the Google and GitHub social connections in the Clerk dashboard. |
 | `CLERK_JWT_ISSUER_DOMAIN` | `convex/auth.config.ts` uses this issuer to validate Clerk JWTs when it is configured. | Optional in keyless/local runs; required in the Convex deployment environment after Clerk is claimed in P9. | Use the claimed Clerk instance's JWT issuer domain. |
 | `CONVEX_DEPLOYMENT` | The Convex CLI uses this deployment identifier for schema generation and local backend commands. | Required for Convex development commands. | Created by the anonymous local Convex setup and stored in `.env.local`. Production deployment values arrive in P9. |
-| `GROQ_API_KEY` | The AI generation and AI editing server actions in `actions/ai-gen.ts` and `actions/ai-edit.ts`. | Required when using AI generation or editing. | Create an API key in the Groq console. |
+| `ANTHROPIC_OAUTH_TOKEN` | The `/api/chat` route and AI generation/editing server actions authenticate Anthropic with a Bearer token. | Required for AI features; dev-local only. | Print an access token from the user's Claude subscription tooling, for example `ant auth print-credentials --access-token`. |
+| `SPRIG_AI_MODEL` | Selects the Anthropic model used by every Sprig AI path. | Optional; defaults to `claude-sonnet-5`. | Set an Anthropic model id only when overriding the default. |
 | `NEXT_PUBLIC_CONVEX_URL` | `providers/ConvexClientProvider.tsx` uses this deployment URL for browser queries and mutations. | Optional at build time; required at runtime once the frontend uses Convex data in P6. | Created by the anonymous local Convex setup and stored in `.env.local`. Production deployment values arrive in P9. |
 | `NEXT_PUBLIC_CONVEX_SITE_URL` | Reserved for future Convex HTTP actions; nothing consumes it until P8 adds HTTP actions. | Not user-configured. | The anonymous local Convex deployment writes `http://127.0.0.1:3214` (the local HTTP-actions port) to `.env.local`; cloud deployments use the deployment's `.convex.site` domain. |
 | `SUPABASE_URL` | The one-time `scripts/migrate-supabase-to-convex.ts` REST reader. | Required only while previewing or executing the legacy migration. | Copy the legacy project URL from its Supabase project settings. |
@@ -31,8 +32,13 @@ keyless instance has no OAuth credentials, so the buttons stay out of the markup
 entirely until the instance is claimed. The flag is read at module scope, so
 changing it requires a dev-server restart.
 
-The Groq path remains until P8. The unprefixed Supabase variables are temporary,
-operator-only migration inputs and are never exposed to the application bundle.
+`ANTHROPIC_OAUTH_TOKEN` is a dev-local credential sourced from the user's
+Claude subscription tooling. Never expose it through a `NEXT_PUBLIC_*` variable
+or commit it to the repository. The provider uses Bearer OAuth plus Anthropic's
+OAuth beta header and does not send `x-api-key`.
+
+The unprefixed Supabase variables are temporary, operator-only migration inputs
+and are never exposed to the application bundle.
 
 The P5 Convex provider tolerates a missing public URL during placeholder-env CI
 builds. Keep all local Clerk and Convex values in the gitignored `.env.local`.

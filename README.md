@@ -13,12 +13,13 @@ mindmap, supports AI-assisted branch editing, and stores mindmaps in Convex.
 - A Clerk `convex` JWT template for authenticated Convex reads; see
   [`docs/ENV.md`](docs/ENV.md). Keyless Clerk instances cannot create this
   template until they have been claimed.
-- A Groq API key for AI generation and editing
+- A dev-local Claude subscription OAuth token for AI generation and editing
 
 ### Setup
 
 1. Copy `.env.example` to `.env.local`.
-2. Set `GROQ_API_KEY`, `CONVEX_DEPLOYMENT`, and `NEXT_PUBLIC_CONVEX_URL`.
+2. Set `ANTHROPIC_OAUTH_TOKEN`, `CONVEX_DEPLOYMENT`, and
+   `NEXT_PUBLIC_CONVEX_URL`.
 3. Install the existing dependencies with `pnpm install`.
 4. Start the development server with `pnpm dev`.
 
@@ -53,3 +54,7 @@ The proxy runs on the Node.js runtime because Next.js 16 requires it. Session
 refreshes therefore run in a single region rather than on the global Edge
 network; the associated latency, cold-start, and billing implications are an
 accepted consequence of the upgrade.
+
+Authenticated `POST /api/chat` responses expose the active conversation id in
+the `x-sprig-thread-id` response header. The client should retain that value and
+send it as `threadId` on later turns; omitting it starts a new thread.

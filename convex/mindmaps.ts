@@ -329,20 +329,26 @@ export const listMine = query({
  * Undo restores the root title but intentionally does not restore mindmaps.name.
  */
 export const rename = mutation({
-  args: { mindmapId: v.id("mindmaps"), name: v.string() },
+  args: {
+    mindmapId: v.id("mindmaps"),
+    name: v.string(),
+    source: v.optional(v.union(v.literal("user"), v.literal("ai"))),
+  },
   handler: async (ctx, args) => {
     const { subject } = await requireOwner(ctx, args.mindmapId);
 
-    await applyOps(ctx, {
+    const operation = await applyOps(ctx, {
       mindmapId: args.mindmapId,
       ops: [{ kind: "update", nodeId: "root", patch: { title: args.name } }],
       actor: subject,
       description: "Renamed mindmap",
-      source: "user",
+      source: args.source ?? "user",
     });
     await ctx.db.patch("mindmaps", args.mindmapId, {
       name: args.name,
     });
+
+    return operation;
   },
 });
 

@@ -33,6 +33,8 @@ const UPDATE_FIELDS = new Set([
   "order",
   "type",
 ]);
+/** Matches the largest atomic generated-map batch accepted by mindmaps. */
+const MAX_OPS_PER_BATCH = 200;
 
 /**
  * Throws a consistently prefixed validation error for an operation batch.
@@ -598,6 +600,10 @@ export async function applyOps(
   ctx: MutationCtx,
   { mindmapId, ops, actor, description, source }: ApplyOpsArgs
 ): Promise<{ operationId: Id<"operations">; seq: number }> {
+  if (ops.length > MAX_OPS_PER_BATCH) {
+    throw new ConvexError("Invalid op: too many operations");
+  }
+
   const preImage = await validateOps(ctx, mindmapId, ops);
   const inversePatch = invertOps(ops, preImage);
   const latestOperation = await ctx.db
@@ -748,6 +754,29 @@ export const undoTo = mutation({
     });
 
     return { undoneCount, seq: target.seq };
+  },
+});
+
+/**
+ * Returns the ownership-relevant fields for one operation.
+ */
+export const getOperation = query({
+  args: { operationId: v.id("operations") },
+  handler: async (ctx, args) => {
+    const subject = await requireUser(ctx);
+    const operation = await ctx.db.get("operations", args.operationId);
+
+    if (operation === null) {
+      throw new ConvexError("Not found");
+    }
+
+    await requireOwner(ctx, operation.mindmapId, subject);
+
+    return {
+      mindmapId: operation.mindmapId,
+      seq: operation.seq,
+      undone: operation.undone,
+    };
   },
 });
 

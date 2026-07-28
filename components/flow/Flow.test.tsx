@@ -1,15 +1,45 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { PropsWithChildren, useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { AI_TOUCH_DURATION_MS } from "@/components/ai-panel/constants";
 import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 
 import Flow from "./Flow";
+import { useMindmapStoreApi } from "./providers/MindmapFlowProvider";
 
 vi.mock("@/actions/mindmap", () => ({
   editMindmapWithAI: vi.fn(),
+}));
+
+vi.mock("next/dynamic", () => ({
+  default: () =>
+    function DynamicPanelHarness({ children }: PropsWithChildren) {
+      return (
+        <>
+          <StoreHandle />
+          {children}
+        </>
+      );
+    },
+}));
+
+// The panel needs Convex and the AI SDK; this suite is about the canvas it
+// wraps, so the shell is reduced to a pass-through plus a store handle.
+vi.mock("@/components/ai-panel/AiPanelLayout", () => ({
+  AiPanelLayout: ({ children }: PropsWithChildren) => (
+    <>
+      <StoreHandle />
+      {children}
+    </>
+  ),
+}));
+
+// Autosave owns a Convex mutation that this suite has no client for.
+vi.mock("./hooks/useMindmapSync", () => ({
+  useMindmapSync: () => {},
 }));
 
 vi.mock("@xyflow/react", async (importOriginal) => {
@@ -26,7 +56,7 @@ vi.mock("@xyflow/react", async (importOriginal) => {
     onNodesChange,
   }: PropsWithChildren<{
     deleteKeyCode?: string | null;
-    nodes: Array<{ id: string; selected?: boolean }>;
+    nodes: Array<{ id: string; className?: string; selected?: boolean }>;
     onNodesChange?: (changes: Array<{ id: string; type: "remove" }>) => void;
   }>) {
     useEffect(() => {
@@ -49,6 +79,12 @@ vi.mock("@xyflow/react", async (importOriginal) => {
         <output data-testid="node-count">{nodes.length}</output>
         <output data-testid="selected-count">
           {nodes.filter((node) => node.selected).length}
+        </output>
+        <output data-testid="bloomed-nodes">
+          {nodes
+            .filter((node) => node.className?.includes("sprig-ai-touched"))
+            .map((node) => node.id)
+            .join(",")}
         </output>
         {children}
       </div>
@@ -90,7 +126,49 @@ describe("Flow", () => {
 
     expect(view.getByTestId("node-count").textContent).toBe("2");
   });
+
+  it("keeps the AI panel off a read-only canvas", () => {
+    const view = render(<Flow mindmap={MINDMAP} nodes={NODES} readOnly />);
+
+    expect(view.queryByTestId("store-handle")).toBeNull();
+  });
+
+  it("blooms AI-touched nodes and lets the pulse settle", () => {
+    vi.useFakeTimers();
+
+    try {
+      const view = render(
+        <Flow
+          mindmap={{ ...MINDMAP, isOwner: true }}
+          nodes={NODES}
+          readOnly={false}
+        />
+      );
+
+      expect(view.getByTestId("store-handle")).toBeDefined();
+      expect(view.getByTestId("bloomed-nodes").textContent).toBe("");
+
+      act(() => store.getState().setAiTouchedNodeIds(["left-child"]));
+
+      expect(view.getByTestId("bloomed-nodes").textContent).toBe("left-child");
+
+      // The highlight is a pulse of attention, not a permanent badge.
+      act(() => vi.advanceTimersByTime(AI_TOUCH_DURATION_MS));
+
+      expect(view.getByTestId("bloomed-nodes").textContent).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
+
+let store: ReturnType<typeof useMindmapStoreApi>;
+
+/** Captures the canvas store from inside the provider the way the panel does. */
+function StoreHandle() {
+  store = useMindmapStoreApi();
+  return <span data-testid="store-handle" />;
+}
 
 const MINDMAP: MindmapDB = {
   _id: "mindmaps:flow-fixture" as MindmapDB["_id"],

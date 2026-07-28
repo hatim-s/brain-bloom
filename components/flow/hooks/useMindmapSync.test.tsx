@@ -255,6 +255,27 @@ describe("useMindmapSync", () => {
     expect(store.getState().pendingOps).toEqual([]);
   });
 
+  it("flushNow drains a dirty queue and reports whether it is safe to navigate", async () => {
+    mutationMock.mockResolvedValue({ operationId: "operation-1", seq: 1 });
+    renderSyncHarness();
+
+    act(() => {
+      store
+        .getState()
+        .actions.onUpdateNode("right-child", { title: "Navigate safely" });
+    });
+
+    let saved = false;
+    await act(async () => {
+      saved = await store.getState().actions.flushNow();
+    });
+
+    expect(saved).toBe(true);
+    expect(mutationMock).toHaveBeenCalledOnce();
+    expect(store.getState().pendingOps).toEqual([]);
+    expect(store.getState().syncState).toBe("idle");
+  });
+
   it("restores persisted pages from queue truth and re-arms saving", async () => {
     mutationMock.mockResolvedValue({ operationId: "operation-1", seq: 1 });
     renderSyncHarness();

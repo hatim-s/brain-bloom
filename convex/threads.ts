@@ -35,11 +35,33 @@ export const listThreads = query({
 });
 
 /**
+ * Returns one owned thread so callers can validate its mindmap binding.
+ */
+export const getThread = query({
+  args: { threadId: v.id("threads") },
+  handler: async (ctx, args) => {
+    const subject = await requireUser(ctx);
+    const thread = await ctx.db.get("threads", args.threadId);
+
+    if (thread === null) {
+      throw new ConvexError("Not found");
+    }
+
+    await requireOwner(ctx, thread.mindmapId, subject);
+    return thread;
+  },
+});
+
+/**
  * Adds a user or assistant message to a thread on an owned mindmap.
+ *
+ * A client message id makes route retries converge on the existing row. The
+ * field remains optional so pre-P8 callers and existing documents stay valid.
  */
 export const addMessage = mutation({
   args: {
     threadId: v.id("threads"),
+    messageId: v.optional(v.string()),
     role: v.union(v.literal("user"), v.literal("assistant")),
     content: v.any(),
     operationId: v.optional(v.id("operations")),
@@ -53,6 +75,19 @@ export const addMessage = mutation({
     }
 
     await requireOwner(ctx, thread.mindmapId, subject);
+
+    if (args.messageId !== undefined) {
+      const existing = await ctx.db
+        .query("messages")
+        .withIndex("by_thread_message", (q) =>
+          q.eq("threadId", args.threadId).eq("messageId", args.messageId)
+        )
+        .unique();
+
+      if (existing !== null) {
+        return existing._id;
+      }
+    }
 
     if (args.operationId !== undefined) {
       const operation = await ctx.db.get("operations", args.operationId);
@@ -71,6 +106,7 @@ export const addMessage = mutation({
     return ctx.db.insert("messages", {
       mindmapId: thread.mindmapId,
       threadId: args.threadId,
+      messageId: args.messageId,
       role: args.role,
       content: args.content,
       operationId: args.operationId,

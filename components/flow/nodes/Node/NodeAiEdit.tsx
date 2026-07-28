@@ -1,4 +1,3 @@
-import { LoaderCircle } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { useMemo, useRef, useState, useTransition } from "react";
 
@@ -72,8 +71,9 @@ function getCurrentBranch(
 /**
  * Prompt box for extending a branch with the model.
  *
- * The pending state is the one place in the product that spends the bloom
- * accent on chrome, because here the chrome *is* the AI activity.
+ * It is the in-canvas shorthand for what the Sprig panel does at length, so it
+ * borrows the panel's vocabulary: mono status copy and the same bloom pulse
+ * dot, rather than a spinner of its own.
  */
 function NodeAiEdit() {
   const aiEditNode = useMindmapFlow((state) => state.aiEditNode);
@@ -81,6 +81,7 @@ function NodeAiEdit() {
   const prefersReducedMotion = useReducedMotion();
 
   const [value, setValue] = useState("");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const textareaRef = useRef<AutosizeTextAreaRef>(null);
 
@@ -101,14 +102,25 @@ function NodeAiEdit() {
   const handleSubmit = useEventCallback(async () => {
     const currentBranch = getCurrentBranch(mindmapNodesMap, activeNodeId);
 
-    let aiResponse: Awaited<ReturnType<typeof editMindmapWithAI>>;
-
     startTransition(async () => {
-      aiResponse = await editMindmapWithAI(
+      setErrorMessage(null);
+      const aiResponse = await editMindmapWithAI(
         value,
         currentBranch,
         activeNodeId ?? ""
       );
+
+      if (!aiResponse.ok) {
+        setErrorMessage(
+          aiResponse.code === "not-configured"
+            ? "AI is not configured."
+            : aiResponse.code === "too-many-nodes"
+              ? "Sprig returned too many nodes. Try a narrower request."
+              : "Sprig could not grow this branch. Try again."
+        );
+        return;
+      }
+
       const edgesMap = [...edges, ...aiResponse.editedMindmap.edges].reduce(
         (acc, edge) => {
           acc[edge.target] = edge.source;
@@ -174,27 +186,49 @@ function NodeAiEdit() {
   return (
     <Box>
       <AutosizeTextarea
-        className="h-full w-full !min-h-[30px] !outline-hidden !border-none resize-none"
+        // The focus ring is never suppressed; it is only pulled flush with the
+        // popover edge, which the borderless field sits directly against.
+        className="h-full w-full !min-h-[30px] !border-none resize-none rounded-md px-3 py-2.5 text-sm focus-visible:outline-offset-0"
+        disabled={isPending}
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        placeholder="Ask the model to grow this branch"
+        placeholder="Ask Sprig to grow this branch"
         ref={textareaRef}
       />
       {isPending && (
         <motion.div
-          className="absolute top-0 left-0 flex flex-row items-center justify-center gap-x-2 rounded-md bg-popover text-bloom"
+          className="absolute top-0 left-0 flex flex-row items-center justify-center gap-x-2 rounded-md bg-popover"
           style={textAreaDimensions}
           initial={prefersReducedMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+          role="status"
         >
-          <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
-          <Typography className="text-sm font-medium" variant="p">
+          <span aria-hidden="true" className="sprig-bloom-dot" />
+          <Typography
+            className="font-mono text-[11px] uppercase tracking-[0.09em] text-muted-foreground"
+            variant="p"
+          >
             Growing this branch
           </Typography>
         </motion.div>
       )}
+      {errorMessage ? (
+        <div
+          className="absolute left-0 top-full z-10 mt-1 flex w-full items-center gap-2 rounded-md border border-destructive bg-card px-2.5 py-2 text-sm font-medium text-destructive"
+          role="alert"
+        >
+          <span className="flex-1">{errorMessage}</span>
+          <button
+            className="underline underline-offset-2"
+            onClick={() => void handleSubmit()}
+            type="button"
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
     </Box>
   );
 }
