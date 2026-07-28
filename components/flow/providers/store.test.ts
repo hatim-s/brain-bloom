@@ -166,16 +166,13 @@ function createStoreFixture(): {
   return { mindmapDB, initialNodes, initialEdges };
 }
 
-/**
- * Checks the source-to-derived invariant while preserving the known trailing
- * empty level produced by generateLeveledNodes.
- */
+/** Checks that every source node appears in exactly one non-empty derived level. */
 function expectDerivedStateInvariant(state: MindmapStore): void {
   expect(Object.keys(state.nodesMap).sort()).toEqual(
     state.nodes.map((node) => node.id).sort()
   );
 
-  expect(state.leveledNodes.at(-1)).toEqual([]);
+  expect(state.leveledNodes.every((level) => level.length > 0)).toBe(true);
   expect(
     state.leveledNodes
       .flat()

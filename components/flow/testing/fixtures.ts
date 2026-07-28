@@ -111,7 +111,6 @@ function buildMindmapFixture() {
       [root],
       [leftA, rightA, leftB, rightB],
       [leftAGrandchild, rightAGrandchild, leftBGrandchild, rightBGrandchild],
-      [],
     ],
   };
 }

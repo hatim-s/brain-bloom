@@ -1,34 +1,30 @@
 import { ROOT_NODE_ID } from "../const";
 import { MindmapNode } from "../types";
 
+/** Groups every reachable mindmap node into breadth-first levels. */
 export function generateLeveledNodes(
   mindmapNodesMap: Record<string, MindmapNode>
 ): MindmapNode[][] {
-  const queue: (MindmapNode | null)[] = [mindmapNodesMap[ROOT_NODE_ID], null];
+  const rootNode = mindmapNodesMap[ROOT_NODE_ID];
+  if (!rootNode) return [];
 
-  const leveledNodes: MindmapNode[][] = [[]];
+  const leveledNodes: MindmapNode[][] = [];
+  let currentLevel = [rootNode];
 
-  while (queue.length > 0) {
-    const currentNode = queue.shift();
-    if (!currentNode) {
-      // we have reached the end of the current level
-      // and we use `null` to indicate the end of the current level
-      leveledNodes.push([]);
+  while (currentLevel.length > 0) {
+    leveledNodes.push(currentLevel);
+    const nextLevel: MindmapNode[] = [];
 
-      if (queue.length === 0) {
-        // we have reached the end of the last level
-        break;
+    for (const currentNode of currentLevel) {
+      for (const childId of Array.from(currentNode.children.keys())) {
+        const childNode = mindmapNodesMap[childId];
+        if (childNode) {
+          nextLevel.push(childNode);
+        }
       }
-
-      // else we put a `null` to indicate the end of the current level
-      queue.push(null);
-      continue;
     }
 
-    const children = Array.from(currentNode.children.keys());
-
-    queue.push(...children.map((childId) => mindmapNodesMap[childId]));
-    leveledNodes[leveledNodes.length - 1].push(currentNode);
+    currentLevel = nextLevel;
   }
 
   return leveledNodes;

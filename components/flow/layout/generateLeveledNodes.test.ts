@@ -4,7 +4,7 @@ import { ROOT_NODE_ID } from "@/components/flow/const";
 import { generateLeveledNodes } from "@/components/flow/layout/generateLeveledNodes";
 import { MindmapNode, NodeTypes } from "@/components/flow/types";
 
-/** Characterization — pins breadth-first level grouping before the P3 migrations. */
+/** Verifies breadth-first level grouping for complete and desynced node maps. */
 describe("generateLeveledNodes", () => {
   it("groups a root and its left and right children by level", () => {
     const leftOne = createMindmapNode("l-one", NodeTypes.LEFT, ROOT_NODE_ID, 1);
@@ -30,13 +30,9 @@ describe("generateLeveledNodes", () => {
       [rightTwo.id]: rightTwo,
     };
 
-    // KNOWN BUG (P3): the algorithm pushes a level before testing for termination, so
-    // every result carries a trailing empty level. Asserted here to pin today's behavior;
-    // when P3 removes it, delete the trailing `[]` instead of reverting the fix.
     expect(generateLeveledNodes(nodes)).toEqual([
       [root],
       [leftOne, leftTwo, rightOne, rightTwo],
-      [],
     ]);
   });
 
@@ -61,24 +57,16 @@ describe("generateLeveledNodes", () => {
       [grandchild.id]: grandchild,
     };
 
-    // KNOWN BUG (P3): the algorithm pushes a level before testing for termination, so
-    // every result carries a trailing empty level. Asserted here to pin today's behavior;
-    // when P3 removes it, delete the trailing `[]` instead of reverting the fix.
     expect(generateLeveledNodes(nodes)).toEqual([
       [root],
       [child],
       [grandchild],
-      [],
     ]);
   });
 
-  // generateLeveledNodes currently loops forever on an empty map: the root lookup yields
-  // `undefined`, which is indistinguishable from the `null` level sentinel, so the queue
-  // never drains. Fixing that is P3's job (canvas hardening); this records the contract.
-  // P3d will make this input terminate safely.
-  it.todo(
-    "returns an empty result for an empty node map instead of looping forever"
-  );
+  it("returns an empty result for an empty node map", () => {
+    expect(generateLeveledNodes({})).toEqual([]);
+  });
 });
 
 function createRootNode(children: MindmapNode[]): MindmapNode {
@@ -109,7 +97,7 @@ function createMindmapNode(
   };
 }
 
-/** Characterization — pins bilateral insertion order and the P3d trailing-level bug. */
+/** Verifies bilateral insertion order across breadth-first levels. */
 describe("generateLeveledNodes bilateral traversal", () => {
   it("groups three bilateral levels in child insertion order", () => {
     const leftAGrandchild = createMindmapNode(
@@ -165,12 +153,38 @@ describe("generateLeveledNodes bilateral traversal", () => {
       [root],
       [leftA, rightA, leftB, rightB],
       [leftAGrandchild, rightAGrandchild, leftBGrandchild, rightBGrandchild],
-      [],
     ]);
   });
 
-  // P3d will make a missing child id terminate safely instead of looping forever.
-  it.todo(
-    "handles a dangling child id without entering an infinite traversal loop"
-  );
+  it("skips a dangling child id and continues traversing valid children", () => {
+    const leftChild = createMindmapNode(
+      "l-child",
+      NodeTypes.LEFT,
+      ROOT_NODE_ID,
+      1
+    );
+    const danglingChild = createMindmapNode(
+      "r-missing",
+      NodeTypes.RIGHT,
+      ROOT_NODE_ID,
+      1
+    );
+    const rightChild = createMindmapNode(
+      "r-child",
+      NodeTypes.RIGHT,
+      ROOT_NODE_ID,
+      1
+    );
+    const root = createRootNode([leftChild, danglingChild, rightChild]);
+    const nodes = {
+      [root.id]: root,
+      [leftChild.id]: leftChild,
+      [rightChild.id]: rightChild,
+    };
+
+    expect(generateLeveledNodes(nodes)).toEqual([
+      [root],
+      [leftChild, rightChild],
+    ]);
+  });
 });
