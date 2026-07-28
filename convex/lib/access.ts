@@ -1,3 +1,5 @@
+import { ConvexError } from "convex/values";
+
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
@@ -15,7 +17,7 @@ export async function requireUser(ctx: AuthenticatedCtx): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
 
   if (identity === null) {
-    throw new Error("Unauthenticated");
+    throw new ConvexError("Unauthenticated");
   }
 
   return identity.subject;
@@ -33,11 +35,11 @@ export async function requireOwner(
   const mindmap = await ctx.db.get("mindmaps", mindmapId);
 
   if (mindmap === null) {
-    throw new Error("Not found");
+    throw new ConvexError("Not found");
   }
 
   if (mindmap.ownerId !== subject) {
-    throw new Error("Forbidden");
+    throw new ConvexError("Forbidden");
   }
 
   return { mindmap, subject };
@@ -55,11 +57,11 @@ export async function requireReadable(
   const mindmap = await ctx.db.get("mindmaps", mindmapId);
 
   if (mindmap === null) {
-    throw new Error("Not found");
+    throw new ConvexError("Not found");
   }
 
   if (mindmap.ownerId !== subject && mindmap.visibility !== "shared") {
-    throw new Error("Forbidden");
+    throw new ConvexError("Forbidden");
   }
 
   return { mindmap, subject };

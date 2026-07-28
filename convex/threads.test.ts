@@ -84,11 +84,13 @@ describe("threads", () => {
       assistantMessageId,
     ]);
     expect(messages[0]).toMatchObject({
+      mindmapId: map.mindmapId,
       role: "user",
       content: [{ type: "text", text: "Review this" }],
     });
     expect(messages[0].operationId).toBeUndefined();
     expect(messages[1]).toMatchObject({
+      mindmapId: map.mindmapId,
       role: "assistant",
       operationId: operation.operationId,
     });

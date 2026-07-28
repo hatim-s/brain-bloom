@@ -1,10 +1,11 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { requireOwner, requireReadable, requireUser } from "./lib/access";
+import { applyOps } from "./ops";
 
 const PUBLIC_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const PUBLIC_ID_LENGTH = 10;
@@ -51,6 +52,30 @@ function sortNodesByParentAndOrder<
     );
     return parentComparison || left.order - right.order;
   });
+}
+
+/**
+ * Projects a mindmap for reads without exposing its owner's auth subject.
+ */
+function projectMindmap(
+  mindmap: {
+    _id: Id<"mindmaps">;
+    publicId: string;
+    name: string;
+    ownerId: string;
+    visibility: "private" | "shared";
+    updatedAt: number;
+  },
+  subject: string
+) {
+  return {
+    _id: mindmap._id,
+    publicId: mindmap.publicId,
+    name: mindmap.name,
+    visibility: mindmap.visibility,
+    updatedAt: mindmap.updatedAt,
+    isOwner: subject === mindmap.ownerId,
+  };
 }
 
 /**
@@ -101,13 +126,16 @@ export const create = mutation({
 export const get = query({
   args: { mindmapId: v.id("mindmaps") },
   handler: async (ctx, args) => {
-    const { mindmap } = await requireReadable(ctx, args.mindmapId);
+    const { mindmap, subject } = await requireReadable(ctx, args.mindmapId);
     const nodes = await ctx.db
       .query("nodes")
       .withIndex("by_mindmap", (q) => q.eq("mindmapId", args.mindmapId))
       .collect();
 
-    return { mindmap, nodes: sortNodesByParentAndOrder(nodes) };
+    return {
+      mindmap: projectMindmap(mindmap, subject),
+      nodes: sortNodesByParentAndOrder(nodes),
+    };
   },
 });
 
@@ -124,7 +152,7 @@ export const getByPublicId = query({
       .unique();
 
     if (resolvedMindmap === null) {
-      throw new Error("Not found");
+      throw new ConvexError("Not found");
     }
 
     // Private public IDs must not disclose whether another user's map exists.
@@ -132,7 +160,7 @@ export const getByPublicId = query({
       resolvedMindmap.ownerId !== subject &&
       resolvedMindmap.visibility !== "shared"
     ) {
-      throw new Error("Not found");
+      throw new ConvexError("Not found");
     }
 
     const nodes = await ctx.db
@@ -141,7 +169,7 @@ export const getByPublicId = query({
       .collect();
 
     return {
-      mindmap: resolvedMindmap,
+      mindmap: projectMindmap(resolvedMindmap, subject),
       nodes: sortNodesByParentAndOrder(nodes),
     };
   },
@@ -159,33 +187,31 @@ export const listMine = query({
       .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
       .collect();
 
-    return mindmaps.sort((left, right) => right.updatedAt - left.updatedAt);
+    return mindmaps
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .map((mindmap) => projectMindmap(mindmap, ownerId));
   },
 });
 
 /**
- * Renames an owned mindmap and records its latest mutation time.
+ * Renames an owned mindmap and records the root-title change as an operation.
+ * Undo restores the root title but intentionally does not restore mindmaps.name.
  */
 export const rename = mutation({
   args: { mindmapId: v.id("mindmaps"), name: v.string() },
   handler: async (ctx, args) => {
-    await requireOwner(ctx, args.mindmapId);
-    const root = await ctx.db
-      .query("nodes")
-      .withIndex("by_mindmap_node", (q) =>
-        q.eq("mindmapId", args.mindmapId).eq("nodeId", "root")
-      )
-      .unique();
+    const { subject } = await requireOwner(ctx, args.mindmapId);
 
-    if (root === null) {
-      throw new Error("Not found");
-    }
-
+    await applyOps(ctx, {
+      mindmapId: args.mindmapId,
+      ops: [{ kind: "update", nodeId: "root", patch: { title: args.name } }],
+      actor: subject,
+      description: "Renamed mindmap",
+      source: "user",
+    });
     await ctx.db.patch("mindmaps", args.mindmapId, {
       name: args.name,
-      updatedAt: Date.now(),
     });
-    await ctx.db.patch("nodes", root._id, { title: args.name });
   },
 });
 
@@ -210,28 +236,32 @@ export const purgeBatch = internalMutation({
   args: { mindmapId: v.id("mindmaps") },
   handler: async (ctx, args): Promise<void> => {
     let remaining = PURGE_BATCH_SIZE;
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("by_mindmap", (q) => q.eq("mindmapId", args.mindmapId))
+      .take(remaining);
+
+    for (const message of messages) {
+      await ctx.db.delete("messages", message._id);
+      remaining -= 1;
+    }
+
+    // Messages are independent of thread retention, so delete them first.
+    if (remaining === 0) {
+      if (await hasPurgeRows(ctx, args.mindmapId)) {
+        await ctx.scheduler.runAfter(0, internal.mindmaps.purgeBatch, {
+          mindmapId: args.mindmapId,
+        });
+      }
+      return;
+    }
+
     const threads = await ctx.db
       .query("threads")
       .withIndex("by_mindmap", (q) => q.eq("mindmapId", args.mindmapId))
       .take(remaining);
 
     for (const thread of threads) {
-      const messageLimit = remaining;
-      const messages = await ctx.db
-        .query("messages")
-        .withIndex("by_thread", (q) => q.eq("threadId", thread._id))
-        .take(messageLimit);
-
-      for (const message of messages) {
-        await ctx.db.delete("messages", message._id);
-        remaining -= 1;
-      }
-
-      // A full message page consumes the batch; delete the thread next run.
-      if (remaining === 0) {
-        break;
-      }
-
       await ctx.db.delete("threads", thread._id);
       remaining -= 1;
 
@@ -277,7 +307,11 @@ async function hasPurgeRows(
   ctx: MutationCtx,
   mindmapId: Id<"mindmaps">
 ): Promise<boolean> {
-  const [thread, node, operation] = await Promise.all([
+  const [message, thread, node, operation] = await Promise.all([
+    ctx.db
+      .query("messages")
+      .withIndex("by_mindmap", (q) => q.eq("mindmapId", mindmapId))
+      .first(),
     ctx.db
       .query("threads")
       .withIndex("by_mindmap", (q) => q.eq("mindmapId", mindmapId))
@@ -292,5 +326,7 @@ async function hasPurgeRows(
       .first(),
   ]);
 
-  return thread !== null || node !== null || operation !== null;
+  return (
+    message !== null || thread !== null || node !== null || operation !== null
+  );
 }

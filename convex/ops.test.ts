@@ -1268,13 +1268,13 @@ describe("ops.undo and history", () => {
   it("returns newest-first paginated history and records AI source", async () => {
     const { t, asAlice, asBob } = createHarness();
     const map = await createMindmap(asAlice);
-    await asAlice.mutation(api.ops.apply, {
+    const firstOperation = await asAlice.mutation(api.ops.apply, {
       mindmapId: map.mindmapId,
       ops: [],
       description: "User edit",
       source: "user",
     });
-    await asAlice.mutation(api.ops.apply, {
+    const secondOperation = await asAlice.mutation(api.ops.apply, {
       mindmapId: map.mindmapId,
       ops: [],
       description: "AI edit",
@@ -1307,7 +1307,8 @@ describe("ops.undo and history", () => {
 
     expect(
       [...firstPage.page, ...secondPage.page].map(
-        ({ seq, description, source, undone }) => ({
+        ({ _id, seq, description, source, undone }) => ({
+          _id,
           seq,
           description,
           source,
@@ -1316,12 +1317,14 @@ describe("ops.undo and history", () => {
       )
     ).toEqual([
       {
+        _id: secondOperation.operationId,
         seq: 2,
         description: "AI edit",
         source: "ai",
         undone: false,
       },
       {
+        _id: firstOperation.operationId,
         seq: 1,
         description: "User edit",
         source: "user",

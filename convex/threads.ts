@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import { mutation, query } from "./_generated/server";
 import { requireOwner, requireUser } from "./lib/access";
@@ -49,7 +49,7 @@ export const addMessage = mutation({
     const thread = await ctx.db.get("threads", args.threadId);
 
     if (thread === null) {
-      throw new Error("Not found");
+      throw new ConvexError("Not found");
     }
 
     await requireOwner(ctx, thread.mindmapId, subject);
@@ -58,15 +58,18 @@ export const addMessage = mutation({
       const operation = await ctx.db.get("operations", args.operationId);
 
       if (operation === null) {
-        throw new Error("Not found");
+        throw new ConvexError("Not found");
       }
 
       if (operation.mindmapId !== thread.mindmapId) {
-        throw new Error("Invalid op: operation belongs to another mindmap");
+        throw new ConvexError(
+          "Invalid op: operation belongs to another mindmap"
+        );
       }
     }
 
     return ctx.db.insert("messages", {
+      mindmapId: thread.mindmapId,
       threadId: args.threadId,
       role: args.role,
       content: args.content,
@@ -85,7 +88,7 @@ export const listMessages = query({
     const thread = await ctx.db.get("threads", args.threadId);
 
     if (thread === null) {
-      throw new Error("Not found");
+      throw new ConvexError("Not found");
     }
 
     await requireOwner(ctx, thread.mindmapId, subject);

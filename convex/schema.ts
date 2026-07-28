@@ -44,9 +44,12 @@ export default defineSchema({
   }).index("by_mindmap", ["mindmapId"]),
 
   messages: defineTable({
+    mindmapId: v.id("mindmaps"),
     threadId: v.id("threads"),
     role: v.union(v.literal("user"), v.literal("assistant")),
     content: v.any(),
     operationId: v.optional(v.id("operations")),
-  }).index("by_thread", ["threadId"]),
+  })
+    .index("by_thread", ["threadId"])
+    .index("by_mindmap", ["mindmapId"]),
 });

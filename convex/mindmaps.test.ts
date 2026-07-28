@@ -33,10 +33,11 @@ describe("mindmaps", () => {
     expect(created.publicId).toMatch(/^[a-z0-9]{10}$/);
     expect(result.mindmap).toMatchObject({
       name: "Launch plan",
-      ownerId: "alice",
       publicId: created.publicId,
       visibility: "private",
+      isOwner: true,
     });
+    expect(result.mindmap).not.toHaveProperty("ownerId");
     expect(result.nodes).toHaveLength(1);
     expect(result.nodes[0]).toMatchObject({
       mindmapId: created.mindmapId,
@@ -59,6 +60,8 @@ describe("mindmaps", () => {
     });
 
     expect(result.mindmap._id).toBe(created.mindmapId);
+    expect(result.mindmap.isOwner).toBe(true);
+    expect(result.mindmap).not.toHaveProperty("ownerId");
     expect(result.nodes.map((node) => node.nodeId)).toEqual(["root"]);
   });
 
@@ -79,10 +82,12 @@ describe("mindmaps", () => {
     const mine = await asAlice.query(api.mindmaps.listMine, {});
 
     expect(mine.map((mindmap) => mindmap.name)).toEqual(["Newer", "Older"]);
+    expect(mine.every((mindmap) => mindmap.isOwner)).toBe(true);
+    expect(mine.every((mindmap) => !("ownerId" in mindmap))).toBe(true);
   });
 
-  it("renames an owned mindmap and bumps its updated time", async () => {
-    const { asAlice } = createHarness();
+  it("renames through history and undo restores only the root title", async () => {
+    const { t, asAlice } = createHarness();
     const created = await asAlice.mutation(api.mindmaps.create, {
       name: "Before",
     });
@@ -104,6 +109,36 @@ describe("mindmaps", () => {
     );
     expect(after.mindmap.updatedAt).toBeGreaterThanOrEqual(
       before.mindmap.updatedAt
+    );
+
+    const renameOperationId = await t.run(async (ctx) => {
+      const operation = await ctx.db
+        .query("operations")
+        .withIndex("by_mindmap_seq", (q) =>
+          q.eq("mindmapId", created.mindmapId)
+        )
+        .unique();
+
+      expect(operation).toMatchObject({
+        description: "Renamed mindmap",
+        actor: "alice",
+        source: "user",
+        undone: false,
+      });
+      return operation?._id;
+    });
+    expect(renameOperationId).toBeDefined();
+
+    await asAlice.mutation(api.ops.undo, {
+      operationId: renameOperationId!,
+    });
+    const undone = await asAlice.query(api.mindmaps.get, {
+      mindmapId: created.mindmapId,
+    });
+
+    expect(undone.mindmap.name).toBe("After");
+    expect(undone.nodes.find((node) => node.nodeId === "root")?.title).toBe(
+      "Before"
     );
   });
 
@@ -166,6 +201,10 @@ describe("mindmaps", () => {
 
     expect(byId.mindmap._id).toBe(created.mindmapId);
     expect(byPublicId.mindmap._id).toBe(created.mindmapId);
+    expect(byId.mindmap.isOwner).toBe(false);
+    expect(byPublicId.mindmap.isOwner).toBe(false);
+    expect(byId.mindmap).not.toHaveProperty("ownerId");
+    expect(byPublicId.mindmap).not.toHaveProperty("ownerId");
     await expect(
       asBob.mutation(api.mindmaps.rename, {
         mindmapId: created.mindmapId,
@@ -276,15 +315,26 @@ describe("mindmaps", () => {
       content: [{ type: "text", text: "Done" }],
       operationId: operation.operationId,
     });
+    const orphanThreadId = await asAlice.mutation(api.threads.createThread, {
+      mindmapId: created.mindmapId,
+      title: "Deleted thread",
+    });
+    const orphanMessageId = await asAlice.mutation(api.threads.addMessage, {
+      threadId: orphanThreadId,
+      role: "user",
+      content: "Must remain reachable after thread deletion",
+    });
     await t.run(async (ctx) => {
       // Cross the 200-row cleanup boundary so the rescheduled purge is tested.
       for (let index = 0; index < 205; index += 1) {
         await ctx.db.insert("messages", {
+          mindmapId: created.mindmapId,
           threadId,
           role: "assistant",
           content: `Queued ${index}`,
         });
       }
+      await ctx.db.delete("threads", orphanThreadId);
     });
     const nodeIds = await t.run(async (ctx) => {
       const nodes = await ctx.db
@@ -310,11 +360,13 @@ describe("mindmaps", () => {
       operation: await ctx.db.get("operations", operation.operationId),
       thread: await ctx.db.get("threads", threadId),
       message: await ctx.db.get("messages", messageId),
+      orphanMessage: await ctx.db.get("messages", orphanMessageId),
     }));
     expect(beforePurge.node).not.toBeNull();
     expect(beforePurge.operation).not.toBeNull();
     expect(beforePurge.thread).not.toBeNull();
     expect(beforePurge.message).not.toBeNull();
+    expect(beforePurge.orphanMessage).not.toBeNull();
 
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     vi.useRealTimers();
@@ -327,6 +379,7 @@ describe("mindmaps", () => {
       operation: await ctx.db.get("operations", operation.operationId),
       thread: await ctx.db.get("threads", threadId),
       message: await ctx.db.get("messages", messageId),
+      orphanMessage: await ctx.db.get("messages", orphanMessageId),
       messageCount: (
         await ctx.db
           .query("messages")
@@ -340,6 +393,7 @@ describe("mindmaps", () => {
       operation: null,
       thread: null,
       message: null,
+      orphanMessage: null,
       messageCount: 0,
     });
   });

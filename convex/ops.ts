@@ -1,5 +1,5 @@
 import { paginationOptsValidator } from "convex/server";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
@@ -17,6 +17,14 @@ type MutableNodeState = {
   snapshot: NodeSnapshot;
 };
 
+type ApplyOpsArgs = {
+  mindmapId: Id<"mindmaps">;
+  ops: NodeOp[];
+  actor: string;
+  description: string;
+  source: Doc<"operations">["source"];
+};
+
 const UPDATE_FIELDS = new Set([
   "title",
   "description",
@@ -30,7 +38,7 @@ const UPDATE_FIELDS = new Set([
  * Throws a consistently prefixed validation error for an operation batch.
  */
 function invalidOp(reason: string): never {
-  throw new Error(`Invalid op: ${reason}`);
+  throw new ConvexError(`Invalid op: ${reason}`);
 }
 
 /**
@@ -583,8 +591,42 @@ function deserializeInverseOps(value: unknown): NodeOp[] {
 }
 
 /**
- * Applies a validated node-operation batch and records its inverse atomically.
+ * Validates, applies, and records an operation batch atomically for an actor.
  * Reorder = batch update: submit every changed sibling order together.
+ */
+export async function applyOps(
+  ctx: MutationCtx,
+  { mindmapId, ops, actor, description, source }: ApplyOpsArgs
+): Promise<{ operationId: Id<"operations">; seq: number }> {
+  const preImage = await validateOps(ctx, mindmapId, ops);
+  const inversePatch = invertOps(ops, preImage);
+  const latestOperation = await ctx.db
+    .query("operations")
+    .withIndex("by_mindmap_seq", (q) => q.eq("mindmapId", mindmapId))
+    .order("desc")
+    .first();
+  const seq = (latestOperation?.seq ?? 0) + 1;
+
+  await writeOps(ctx, mindmapId, ops);
+  const operationId = await ctx.db.insert("operations", {
+    mindmapId,
+    seq,
+    description,
+    patch: serializeOps(ops),
+    inversePatch: serializeOps(inversePatch),
+    undone: false,
+    actor,
+    source,
+  });
+  await ctx.db.patch("mindmaps", mindmapId, {
+    updatedAt: Date.now(),
+  });
+
+  return { operationId, seq };
+}
+
+/**
+ * Applies a caller-provided node-operation batch and records its inverse.
  */
 export const apply = mutation({
   args: {
@@ -596,31 +638,14 @@ export const apply = mutation({
   handler: async (ctx, args) => {
     const { subject } = await requireOwner(ctx, args.mindmapId);
     const ops = parseOps(args.ops);
-    const preImage = await validateOps(ctx, args.mindmapId, ops);
-    const inversePatch = invertOps(ops, preImage);
-    const latestOperation = await ctx.db
-      .query("operations")
-      .withIndex("by_mindmap_seq", (q) => q.eq("mindmapId", args.mindmapId))
-      .order("desc")
-      .first();
-    const seq = (latestOperation?.seq ?? 0) + 1;
 
-    await writeOps(ctx, args.mindmapId, ops);
-    const operationId = await ctx.db.insert("operations", {
+    return applyOps(ctx, {
       mindmapId: args.mindmapId,
-      seq,
-      description: args.description,
-      patch: serializeOps(ops),
-      inversePatch: serializeOps(inversePatch),
-      undone: false,
+      ops,
       actor: subject,
+      description: args.description,
       source: args.source,
     });
-    await ctx.db.patch("mindmaps", args.mindmapId, {
-      updatedAt: Date.now(),
-    });
-
-    return { operationId, seq };
   },
 });
 
@@ -634,13 +659,13 @@ export const undo = mutation({
     const operation = await ctx.db.get("operations", args.operationId);
 
     if (operation === null) {
-      throw new Error("Not found");
+      throw new ConvexError("Not found");
     }
 
     await requireOwner(ctx, operation.mindmapId, subject);
 
     if (operation.undone) {
-      throw new Error("Already undone");
+      throw new ConvexError("Already undone");
     }
 
     const operations = ctx.db
@@ -659,7 +684,7 @@ export const undo = mutation({
     }
 
     if (latestActive?._id !== operation._id) {
-      throw new Error("Undo out of order");
+      throw new ConvexError("Undo out of order");
     }
 
     const inversePatch = deserializeInverseOps(operation.inversePatch);
@@ -684,13 +709,13 @@ export const undoTo = mutation({
     const target = await ctx.db.get("operations", args.operationId);
 
     if (target === null) {
-      throw new Error("Not found");
+      throw new ConvexError("Not found");
     }
 
     await requireOwner(ctx, target.mindmapId, subject);
 
     if (target.undone) {
-      throw new Error("Already undone");
+      throw new ConvexError("Already undone");
     }
 
     const operations = ctx.db
@@ -740,7 +765,8 @@ export const history = query({
     return {
       ...result,
       page: result.page.map(
-        ({ seq, description, undone, source, _creationTime }) => ({
+        ({ _id, seq, description, undone, source, _creationTime }) => ({
+          _id,
           seq,
           description,
           undone,
