@@ -1,44 +1,84 @@
 import { fetchQuery } from "convex/nextjs";
+import { Plus } from "lucide-react";
 import Link from "next/link";
 import { Suspense } from "react";
 
 import { ConvexAuthNotice } from "@/components/convex-auth-notice";
-import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import { getConvexAuthToken } from "@/lib/convex-server";
 import { MindmapDB } from "@/types/Mindmap";
 
-/** Formats a persisted update timestamp for the server-rendered card. */
-function formatUpdatedAt(updatedAt: number): string {
+import { formatRelativeUpdatedAt } from "./relative-time";
+
+/** One grid definition shared by the cards, the empty state and the skeleton. */
+const CARD_GRID_CLASS = "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3";
+
+/** Every card is the same block: a hairline, the card surface, one height. */
+const CARD_CLASS =
+  "flex h-full min-h-[8.5rem] flex-col gap-3 rounded-lg p-5 transition-colors duration-200 ease-organic motion-reduce:transition-none";
+
+/** Spells out a timestamp for the hover title, behind the relative phrase. */
+function formatExactUpdatedAt(updatedAt: number): string {
   return new Intl.DateTimeFormat("en", {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(updatedAt));
 }
 
-/** Renders one owned map with its last update and canonical canvas link. */
-function MindmapCard({ mindmap }: { mindmap: MindmapDB }) {
-  const updatedAt = formatUpdatedAt(mindmap.updatedAt);
-
+/**
+ * Renders one owned map as a single link target.
+ *
+ * The whole card is the anchor rather than a "Open map" link inside it, so the
+ * pointer target and the keyboard target are the same object and the focus ring
+ * traces the card the user is actually about to open.
+ */
+function MindmapCard({ mindmap, now }: { mindmap: MindmapDB; now: number }) {
   return (
-    <li className="rounded-lg border border-line-strong bg-card p-5">
-      <article className="flex h-full flex-col items-start gap-3">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-lg font-medium">{mindmap.name}</h2>
-          <p className="text-sm text-muted-foreground">
-            Updated{" "}
-            <time dateTime={new Date(mindmap.updatedAt).toISOString()}>
-              {updatedAt}
-            </time>
-          </p>
-        </div>
-        <Link
-          className="mt-auto font-medium text-primary underline underline-offset-4"
-          href={`/maps/${mindmap.publicId}`}
+    <li>
+      <Link
+        className={`${CARD_CLASS} border border-line-strong bg-card text-card-foreground hover:bg-accent`}
+        href={`/maps/${mindmap.publicId}`}
+      >
+        <h2 className="line-clamp-2 text-base font-medium leading-snug">
+          {mindmap.name}
+        </h2>
+        <p className="mt-auto font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+          <time
+            dateTime={new Date(mindmap.updatedAt).toISOString()}
+            title={formatExactUpdatedAt(mindmap.updatedAt)}
+          >
+            {formatRelativeUpdatedAt(mindmap.updatedAt, now)}
+          </time>
+        </p>
+      </Link>
+    </li>
+  );
+}
+
+/**
+ * The one way to start a map, wherever the grid is shown.
+ *
+ * A dashed hairline marks it as an empty slot rather than an existing map, and
+ * it is deliberately the same size and shape as one so the grid stays even.
+ */
+function NewMapCard() {
+  return (
+    <li>
+      <Link
+        className={`${CARD_CLASS} border border-dashed border-line-strong text-muted-foreground hover:border-primary hover:text-foreground`}
+        href="/new"
+      >
+        <span
+          aria-hidden="true"
+          className="flex size-8 items-center justify-center rounded-sm border border-dashed border-line-strong"
         >
-          Open map
-        </Link>
-      </article>
+          <Plus className="size-4" />
+        </span>
+        <span className="mt-auto text-base font-medium text-foreground">
+          New map
+        </span>
+        <span className="text-sm">Start from a blank canvas.</span>
+      </Link>
     </li>
   );
 }
@@ -51,20 +91,27 @@ async function MindmapList() {
   }
 
   const mindmaps = await fetchQuery(api.mindmaps.listMine, {}, { token });
+  // One clock reading for the whole grid, so every card is relative to the
+  // same instant and the list cannot disagree with itself.
+  const now = Date.now();
 
   if (mindmaps.length === 0) {
     return (
-      <p className="rounded-lg border border-line-strong bg-card p-5 text-muted-foreground">
-        You do not have any maps yet. Start one when you are ready.
-      </p>
+      <div className="flex flex-col gap-5">
+        <p className="text-muted-foreground">No maps yet — grow your first.</p>
+        <ul className={CARD_GRID_CLASS}>
+          <NewMapCard />
+        </ul>
+      </div>
     );
   }
 
   return (
-    <ul className="grid grid-cols-1 gap-4 md:grid-cols-2">
+    <ul className={CARD_GRID_CLASS}>
       {mindmaps.map((mindmap) => (
-        <MindmapCard key={mindmap._id} mindmap={mindmap} />
+        <MindmapCard key={mindmap._id} mindmap={mindmap} now={now} />
       ))}
+      <NewMapCard />
     </ul>
   );
 }
@@ -74,13 +121,13 @@ function MindmapListSkeleton() {
   return (
     <div
       aria-label="Loading your maps"
-      className="grid grid-cols-1 gap-4 md:grid-cols-2"
+      className={CARD_GRID_CLASS}
       role="status"
     >
-      {[0, 1].map((card) => (
+      {[0, 1, 2].map((card) => (
         <div
           aria-hidden="true"
-          className="h-32 rounded-lg border border-border bg-card"
+          className="min-h-[8.5rem] rounded-lg border border-border bg-card"
           key={card}
         />
       ))}
@@ -93,16 +140,11 @@ function MapsPage() {
   return (
     <main className="h-full w-full overflow-y-auto">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-8 py-20">
-        <header className="flex flex-wrap items-end justify-between gap-4">
-          <div className="flex flex-col gap-2">
-            <h1 className="text-3xl font-semibold tracking-tight">Your maps</h1>
-            <p className="text-muted-foreground">
-              Open an existing mindmap or start a new one.
-            </p>
-          </div>
-          <Button asChild>
-            <Link href="/new">New map</Link>
-          </Button>
+        <header className="flex flex-col gap-2">
+          <h1 className="text-3xl font-semibold tracking-tight">Your maps</h1>
+          <p className="text-muted-foreground">
+            Open an existing mindmap or start a new one.
+          </p>
         </header>
         <Suspense fallback={<MindmapListSkeleton />}>
           <MindmapList />
