@@ -167,7 +167,7 @@ export default function NodeAiEdit() {
   return (
     <Box>
       <AutosizeTextarea
-        className="h-full w-full !min-h-[30px] !outline-none !border-none resize-none"
+        className="h-full w-full !min-h-[30px] !outline-hidden !border-none resize-none"
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}

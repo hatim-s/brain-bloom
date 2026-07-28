@@ -93,7 +93,7 @@ export default function BaseNode(
   return (
     <Popover open={selectedNode === props.id || isAiEditing === props.id}>
       {/* override the blue border since it looks weird */}
-      <PopoverTrigger className="focus-visible:outline-none focus-visible:ring-0">
+      <PopoverTrigger className="focus-visible:outline-hidden focus-visible:ring-0">
         <BaseNodeContent
           title={title ?? "Node"}
           description={description}

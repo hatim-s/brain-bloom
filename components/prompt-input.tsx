@@ -57,7 +57,7 @@ export function PromptInput({
       <Textarea
         className={cn(
           "w-full text-sm sm:text-base rounded-xl min-h-32 bg-transparent",
-          "dark:text-white text-black focus:outline-none focus:ring-0"
+          "dark:text-white text-black focus:outline-hidden focus:ring-0"
         )}
         onChange={(e) => {
           setValue(e.target.value);
