@@ -104,12 +104,12 @@ function createProviderFixture(): {
   ];
   const initialEdges = [createEdge(ROOT_NODE_ID, "l-child")];
   const mindmapDB: MindmapDB = {
-    id: 1,
+    _id: "mindmaps:provider-fixture" as MindmapDB["_id"],
+    publicId: "provider-map",
     name: "Provider fixture",
-    created_at: "2026-07-28T00:00:00.000Z",
-    owner_user_id: "00000000-0000-0000-0000-000000000000",
-    nodes: [],
-    edges: [],
+    visibility: "private",
+    updatedAt: 1,
+    isOwner: true,
   };
 
   return { mindmapDB, initialNodes, initialEdges };

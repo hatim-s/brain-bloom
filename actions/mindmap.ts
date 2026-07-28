@@ -1,5 +1,7 @@
 "use server";
 
+import { fetchMutation } from "convex/nextjs";
+
 import { ROOT_NODE_ID } from "@/components/flow/const";
 import { createEdge } from "@/components/flow/mindmap/createEdge";
 import {
@@ -7,11 +9,13 @@ import {
   getNodeTypeFromId,
 } from "@/components/flow/mindmap/createNode";
 import {
-  PartialBaseFlowEdge,
-  PartialBaseFlowNode,
+  PartialBaseFlowEdge as FlowEdgeSnapshot,
+  PartialBaseFlowNode as FlowNodeSnapshot,
 } from "@/components/flow/mindmap/mindmapNodesToFlowNodes";
 import { NodeTypes } from "@/components/flow/types";
-import { createMindmap } from "@/data/create-mindmap";
+import { api } from "@/convex/_generated/api";
+import type { NodeSnapshot } from "@/convex/lib/nodeOps";
+import { getConvexAuthToken } from "@/lib/convex-server";
 import { AIMindmap } from "@/types/AI";
 
 import { editAIMindmap } from "./ai-edit";
@@ -29,8 +33,8 @@ function dfsHelper(
   aiNodesMap: Map<string, AIMindmap>,
   aiNode: AIMindmap,
   parentId: string,
-  nodes: PartialBaseFlowNode[],
-  edges: PartialBaseFlowEdge[]
+  nodes: FlowNodeSnapshot[],
+  edges: FlowEdgeSnapshot[]
 ) {
   const parentNodeType = getNodeTypeFromId(parentId);
 
@@ -39,7 +43,7 @@ function dfsHelper(
   }
 
   // 1. node should add itself to the nodes array
-  const baseFlowNode: PartialBaseFlowNode = {
+  const baseFlowNode: FlowNodeSnapshot = {
     id: getNewNodeID(parentNodeType),
     type: parentNodeType,
     data: {
@@ -68,7 +72,76 @@ function dfsHelper(
   });
 }
 
-export async function createMindmapFromAI(userPrompt: string) {
+/** Converts generated flow records into complete persisted node snapshots. */
+function createGeneratedNodeSnapshots(
+  nodes: FlowNodeSnapshot[],
+  edges: FlowEdgeSnapshot[]
+): NodeSnapshot[] {
+  const siblingCounts = new Map<string, number>();
+  const snapshots: NodeSnapshot[] = [];
+
+  for (const node of nodes) {
+    if (node.id === ROOT_NODE_ID) {
+      snapshots.push({
+        nodeId: ROOT_NODE_ID,
+        parentId: null,
+        type: "root",
+        title: node.data.title,
+        ...(node.data.description === undefined
+          ? {}
+          : { description: node.data.description }),
+        ...(node.data.link === undefined ? {} : { link: node.data.link }),
+        order: 0,
+      });
+      continue;
+    }
+
+    const parentId = edges.find((edge) => edge.target === node.id)?.source;
+    if (!parentId) {
+      throw new Error(`Parent edge not found for ${node.id}`);
+    }
+
+    const order = siblingCounts.get(parentId) ?? 0;
+    siblingCounts.set(parentId, order + 1);
+    snapshots.push({
+      nodeId: node.id,
+      parentId,
+      type: node.type,
+      title: node.data.title,
+      ...(node.data.description === undefined
+        ? {}
+        : { description: node.data.description }),
+      ...(node.data.link === undefined ? {} : { link: node.data.link }),
+      order,
+    });
+  }
+
+  return snapshots;
+}
+
+/** Persists a generated mindmap and every node in one Convex transaction. */
+async function persistGeneratedMindmap(
+  name: string,
+  nodes: FlowNodeSnapshot[],
+  edges: FlowEdgeSnapshot[]
+) {
+  const token = await getConvexAuthToken();
+  if (token === null) {
+    throw new Error("Convex auth is not configured — see docs/ENV.md");
+  }
+
+  return fetchMutation(
+    api.mindmaps.createWithNodes,
+    {
+      name,
+      nodes: createGeneratedNodeSnapshots(nodes, edges),
+    },
+    { token }
+  );
+}
+
+/** Generates and atomically persists a new mindmap from one prompt. */
+async function createMindmapFromAI(userPrompt: string) {
   const { mindmap: aiMindmap, rawOutput } = await generateAIMindmap(userPrompt);
 
   const rootNode = aiMindmap.find((node) => node.nodeId === "root");
@@ -81,8 +154,8 @@ export async function createMindmapFromAI(userPrompt: string) {
     aiNodesMap.set(node.nodeId, node);
   });
 
-  const nodes: PartialBaseFlowNode[] = [];
-  const edges: PartialBaseFlowEdge[] = [];
+  const nodes: FlowNodeSnapshot[] = [];
+  const edges: FlowEdgeSnapshot[] = [];
 
   nodes.push({
     id: ROOT_NODE_ID,
@@ -115,16 +188,17 @@ export async function createMindmapFromAI(userPrompt: string) {
   //   rawOutput,
   // };
 
-  const { data, error } = await createMindmap(rootNode.title, nodes, edges);
+  const data = await persistGeneratedMindmap(rootNode.title, nodes, edges);
 
   return {
     data,
-    error,
+    error: null,
     rawOutput,
   };
 }
 
-export async function editMindmapWithAI(
+/** Generates a local branch edit whose operations are saved by canvas sync. */
+async function editMindmapWithAI(
   userPrompt: string,
   currentBranch: AIMindmap[],
   activeNodeId: string
@@ -140,8 +214,8 @@ export async function editMindmapWithAI(
     aiNodesMap.set(node.nodeId, node);
   });
 
-  const nodes: PartialBaseFlowNode[] = [];
-  const edges: PartialBaseFlowEdge[] = [];
+  const nodes: FlowNodeSnapshot[] = [];
+  const edges: FlowEdgeSnapshot[] = [];
 
   const parentNode = currentBranch.find(
     ({ nodeId }) => nodeId === aiMindmap[0].nodeId
@@ -174,3 +248,5 @@ export async function editMindmapWithAI(
     rawOutput,
   };
 }
+
+export { createMindmapFromAI, editMindmapWithAI };

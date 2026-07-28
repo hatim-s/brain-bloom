@@ -301,3 +301,18 @@
     stroke-dashoffset: -16;
   }
 }
+
+/* Autosave. The status dot breathes only while a write is outstanding; it uses
+   --primary, not --bloom, because saving is the product working, not the model
+   touching anything. flow.css applies it and handles reduced motion. */
+@keyframes sprig-sync-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.66);
+  }
+}

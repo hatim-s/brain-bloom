@@ -23,6 +23,7 @@ import {
   transformFlowNodesAndEdgesToMindmapNodes,
 } from "../mindmap/flowNodeToMindmapNode";
 import { transformMindmapNodesToFlowNodesAndEdges } from "../mindmap/mindmapNodesToFlowNodes";
+import { appendPendingOp, PendingNodePatch } from "../mindmap/pendingOps";
 import { BaseFlowNode, FlowNode, MindmapNode, NodeTypes } from "../types";
 import { MindmapFlowContext } from "./types";
 
@@ -47,6 +48,28 @@ function deriveLeveledNodes(
   mindmapNodesMap: Record<string, MindmapNode>
 ): MindmapNode[][] {
   return generateLeveledNodes(mindmapNodesMap);
+}
+
+/** Builds a minimal wire patch while preserving explicit optional removals. */
+function createNodeDataPatch(
+  previous: FlowNode["data"],
+  next: FlowNode["data"]
+): PendingNodePatch {
+  const patch: PendingNodePatch = {};
+
+  if (previous.title !== next.title) {
+    patch.title = next.title;
+  }
+
+  if (previous.description !== next.description) {
+    patch.description = next.description ?? null;
+  }
+
+  if (previous.link !== next.link) {
+    patch.link = next.link ?? null;
+  }
+
+  return patch;
 }
 
 /**
@@ -92,7 +115,8 @@ function createMindmapStore({
       type,
       parentNodeId,
       id,
-      data
+      data,
+      options
     ) => {
       const currentMindmapNodesMap = get().mindmapNodesMap;
 
@@ -131,6 +155,7 @@ function createMindmapStore({
       }
 
       const newEdge = createEdge(parentNodeId, newNode.id);
+      const siblingOrder = currentMindmapNodesMap[parentNodeId].children.size;
       addNodeToGraph(newGraph, newNode, newEdge);
 
       let updatedMindmapNodesMap = {
@@ -190,13 +215,36 @@ function createMindmapStore({
         };
       });
 
-      set({
+      set((state) => ({
         nodes: updatedNodes,
         edges: newGraphEdges,
         mindmapNodesMap: updatedMindmapNodesMap,
         nodesMap: deriveNodesMap(updatedNodes),
         leveledNodes: deriveLeveledNodes(updatedMindmapNodesMap),
-      });
+        pendingOps: appendPendingOp(
+          state.pendingOps,
+          {
+            kind: "create",
+            source: options?.source ?? "user",
+            node: {
+              nodeId: newNode.id,
+              parentId: parentNodeId,
+              type: newNode.type,
+              title: newNode.data.title,
+              ...(newNode.data.description === undefined
+                ? {}
+                : { description: newNode.data.description }),
+              ...(newNode.data.link === undefined
+                ? {}
+                : { link: newNode.data.link }),
+              order: siblingOrder,
+            },
+          },
+          state.flushedWatermark
+        ),
+        syncState: state.syncState === "error" ? "error" : "dirty",
+        lastSyncError: state.syncState === "error" ? state.lastSyncError : null,
+      }));
 
       return newNode.id;
     };
@@ -204,13 +252,19 @@ function createMindmapStore({
     /** Replaces one node's data across the flow and mindmap representations. */
     const onUpdateNode: MindmapFlowContext["actions"]["onUpdateNode"] = (
       nodeId,
-      data
+      data,
+      options
     ) => {
       set((state) => {
+        const currentNode = state.nodesMap[nodeId];
+
+        if (!currentNode) {
+          return state;
+        }
+
         const updatedNodes = state.nodes.map((node) =>
           node.id === nodeId ? { ...node, data } : node
         );
-        const currentNode = state.nodesMap[nodeId];
         const currentMindmapNode = state.mindmapNodesMap[nodeId];
         const updatedMindmapNodesMap = currentMindmapNode
           ? {
@@ -219,24 +273,44 @@ function createMindmapStore({
             }
           : state.mindmapNodesMap;
 
-        if (currentNode) {
-          const updatedNode = { ...currentNode, data };
-          const graph =
-            updatedNode.type === NodeTypes.LEFT
-              ? layout.leftGraph
-              : layout.rightGraph;
+        const updatedNode = { ...currentNode, data };
+        const graph =
+          updatedNode.type === NodeTypes.LEFT
+            ? layout.leftGraph
+            : layout.rightGraph;
+        const patch = createNodeDataPatch(currentNode.data, data);
+        const hasChanges = Object.keys(patch).length > 0;
 
-          graph.setNode(nodeId, {
-            height: calculateNodeHeight(updatedNode),
-            width: NODE_DIMENSIONS.width,
-          });
-        }
+        graph.setNode(nodeId, {
+          height: calculateNodeHeight(updatedNode),
+          width: NODE_DIMENSIONS.width,
+        });
 
         return {
           nodes: updatedNodes,
           nodesMap: deriveNodesMap(updatedNodes),
           mindmapNodesMap: updatedMindmapNodesMap,
           leveledNodes: deriveLeveledNodes(updatedMindmapNodesMap),
+          ...(hasChanges
+            ? {
+                pendingOps: appendPendingOp(
+                  state.pendingOps,
+                  {
+                    kind: "update",
+                    source: options?.source ?? "user",
+                    nodeId,
+                    patch,
+                  },
+                  state.flushedWatermark
+                ),
+                syncState:
+                  state.syncState === "error"
+                    ? ("error" as const)
+                    : ("dirty" as const),
+                lastSyncError:
+                  state.syncState === "error" ? state.lastSyncError : null,
+              }
+            : {}),
         };
       });
     };
@@ -255,10 +329,62 @@ function createMindmapStore({
       aiEditNode: null,
       setAiEditNode: (aiEditNode) => set({ aiEditNode }),
       mindmapDB,
+      pendingOps: [],
+      flushedWatermark: 0,
+      lastSyncError: null,
+      desyncedSinceRejection: false,
+      syncRetryNonce: 0,
+      syncState: "idle",
       actions: {
         onNodesChange,
         onAddNode,
         onUpdateNode,
+        peekPendingOps: () => {
+          const ops = get().pendingOps;
+
+          if (ops.length === 0) {
+            return null;
+          }
+
+          // Protect exactly this prefix from coalescing until it is committed.
+          set({ flushedWatermark: ops.length });
+          return { ops: [...ops], count: ops.length };
+        },
+        commitFlushedOps: (count) => {
+          set((state) => {
+            if (
+              count < 0 ||
+              count > state.flushedWatermark ||
+              count > state.pendingOps.length
+            ) {
+              throw new Error("Cannot commit outside the flushed prefix");
+            }
+
+            return {
+              pendingOps: state.pendingOps.slice(count),
+              flushedWatermark: state.flushedWatermark - count,
+            };
+          });
+        },
+        releaseFlushedOps: () => {
+          set({ flushedWatermark: 0 });
+        },
+        retrySync: () => {
+          set((state) => ({ syncRetryNonce: state.syncRetryNonce + 1 }));
+        },
+        markSyncRejected: (error) => {
+          set({
+            desyncedSinceRejection: true,
+            syncState: "error",
+            lastSyncError: error,
+          });
+        },
+        markSyncState: (syncState, error) => {
+          set({
+            syncState,
+            lastSyncError: syncState === "error" ? (error ?? null) : null,
+          });
+        },
       },
     };
   });
@@ -266,6 +392,7 @@ function createMindmapStore({
 
 export {
   createMindmapStore,
+  createNodeDataPatch,
   deriveLeveledNodes,
   deriveNodesMap,
   type MindmapStore,

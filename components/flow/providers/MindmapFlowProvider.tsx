@@ -21,6 +21,19 @@ function useMindmapFlow<T>(selector: (state: MindmapFlowContextType) => T): T {
   return useStore(store, selector);
 }
 
+/** Returns the vanilla store API for subscriptions and atomic sync actions. */
+function useMindmapStoreApi(): StoreApi<MindmapStore> {
+  const store = useContext(MindmapFlowContext);
+
+  if (!store) {
+    throw new Error(
+      "useMindmapStoreApi must be used within a MindmapFlowProvider"
+    );
+  }
+
+  return store;
+}
+
 type MindmapFlowProviderProps = {
   children: React.ReactNode;
   mindmapDB: MindmapDB;
@@ -56,4 +69,4 @@ const MindmapFlowProvider = ({
   );
 };
 
-export { MindmapFlowProvider, useMindmapFlow };
+export { MindmapFlowProvider, useMindmapFlow, useMindmapStoreApi };

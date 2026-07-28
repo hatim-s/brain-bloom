@@ -1,7 +1,7 @@
 # Sprig
 
 Sprig is an AI-generated mindmap tool. It turns a prompt into an interactive
-mindmap, supports AI-assisted branch editing, and stores mindmaps in Supabase.
+mindmap, supports AI-assisted branch editing, and stores mindmaps in Convex.
 
 ## Getting started
 
@@ -9,14 +9,16 @@ mindmap, supports AI-assisted branch editing, and stores mindmaps in Supabase.
 
 - Node.js 24 or newer (Node.js 24 is selected by `.nvmrc`)
 - pnpm
-- A Supabase project
+- A Convex deployment
+- A Clerk `convex` JWT template for authenticated Convex reads; see
+  [`docs/ENV.md`](docs/ENV.md). Keyless Clerk instances cannot create this
+  template until they have been claimed.
 - A Groq API key for AI generation and editing
 
 ### Setup
 
 1. Copy `.env.example` to `.env.local`.
-2. Set `GROQ_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, and
-   `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+2. Set `GROQ_API_KEY`, `CONVEX_DEPLOYMENT`, and `NEXT_PUBLIC_CONVEX_URL`.
 3. Install the existing dependencies with `pnpm install`.
 4. Start the development server with `pnpm dev`.
 

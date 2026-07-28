@@ -14,16 +14,18 @@ import {
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
-import { MindmapDB } from "@/types/Mindmap";
+import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 import { Stack } from "../ui/stack";
 import { SaveMindmap } from "./components/SaveMindmap";
 import { useMindmapNavigation } from "./hooks/useMindmapNavigation";
+import { useMindmapSync } from "./hooks/useMindmapSync";
 import { INITIAL_EDGES, INITIAL_NODES } from "./initialNodesAndEdges";
 import { createFlowEdgeFromPartialBaseFlowEdge } from "./mindmap/createEdge";
 import { createBaseFlowNodeFromPartialBaseFlowNode } from "./mindmap/createNode";
 import {
   PartialBaseFlowEdge,
   PartialBaseFlowNode,
+  transformConvexNodesToFlowNodesAndEdges,
 } from "./mindmap/mindmapNodesToFlowNodes";
 import { LeftNode, RightNode, RootNode } from "./nodes";
 import {
@@ -38,6 +40,7 @@ const nodeTypes: XYNodeTypes = {
 };
 
 export function MindmapFlow() {
+  useMindmapSync();
   const nodes = useMindmapFlow((state) => state.nodes);
   const edges = useMindmapFlow((state) => state.edges);
   const mindmapNodesMap = useMindmapFlow((state) => state.mindmapNodesMap);
@@ -183,26 +186,36 @@ export function MindmapFlow() {
   );
 }
 
-export default function Flow({ mindmap: mindmapDB }: { mindmap: MindmapDB }) {
+export default function Flow({
+  mindmap: mindmapDB,
+  nodes,
+}: {
+  mindmap: MindmapDB;
+  nodes: MindmapNodeProjection[];
+}) {
+  const initialGraph = useMemo(
+    () => transformConvexNodesToFlowNodesAndEdges(nodes),
+    [nodes]
+  );
   const initialNodes = useMemo(
     () =>
-      mindmapDB.nodes.map((node) =>
+      initialGraph.nodes.map((node) =>
         createBaseFlowNodeFromPartialBaseFlowNode(node as PartialBaseFlowNode)
       ),
-    [mindmapDB.nodes]
+    [initialGraph.nodes]
   );
 
   const initialEdges = useMemo(() => {
-    return mindmapDB.edges.map((edge) =>
+    return initialGraph.edges.map((edge) =>
       createFlowEdgeFromPartialBaseFlowEdge(edge as PartialBaseFlowEdge)
     );
-  }, [mindmapDB.edges]);
+  }, [initialGraph.edges]);
 
   return (
     <ReactFlowProvider>
       {/* This key remounts the prop-seeded store when client navigation loads another mindmap. */}
       <MindmapFlowProvider
-        key={mindmapDB.id}
+        key={mindmapDB._id}
         mindmapDB={mindmapDB}
         initialNodes={initialNodes.length ? initialNodes : INITIAL_NODES}
         initialEdges={initialEdges.length ? initialEdges : INITIAL_EDGES}

@@ -59,6 +59,20 @@ describe("createMindmapStore", () => {
     expect(state.mindmapNodesMap["r-child"].children.has("r-grandchild")).toBe(
       true
     );
+    expect(state.pendingOps).toEqual([
+      {
+        kind: "create",
+        source: "user",
+        node: {
+          nodeId: "r-grandchild",
+          parentId: "r-child",
+          type: "right",
+          title: "Right grandchild",
+          order: 0,
+        },
+      },
+    ]);
+    expect(state.syncState).toBe("dirty");
     expectDerivedStateInvariant(state);
   });
 
@@ -77,7 +91,79 @@ describe("createMindmapStore", () => {
       updatedData
     );
     expect(state.mindmapNodesMap["r-child"].data).toEqual(updatedData);
+    expect(state.pendingOps).toEqual([
+      {
+        kind: "update",
+        source: "user",
+        nodeId: "r-child",
+        patch: {
+          title: "Updated right child",
+          description: "Updated description",
+        },
+      },
+    ]);
     expectDerivedStateInvariant(state);
+  });
+
+  it("records null sentinels only for optional fields that were cleared", () => {
+    const store = createFixtureStore();
+    store.getState().actions.onUpdateNode("r-child", {
+      title: "Right child",
+      description: "Existing",
+      link: "https://example.com",
+    });
+    const firstBatch = store.getState().actions.peekPendingOps();
+    store.getState().actions.commitFlushedOps(firstBatch!.count);
+
+    store.getState().actions.onUpdateNode("r-child", {
+      title: "Right child",
+    });
+
+    expect(store.getState().pendingOps).toEqual([
+      {
+        kind: "update",
+        source: "user",
+        nodeId: "r-child",
+        patch: { description: null, link: null },
+      },
+    ]);
+  });
+
+  it("peeks a protected prefix and commits exactly its successful count", () => {
+    const store = createFixtureStore();
+    store.getState().actions.onUpdateNode("l-child", { title: "First edit" });
+    const peeked = store.getState().actions.peekPendingOps();
+
+    expect(peeked).toEqual({
+      ops: [
+        {
+          kind: "update",
+          source: "user",
+          nodeId: "l-child",
+          patch: { title: "First edit" },
+        },
+      ],
+      count: 1,
+    });
+    expect(store.getState().pendingOps).toEqual(peeked!.ops);
+    expect(store.getState().flushedWatermark).toBe(1);
+
+    store.getState().actions.onUpdateNode("l-child", { title: "Newer edit" });
+
+    expect(store.getState().pendingOps).toHaveLength(2);
+    expect(store.getState().pendingOps[0]).toEqual(peeked!.ops[0]);
+
+    store.getState().actions.commitFlushedOps(peeked!.count);
+
+    expect(store.getState().pendingOps).toEqual([
+      {
+        kind: "update",
+        source: "user",
+        nodeId: "l-child",
+        patch: { title: "Newer edit" },
+      },
+    ]);
+    expect(store.getState().flushedWatermark).toBe(0);
   });
 
   it("resyncs the owning dagre node height when node data changes", () => {
@@ -255,12 +341,12 @@ function createStoreFixture(): {
     createEdge(ROOT_NODE_ID, "r-child"),
   ];
   const mindmapDB: MindmapDB = {
-    id: 1,
+    _id: "mindmaps:store-fixture" as MindmapDB["_id"],
+    publicId: "store-map",
     name: "Store fixture",
-    created_at: "2026-07-28T00:00:00.000Z",
-    owner_user_id: "00000000-0000-0000-0000-000000000000",
-    nodes: [],
-    edges: [],
+    visibility: "private",
+    updatedAt: 1,
+    isOwner: true,
   };
 
   return { mindmapDB, initialNodes, initialEdges };

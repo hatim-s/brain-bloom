@@ -3,12 +3,13 @@ import { ReactFlowProps } from "@xyflow/react";
 
 import { MindmapDB } from "@/types/Mindmap";
 
+import { NodeOp, PendingOpSource } from "../mindmap/pendingOps";
 import { FlowEdge, FlowNode, MindmapNode, NodeTypes } from "../types";
 
 type DagreGraph = graphlib.Graph<GraphLabel, NodeLabel, EdgeLabel>;
 
 // todo: add documentation for the context
-export type MindmapFlowContext = {
+type MindmapFlowContext = {
   layout: {
     leftGraph: DagreGraph;
     rightGraph: DagreGraph;
@@ -31,6 +32,12 @@ export type MindmapFlowContext = {
   setAiEditNode: (nodeId: string | null) => void;
 
   mindmapDB: MindmapDB;
+  pendingOps: NodeOp[];
+  flushedWatermark: number;
+  lastSyncError: string | null;
+  desyncedSinceRejection: boolean;
+  syncRetryNonce: number;
+  syncState: "idle" | "dirty" | "saving" | "error";
 
   actions: {
     onNodesChange: NonNullable<ReactFlowProps["onNodesChange"]>;
@@ -40,8 +47,27 @@ export type MindmapFlowContext = {
       type: NodeTypes.LEFT | NodeTypes.RIGHT,
       parentNodeId: string,
       id?: string,
-      data?: FlowNode["data"]
+      data?: FlowNode["data"],
+      options?: { source?: PendingOpSource }
     ) => string | null;
-    onUpdateNode: (nodeId: string, data: FlowNode["data"]) => void;
+    onUpdateNode: (
+      nodeId: string,
+      data: FlowNode["data"],
+      options?: { source?: PendingOpSource }
+    ) => void;
+    peekPendingOps: () => {
+      ops: NodeOp[];
+      count: number;
+    } | null;
+    commitFlushedOps: (count: number) => void;
+    releaseFlushedOps: () => void;
+    retrySync: () => void;
+    markSyncRejected: (error: string) => void;
+    markSyncState: (
+      state: MindmapFlowContext["syncState"],
+      error?: string
+    ) => void;
   };
 };
+
+export { type MindmapFlowContext };

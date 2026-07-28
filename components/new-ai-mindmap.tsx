@@ -1,5 +1,6 @@
 "use client";
 
+import { ConvexError } from "convex/values";
 import { LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -11,20 +12,44 @@ import { PromptInput } from "./prompt-input";
 import { Button } from "./ui/button";
 import { Stack } from "./ui/stack";
 
-export function AIMindmapInput() {
+const GENERATION_ERROR_MESSAGES = new Set([
+  "Invalid generated root node",
+  "Invalid op: too many nodes",
+]);
+
+/** Converts a generation failure into concise, user-visible copy. */
+function getGenerationErrorMessage(error: unknown): string {
+  if (
+    error instanceof ConvexError &&
+    typeof error.data === "string" &&
+    GENERATION_ERROR_MESSAGES.has(error.data)
+  ) {
+    return error.data;
+  }
+
+  return "Generation failed — try again.";
+}
+
+/** Prompt form that creates and navigates to one atomic AI mindmap. */
+function AIMindmapInput() {
   const [userPrompt, setUserPrompt] = useState("");
+  const [generationError, setGenerationError] = useState<string | null>(null);
   const router = useRouter();
 
   const [isPending, startTransition] = useTransition();
 
   const handleSubmit = useEventCallback(async () => {
     startTransition(async () => {
-      const aiMindmap = await createMindmapFromAI(userPrompt);
-      // console.log({ userPrompt, aiMindmap });
+      setGenerationError(null);
 
-      const mindmapId = aiMindmap.data?.id;
-      if (mindmapId) {
-        router.push(`/${mindmapId}`);
+      try {
+        const aiMindmap = await createMindmapFromAI(userPrompt);
+        const publicId = aiMindmap.data.publicId;
+        router.push(`/${publicId}`);
+        // Refresh the shared server layout so listMine includes the new map.
+        router.refresh();
+      } catch (error) {
+        setGenerationError(getGenerationErrorMessage(error));
       }
     });
   });
@@ -54,6 +79,13 @@ export function AIMindmapInput() {
           "Grow the map"
         )}
       </Button>
+      {generationError ? (
+        <p className="text-sm font-medium text-destructive" role="alert">
+          {generationError}
+        </p>
+      ) : null}
     </Stack>
   );
 }
+
+export { AIMindmapInput };

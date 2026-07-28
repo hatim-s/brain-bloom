@@ -20,7 +20,8 @@
     "fix:all": "pnpm lint:fix && pnpm format",
     "convex:dev": "convex dev",
     "convex:codegen": "convex codegen",
-    "test:convex": "vitest run convex"
+    "test:convex": "vitest run convex",
+    "migrate:supabase": "node --experimental-strip-types scripts/migrate-supabase-to-convex.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.6.2",
@@ -31,8 +32,6 @@
     "@radix-ui/react-separator": "^1.1.2",
     "@radix-ui/react-slot": "^1.1.2",
     "@radix-ui/react-tooltip": "^1.1.8",
-    "@supabase/ssr": "latest",
-    "@supabase/supabase-js": "latest",
     "@xyflow/react": "^12.11.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

@@ -701,6 +701,11 @@ export const undo = mutation({
 
 /**
  * Reverses a target operation and every later active operation atomically.
+ *
+ * This walks all later active operations in one transaction. Autosave-sized
+ * history makes a deep undoTo increasingly expensive; that bound is acceptable
+ * for P8's per-message undo of recent operations, but must be revisited before
+ * any history-wide undo surface ships.
  */
 export const undoTo = mutation({
   args: { operationId: v.id("operations") },
