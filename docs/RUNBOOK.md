@@ -43,7 +43,7 @@ data once step 2's issuer is configured in Convex — step 2 below).
 1. `pnpm exec convex login`, then `pnpm exec convex deploy` from the repo —
    this creates the cloud deployment from the committed schema/functions.
 2. In the Convex dashboard, set the environment variable
-   `CLERK_JWT_ISSUER_DOMAIN=<issuer from step 1.2>` — `convex/auth.config.ts`
+   `CLERK_FRONTEND_API_URL=<issuer from step 1.2>` — `convex/auth.config.ts`
    activates the provider only when it is present.
 3. Record `CONVEX_DEPLOYMENT` (prod) and the deployment URL for
    `NEXT_PUBLIC_CONVEX_URL` (`https://<slug>.convex.cloud`) and

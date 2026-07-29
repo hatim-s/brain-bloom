@@ -5,7 +5,7 @@
  * inactive and every `requireUser` call rejects. Set the issuer in the Convex
  * deployment environment when the Clerk instance is claimed in P9.
  */
-const domain = process.env.CLERK_JWT_ISSUER_DOMAIN;
+const domain = process.env.CLERK_FRONTEND_API_URL;
 
 const authConfig = {
   providers: domain ? [{ domain, applicationID: "convex" }] : [],

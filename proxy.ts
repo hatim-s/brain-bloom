@@ -7,33 +7,45 @@ import {
   sanitizeRedirectUrl,
 } from "@/lib/auth-routing";
 
-const proxy = clerkMiddleware(async (auth, request) => {
-  // Public landing, auth, and shared-map routes bypass Clerk protection.
-  if (isPublicPath(request.nextUrl.pathname)) {
-    return;
+const DEVELOPMENT_CLOCK_SKEW_IN_MS = 60_000;
+
+const proxy = clerkMiddleware(
+  async (auth, request) => {
+    // Public landing, auth, and shared-map routes bypass Clerk protection.
+    if (isPublicPath(request.nextUrl.pathname)) {
+      return;
+    }
+
+    const { userId } = await auth();
+    if (userId) {
+      return;
+    }
+
+    if (
+      request.nextUrl.pathname.startsWith("/api") ||
+      acceptsJsonOverHtml(request.headers.get("accept"))
+    ) {
+      return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
+    }
+
+    const destination = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+    const unauthenticatedUrl = new URL("/sign-in", request.url);
+    unauthenticatedUrl.searchParams.set(
+      "redirect_url",
+      sanitizeRedirectUrl(destination)
+    );
+
+    return NextResponse.redirect(unauthenticatedUrl);
+  },
+  {
+    // This workstation's clock is currently about 49 seconds slow. Keep the
+    // temporary tolerance local-only; production retains Clerk's strict default.
+    clockSkewInMs:
+      process.env.NODE_ENV === "development"
+        ? DEVELOPMENT_CLOCK_SKEW_IN_MS
+        : undefined,
   }
-
-  const { userId } = await auth();
-  if (userId) {
-    return;
-  }
-
-  if (
-    request.nextUrl.pathname.startsWith("/api") ||
-    acceptsJsonOverHtml(request.headers.get("accept"))
-  ) {
-    return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
-  }
-
-  const destination = `${request.nextUrl.pathname}${request.nextUrl.search}`;
-  const unauthenticatedUrl = new URL("/sign-in", request.url);
-  unauthenticatedUrl.searchParams.set(
-    "redirect_url",
-    sanitizeRedirectUrl(destination)
-  );
-
-  return NextResponse.redirect(unauthenticatedUrl);
-});
+);
 
 // Next parses `config` statically at compile time, so it must be exported inline —
 // a re-export from a trailing `export { ... }` statement fails the build.
