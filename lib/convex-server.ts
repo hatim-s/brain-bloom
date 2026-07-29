@@ -4,7 +4,9 @@ import { cache } from "react";
 type ClerkAuthState = Awaited<ReturnType<typeof auth>>;
 
 /** Detects Clerk's current Convex integration on the normal session token. */
-function hasConvexAudience(sessionClaims: ClerkAuthState["sessionClaims"]): boolean {
+function hasConvexAudience(
+  sessionClaims: ClerkAuthState["sessionClaims"]
+): boolean {
   const audience = sessionClaims?.aud;
 
   return (
