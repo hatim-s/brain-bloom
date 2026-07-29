@@ -1,7 +1,13 @@
-import { Handle, NodeProps, Position } from "@xyflow/react";
+import {
+  Handle,
+  NodeProps,
+  Position,
+  useUpdateNodeInternals,
+} from "@xyflow/react";
 import clsx from "clsx";
 import { LinkIcon } from "lucide-react";
 import Link from "next/link";
+import { useEffect } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -107,6 +113,13 @@ const BaseNode = (props: NodeProps & { direction: "left" | "right" }) => {
   const selectedNode = useMindmapFlow((state) => state.selectedNode);
   const isAiEditing = useMindmapFlow((state) => state.aiEditNode);
   const readOnly = useMindmapFlow((state) => state.readOnly);
+  const updateNodeInternals = useUpdateNodeInternals();
+
+  useEffect(() => {
+    // Radix finalizes the trigger subtree after XYFlow's first node measurement.
+    // Re-measure once mounted so the source and target bounds become available.
+    updateNodeInternals(props.id);
+  }, [props.id, updateNodeInternals]);
 
   return (
     <Popover
@@ -123,9 +136,11 @@ const BaseNode = (props: NodeProps & { direction: "left" | "right" }) => {
           link={link}
           isSelected={isSelected}
         />
-        <Handle type="source" position={sourcePosition} />
-        <Handle type="target" position={targetPosition} />
       </PopoverTrigger>
+      {/* XYFlow measures handles relative to its node wrapper. Keeping them out
+          of Radix's trigger button ensures both bounds are registered. */}
+      <Handle type="source" position={sourcePosition} />
+      <Handle type="target" position={targetPosition} />
       {readOnly ? null : (
         <>
           <PopoverContent

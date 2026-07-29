@@ -3,6 +3,7 @@
 import { PanelRightOpen } from "lucide-react";
 import {
   type PropsWithChildren,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -232,30 +233,35 @@ function AiPanelLayout({ children }: PropsWithChildren) {
     });
   });
 
-  const handleResize = useEventCallback((size: number) => {
-    // Before the stored width has been applied, `onResize` is only reporting
-    // the provisional layout — persisting it would erase the writer's choice.
-    if (
-      !hasAppliedWidthRef.current ||
-      !isOpenRef.current ||
-      containerWidth <= 0 ||
-      size <= 0
-    ) {
-      return;
-    }
+  // react-resizable-panels can report a new size while its parent is rendering,
+  // so this callback cannot use the event-only hook that rejects render calls.
+  const handleResize = useCallback(
+    (size: number) => {
+      // Before the stored width has been applied, `onResize` is only reporting
+      // the provisional layout — persisting it would erase the writer's choice.
+      if (
+        !hasAppliedWidthRef.current ||
+        !isOpenRef.current ||
+        containerWidth <= 0 ||
+        size <= 0
+      ) {
+        return;
+      }
 
-    const widthPx = (size / 100) * containerWidth;
+      const widthPx = (size / 100) * containerWidth;
 
-    restoredWidthRef.current = widthPx;
+      restoredWidthRef.current = widthPx;
 
-    if (persistWidthTimerRef.current !== null) {
-      clearTimeout(persistWidthTimerRef.current);
-    }
-    persistWidthTimerRef.current = setTimeout(() => {
-      writeAiPanelWidth(widthPx);
-      persistWidthTimerRef.current = null;
-    }, 300);
-  });
+      if (persistWidthTimerRef.current !== null) {
+        clearTimeout(persistWidthTimerRef.current);
+      }
+      persistWidthTimerRef.current = setTimeout(() => {
+        writeAiPanelWidth(widthPx);
+        persistWidthTimerRef.current = null;
+      }, 300);
+    },
+    [containerWidth]
+  );
 
   return (
     <div className="relative flex h-full w-full flex-1" ref={containerRef}>
@@ -284,8 +290,8 @@ function AiPanelLayout({ children }: PropsWithChildren) {
         <Panel
           aria-hidden={!isOpen}
           className={
-            "min-w-0 border-l border-line-strong max-lg:!fixed max-lg:inset-y-0 max-lg:right-0 " +
-            "max-lg:z-30 max-lg:!w-[min(90vw,35rem)] max-lg:!max-w-[90vw] max-lg:shadow-xl " +
+            "min-w-0 border-l border-line-strong max-lg:fixed! max-lg:inset-y-0 max-lg:right-0 " +
+            "max-lg:z-30 max-lg:w-[min(90vw,35rem)]! max-lg:max-w-[90vw]! max-lg:shadow-xl " +
             (isOpen ? "" : "pointer-events-none invisible")
           }
           collapsedSize={0}
