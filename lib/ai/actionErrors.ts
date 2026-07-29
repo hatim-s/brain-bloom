@@ -1,6 +1,6 @@
 import { ConvexError } from "convex/values";
 
-import { AIConfigurationError } from "@/lib/anthropic";
+import { AIConfigurationError } from "@/lib/ai/errors";
 
 type AIActionErrorCode =
   | "not-configured"

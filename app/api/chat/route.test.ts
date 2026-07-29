@@ -6,21 +6,33 @@ import { POST } from "./route";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
-  convertToModelMessages: vi.fn(),
+  createAIChatStream: vi.fn(),
   fetchMutation: vi.fn(),
   fetchQuery: vi.fn(),
   getConvexAuthToken: vi.fn(),
-  consumeStream: vi.fn(),
-  responseOptions: undefined as
+  streamOptions: undefined as
     | {
-        headers?: HeadersInit;
+        instructions: string;
+        messages: UIMessage[];
+        tools: Record<
+          string,
+          {
+            execute: (
+              input: unknown,
+              options: {
+                toolCallId: string;
+                messages: never[];
+                context: object;
+              }
+            ) => Promise<unknown>;
+          }
+        >;
         onFinish?: (event: {
           responseMessage: UIMessage;
           isAborted: boolean;
         }) => PromiseLike<void> | void;
       }
     | undefined,
-  streamText: vi.fn(),
 }));
 
 vi.mock("@clerk/nextjs/server", () => ({ auth: mocks.auth }));
@@ -31,17 +43,10 @@ vi.mock("convex/nextjs", () => ({
 vi.mock("@/lib/convex-server", () => ({
   getConvexAuthToken: mocks.getConvexAuthToken,
 }));
-vi.mock("@/lib/anthropic", () => ({
-  getAnthropicModel: () => ({ modelId: "test-model" }),
-  isAIConfigured: () => Boolean(process.env.ANTHROPIC_OAUTH_TOKEN),
-}));
-vi.mock("ai", async (importOriginal) => {
-  const original = await importOriginal<typeof import("ai")>();
-
+vi.mock("@/lib/ai/providerRouter", () => {
   return {
-    ...original,
-    convertToModelMessages: mocks.convertToModelMessages,
-    streamText: mocks.streamText,
+    createAIChatStream: mocks.createAIChatStream,
+    isAIConfigured: () => process.env.TEST_AI_CONFIGURED === "true",
   };
 });
 
@@ -78,34 +83,32 @@ function createMindmapResult() {
 
 describe("POST /api/chat", () => {
   beforeEach(() => {
-    process.env.ANTHROPIC_OAUTH_TOKEN = "oauth-token";
+    process.env.TEST_AI_CONFIGURED = "true";
     mocks.auth.mockResolvedValue({
       userId: "user-1",
       getToken: vi.fn(async () => "convex-token"),
     });
     mocks.getConvexAuthToken.mockResolvedValue("convex-token");
     mocks.fetchQuery.mockResolvedValue(createMindmapResult());
-    mocks.convertToModelMessages.mockResolvedValue([
-      { role: "user", content: "Build a launch plan" },
-    ]);
-    mocks.responseOptions = undefined;
-    mocks.streamText.mockReturnValue({
-      consumeStream: mocks.consumeStream,
-      toUIMessageStreamResponse: vi.fn((options) => {
-        mocks.responseOptions = options;
-        return new Response("stream", { headers: options.headers });
-      }),
+    mocks.streamOptions = undefined;
+    mocks.createAIChatStream.mockImplementation((options) => {
+      mocks.streamOptions = options;
+      return new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      });
     });
   });
 
   afterEach(() => {
     vi.clearAllMocks();
-    delete process.env.ANTHROPIC_OAUTH_TOKEN;
+    delete process.env.TEST_AI_CONFIGURED;
   });
 
   it("returns 401 JSON before reading configuration for an unauthenticated user", async () => {
     mocks.auth.mockResolvedValue({ userId: null });
-    delete process.env.ANTHROPIC_OAUTH_TOKEN;
+    delete process.env.TEST_AI_CONFIGURED;
 
     const response = await POST(
       createRequest({ mindmapId: "map-1", messages: [userMessage] })
@@ -119,8 +122,8 @@ describe("POST /api/chat", () => {
     expect(mocks.fetchQuery).not.toHaveBeenCalled();
   });
 
-  it("returns 503 JSON when the Claude OAuth token is absent", async () => {
-    delete process.env.ANTHROPIC_OAUTH_TOKEN;
+  it("returns 503 JSON when the selected AI provider is not configured", async () => {
+    delete process.env.TEST_AI_CONFIGURED;
 
     const response = await POST(
       createRequest({ mindmapId: "map-1", messages: [userMessage] })
@@ -146,15 +149,13 @@ describe("POST /api/chat", () => {
       title: "Build a launch plan",
     });
     expect(response.headers.get("x-sprig-thread-id")).toBe("thread-1");
-    expect(mocks.streamText).toHaveBeenCalledWith(
+    expect(mocks.createAIChatStream).toHaveBeenCalledWith(
       expect.objectContaining({
         instructions: expect.stringContaining("[nodeId:root]"),
-        messages: [{ role: "user", content: "Build a launch plan" }],
+        messages: [userMessage],
         tools: expect.any(Object),
-        stopWhen: expect.any(Function),
       })
     );
-    expect(mocks.consumeStream).toHaveBeenCalledOnce();
   });
 
   it("returns a 404 JSON response when the mindmap query is not found", async () => {
@@ -166,7 +167,7 @@ describe("POST /api/chat", () => {
 
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({ error: "Not found" });
-    expect(mocks.streamText).not.toHaveBeenCalled();
+    expect(mocks.createAIChatStream).not.toHaveBeenCalled();
   });
 
   it("returns a 403 JSON response when Convex rejects access", async () => {
@@ -178,7 +179,7 @@ describe("POST /api/chat", () => {
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: "Forbidden" });
-    expect(mocks.streamText).not.toHaveBeenCalled();
+    expect(mocks.createAIChatStream).not.toHaveBeenCalled();
   });
 
   it("persists full UI parts and links the earliest applied operation", async () => {
@@ -191,7 +192,11 @@ describe("POST /api/chat", () => {
 
     await POST(createRequest({ mindmapId: "map-1", messages: [userMessage] }));
 
-    const streamOptions = mocks.streamText.mock.calls[0]?.[0];
+    const streamOptions = mocks.streamOptions;
+    if (streamOptions === undefined) {
+      throw new Error("Expected AI chat stream options");
+    }
+
     await streamOptions.tools.updateNode.execute(
       { nodeId: "root", title: "Updated launch plan" },
       { toolCallId: "call-1", messages: [], context: {} }
@@ -215,7 +220,7 @@ describe("POST /api/chat", () => {
       ],
     };
 
-    await mocks.responseOptions?.onFinish?.({
+    await mocks.streamOptions?.onFinish?.({
       responseMessage: assistantMessage,
       isAborted: false,
     });
@@ -239,7 +244,7 @@ describe("POST /api/chat", () => {
     mocks.fetchMutation.mockResolvedValueOnce("thread-1");
     await POST(createRequest({ mindmapId: "map-1", messages: [userMessage] }));
 
-    await mocks.responseOptions?.onFinish?.({
+    await mocks.streamOptions?.onFinish?.({
       responseMessage: {
         id: "assistant-partial",
         role: "assistant",
@@ -268,7 +273,7 @@ describe("POST /api/chat", () => {
     await expect(response.json()).resolves.toEqual({
       error: "thread belongs to a different mindmap",
     });
-    expect(mocks.streamText).not.toHaveBeenCalled();
+    expect(mocks.createAIChatStream).not.toHaveBeenCalled();
   });
 
   it("rejects requests over the JSON byte ceiling", async () => {
@@ -288,7 +293,7 @@ describe("POST /api/chat", () => {
     await expect(response.json()).resolves.toEqual({
       error: "Request too large",
     });
-    expect(mocks.streamText).not.toHaveBeenCalled();
+    expect(mocks.createAIChatStream).not.toHaveBeenCalled();
   });
 
   it("rejects more than 40 messages and oversized text parts", async () => {
@@ -315,6 +320,6 @@ describe("POST /api/chat", () => {
 
     expect(tooMany.status).toBe(400);
     expect(longPart.status).toBe(400);
-    expect(mocks.streamText).not.toHaveBeenCalled();
+    expect(mocks.createAIChatStream).not.toHaveBeenCalled();
   });
 });

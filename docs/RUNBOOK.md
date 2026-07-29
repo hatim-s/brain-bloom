@@ -5,8 +5,8 @@ steps. Each stage lists its unlock and its verification. Local development
 can run the UI with keyless Clerk and anonymous Convex, but Convex auth is
 deliberately fail-closed until a Clerk issuer is configured. Authenticated data
 flows therefore need steps 1 and 2; without them, the UI shell runs while map
-data remains inert. Sprig also remains unavailable without its dev-local
-Claude-subscription OAuth token.
+data remains inert. Sprig also remains unavailable without a subscription login
+for the provider selected by `SPRIG_AI_PROVIDER`.
 
 ## 0. Current state (end of P9)
 
@@ -16,8 +16,9 @@ Claude-subscription OAuth token.
   start. Custom sign-in/up flows work; OAuth buttons are flag-gated off;
   the Convex JWT bridge is written but deliberately rejects data access until
   an issuer is configured.
-- AI: `ANTHROPIC_OAUTH_TOKEN` (personal Claude-subscription token) — dev
-  only. No API-key path exists in `lib/anthropic.ts` yet.
+- AI: `SPRIG_AI_PROVIDER=claude` uses `CLAUDE_CODE_OAUTH_TOKEN`; `codex` uses
+  the app server's saved `codex login` session. Both are dev and
+  single-operator only.
 - Data: legacy Supabase project still holds pre-overhaul mindmaps;
   `pnpm migrate:supabase` (dry-run default) is ready.
 
@@ -53,12 +54,13 @@ Verify: `pnpm exec convex run mindmaps:listMine` fails with
 
 ## 3. AI in production — decision required
 
-`lib/anthropic.ts` authenticates ONLY via `ANTHROPIC_OAUTH_TOKEN` (personal
-subscription OAuth; short-lived). That is not a production credential.
+The Claude path authenticates only via `CLAUDE_CODE_OAUTH_TOKEN`; the Codex path
+uses the app server's saved `codex login` session and strips API-key variables.
+Neither subscription-backed path is a production or multi-user credential.
 Options, pick one before launch:
 
 - **A (recommended)**: add an `ANTHROPIC_API_KEY` fallback to
-  `lib/anthropic.ts` (few lines — prefer API key when set, keep the OAuth
+  `lib/claude-agent.ts` (prefer the API key when set, keep the OAuth
   path for dev) and provision a real Anthropic API key with billing.
 - **B**: ship without server AI (`/api/chat` returns its 503 "AI is not
   configured" path; the panel shows the configuration notice).
@@ -88,8 +90,10 @@ Set for Production (and Preview if desired):
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | step 1.4 |
 | `CLERK_SECRET_KEY` | step 1.4 |
 | `NEXT_PUBLIC_ENABLE_OAUTH` | `true` once step 1.3 is done |
+| `SPRIG_AI_PROVIDER` | `claude` or `codex` for a trusted single-operator deployment |
 | `ANTHROPIC_API_KEY` | step 3 option A only; omit when shipping option B |
 | `SPRIG_AI_MODEL` | optional override (default `claude-sonnet-5`) |
+| `SPRIG_CODEX_MODEL` | optional override (default `gpt-5.6-sol`) |
 
 The build itself needs no env vars (verified in CI every merge).
 

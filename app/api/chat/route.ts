@@ -1,9 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import {
-  convertToModelMessages,
+  createUIMessageStreamResponse,
   safeValidateUIMessages,
-  stepCountIs,
-  streamText,
   type UIMessage,
 } from "ai";
 import { fetchMutation, fetchQuery } from "convex/nextjs";
@@ -12,13 +10,13 @@ import { z } from "zod";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { createAIChatStream, isAIConfigured } from "@/lib/ai/providerRouter";
 import { serializeMindmap } from "@/lib/ai/serializeMindmap";
 import {
   type AppliedOperation,
   createMindmapTools,
   type MindmapToolConvexLayer,
 } from "@/lib/ai/tools";
-import { getAnthropicModel, isAIConfigured } from "@/lib/anthropic";
 import { getConvexAuthToken } from "@/lib/convex-server";
 
 const THREAD_TITLE_LENGTH = 60;
@@ -271,27 +269,14 @@ async function POST(request: Request): Promise<Response> {
         }
       },
     });
-    const modelMessages = await convertToModelMessages(messages, { tools });
-    const result = streamText({
-      model: getAnthropicModel(),
+    const stream = createAIChatStream({
+      abortSignal: request.signal,
       instructions: createInstructions(
         serializeMindmap(currentMindmap),
         selectedNodeId
       ),
-      messages: modelMessages,
+      messages,
       tools,
-      stopWhen: stepCountIs(8),
-    });
-
-    // Keep the source stream moving after a client disconnect so onFinish can
-    // preserve completed turns. Its isAborted branch still skips partial turns.
-    void result.consumeStream();
-
-    return result.toUIMessageStreamResponse({
-      originalMessages: messages,
-      headers: {
-        "x-sprig-thread-id": threadId,
-      },
       onFinish: async ({ responseMessage, isAborted }) => {
         // Aborted partial turns intentionally vanish from history replay.
         if (isAborted) {
@@ -323,6 +308,13 @@ async function POST(request: Request): Promise<Response> {
           },
           { token }
         );
+      },
+    });
+
+    return createUIMessageStreamResponse({
+      stream,
+      headers: {
+        "x-sprig-thread-id": threadId,
       },
     });
   } catch (error) {

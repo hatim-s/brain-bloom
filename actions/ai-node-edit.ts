@@ -1,14 +1,11 @@
 "use server";
 
-import { generateText, Output } from "ai";
 import { ConvexError } from "convex/values";
 
-import {
-  generatedNodeSuggestionsSchema,
-  type GeneratedTreeNode,
-} from "@/lib/ai/generatedTree";
+import { AIConfigurationError } from "@/lib/ai/errors";
+import { generatedNodeSuggestionsSchema } from "@/lib/ai/generatedTree";
 import { flattenSuggestions } from "@/lib/ai/nodeSuggestions";
-import { AIConfigurationError, getAnthropicModel } from "@/lib/anthropic";
+import { generateAIStructured } from "@/lib/ai/providerRouter";
 import { AIMindmap } from "@/types/AI";
 
 const NODE_EDIT_INSTRUCTIONS = `You extend one selected branch of a mindmap.
@@ -39,22 +36,17 @@ async function editAIMindmap(
   }
 
   try {
-    const result = await generateText({
-      model: getAnthropicModel(),
+    const result = await generateAIStructured({
       instructions: NODE_EDIT_INSTRUCTIONS,
       prompt: `${userPrompt}
 
 Selected nodeId: ${activeNodeId}
 Current branch: ${JSON.stringify(currentBranch)}`,
-      output: Output.object({
-        schema: generatedNodeSuggestionsSchema,
-        name: "mindmap_node_suggestions",
-        description: "Nested child nodes to add beneath the selected node.",
-      }),
+      schema: generatedNodeSuggestionsSchema,
     });
 
     return {
-      rawOutput: result.text,
+      rawOutput: result.rawOutput,
       mindmap: flattenSuggestions(result.output.nodes, activeNode),
     };
   } catch (error) {
