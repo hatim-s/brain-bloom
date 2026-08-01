@@ -39,18 +39,24 @@ async function MindmapCanvas({ params }: { params: MindmapPageParams }) {
   }
 
   return (
-    <>
+    // The header's inline rename shares the canvas's Convex client, so the
+    // provider wraps both surfaces rather than the flow alone.
+    <ConvexClientProvider>
       <Header mindmap={result.mindmap} />
+      {/* Full-bleed, deliberately: the shell is full-bleed with panels floating
+          over it (DESIGN.md Layout), and the Sprig panel already takes its own
+          column out of this box. Padding this shell for the navigation panel
+          instead would resize the resizable group every time that panel is
+          toggled — react-resizable-panels holds its layout in percentages, so
+          the Sprig card would stop measuring the shared panel width. */}
       <Stack className="flex-1 relative">
-        <ConvexClientProvider>
-          <Flow
-            mindmap={result.mindmap}
-            nodes={result.nodes}
-            readOnly={!result.mindmap.isOwner}
-          />
-        </ConvexClientProvider>
+        <Flow
+          mindmap={result.mindmap}
+          nodes={result.nodes}
+          readOnly={!result.mindmap.isOwner}
+        />
       </Stack>
-    </>
+    </ConvexClientProvider>
   );
 }
 
@@ -61,9 +67,23 @@ function MindmapPage({ params }: { params: MindmapPageParams }) {
       fallback={
         <main
           aria-label="Loading mindmap"
-          className="h-full w-full bg-background"
+          // A full-viewport ground, so it carries atmosphere rather than one
+          // flat fill (the Never Flat Rule) — the wait is finished at the same
+          // fidelity as the canvas it becomes.
+          className="sprig-atmosphere flex h-full w-full items-center justify-center"
           role="status"
-        />
+        >
+          {/* The same ambient-dot language the canvas uses for quiet work, in
+              moss: the product is fetching the map, not the model touching it,
+              so this dot must not be clay. */}
+          <span className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span
+              aria-hidden="true"
+              className="size-1.5 rounded-full bg-primary motion-safe:animate-pulse"
+            />
+            Opening map
+          </span>
+        </main>
       }
     >
       <MindmapCanvas params={params} />

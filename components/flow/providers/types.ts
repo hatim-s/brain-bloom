@@ -1,4 +1,3 @@
-import { EdgeLabel, GraphLabel, graphlib, NodeLabel } from "@dagrejs/dagre";
 import { ReactFlowProps } from "@xyflow/react";
 
 import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
@@ -6,7 +5,15 @@ import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 import { NodeOp, PendingOpSource } from "../mindmap/pendingOps";
 import { FlowEdge, FlowNode, MindmapNode, NodeTypes } from "../types";
 
-type DagreGraph = graphlib.Graph<GraphLabel, NodeLabel, EdgeLabel>;
+/** The scoped intents the contextual node toolbar can hand to the model. */
+type AiEditAction = "grow" | "refine" | "explain";
+
+/** One node-scoped instruction handed from the canvas to the chat surface. */
+type AiPromptRequest = {
+  requestId: number;
+  nodeId: string;
+  prompt: string;
+};
 
 /** A versioned server graph waiting for the local operation queue to drain. */
 type ServerMindmapState = {
@@ -19,10 +26,10 @@ type ServerMindmapState = {
 /** All mutable and derived state owned by one canvas provider. */
 type MindmapFlowContext = {
   readOnly: boolean;
-  layout: {
-    leftGraph: DagreGraph;
-    rightGraph: DagreGraph;
-  };
+  /**
+   * The Grove layout is a pure function of the tree, so the canvas keeps no
+   * layout state: every mutation re-lays out from `mindmapNodesMap` + `edges`.
+   */
   nodes: FlowNode[];
   edges: FlowEdge[];
 
@@ -39,6 +46,31 @@ type MindmapFlowContext = {
 
   aiEditNode: string | null;
   setAiEditNode: (nodeId: string | null) => void;
+
+  /** Which scoped intent the inline node prompt is currently phrased around. */
+  aiEditAction: AiEditAction;
+  setAiEditAction: (action: AiEditAction) => void;
+
+  /**
+   * The node whose contextual toolbar is showing.
+   *
+   * Set only from a real pointer selection, never from the seed-time root
+   * auto-select, so opening a map does not greet the reader with chrome.
+   */
+  toolbarNode: string | null;
+  setToolbarNode: (nodeId: string | null) => void;
+
+  /**
+   * A node-scoped instruction waiting for the conversation surface.
+   *
+   * The inline prompt writes it; the AI panel (which owns the chat transport
+   * and thread identity) consumes it and clears it. `requestId` makes each
+   * dispatch unique so an identical retry still re-triggers the consumer.
+   */
+  aiPromptRequest: AiPromptRequest | null;
+
+  /** True while the panel's chat transport has a turn in flight. */
+  aiStreaming: boolean;
 
   /**
    * Nodes the model just created or edited, held only long enough to bloom.
@@ -99,7 +131,18 @@ type MindmapFlowContext = {
       state: MindmapFlowContext["syncState"],
       error?: string
     ) => void;
+    /** Queues one node-scoped instruction for the conversation surface. */
+    requestAiPrompt: (nodeId: string, prompt: string) => void;
+    /** Acknowledges the queued instruction once the chat surface owns it. */
+    clearAiPromptRequest: () => void;
+    /** Mirrors the chat transport's streaming state into canvas reach. */
+    setAiStreaming: (isStreaming: boolean) => void;
   };
 };
 
-export { type MindmapFlowContext, type ServerMindmapState };
+export {
+  type AiEditAction,
+  type AiPromptRequest,
+  type MindmapFlowContext,
+  type ServerMindmapState,
+};

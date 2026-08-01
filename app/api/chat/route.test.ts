@@ -7,9 +7,10 @@ import { POST } from "./route";
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   createAIChatStream: vi.fn(),
+  createConvexTokenSource: vi.fn(),
   fetchMutation: vi.fn(),
   fetchQuery: vi.fn(),
-  getConvexAuthToken: vi.fn(),
+  getConvexToken: vi.fn(),
   streamOptions: undefined as
     | {
         instructions: string;
@@ -41,7 +42,7 @@ vi.mock("convex/nextjs", () => ({
   fetchQuery: mocks.fetchQuery,
 }));
 vi.mock("@/lib/convex-server", () => ({
-  getConvexAuthToken: mocks.getConvexAuthToken,
+  createConvexTokenSource: mocks.createConvexTokenSource,
 }));
 vi.mock("@/lib/ai/providerRouter", () => {
   return {
@@ -88,7 +89,8 @@ describe("POST /api/chat", () => {
       userId: "user-1",
       getToken: vi.fn(async () => "convex-token"),
     });
-    mocks.getConvexAuthToken.mockResolvedValue("convex-token");
+    mocks.getConvexToken.mockResolvedValue("convex-token");
+    mocks.createConvexTokenSource.mockReturnValue(mocks.getConvexToken);
     mocks.fetchQuery.mockResolvedValue(createMindmapResult());
     mocks.streamOptions = undefined;
     mocks.createAIChatStream.mockImplementation((options) => {
@@ -118,7 +120,7 @@ describe("POST /api/chat", () => {
     await expect(response.json()).resolves.toEqual({
       error: "Unauthenticated",
     });
-    expect(mocks.getConvexAuthToken).not.toHaveBeenCalled();
+    expect(mocks.createConvexTokenSource).not.toHaveBeenCalled();
     expect(mocks.fetchQuery).not.toHaveBeenCalled();
   });
 
@@ -133,7 +135,7 @@ describe("POST /api/chat", () => {
     await expect(response.json()).resolves.toEqual({
       error: "AI is not configured",
     });
-    expect(mocks.getConvexAuthToken).not.toHaveBeenCalled();
+    expect(mocks.createConvexTokenSource).not.toHaveBeenCalled();
   });
 
   it("creates a titled thread and exposes it on the streamed response", async () => {
@@ -143,7 +145,7 @@ describe("POST /api/chat", () => {
       createRequest({ mindmapId: "map-1", messages: [userMessage] })
     );
 
-    expect(mocks.getConvexAuthToken).toHaveBeenCalledTimes(1);
+    expect(mocks.createConvexTokenSource).toHaveBeenCalledTimes(1);
     expect(mocks.fetchMutation.mock.calls[0]?.[1]).toEqual({
       mindmapId: "map-1",
       title: "Build a launch plan",

@@ -1,32 +1,45 @@
-export type Message =
-  | { success: string }
-  | { error: string }
-  | { message: string };
+type Message = { success: string } | { error: string } | { message: string };
 
 /**
  * Inline result of a form submission, rendered directly under the fields.
  *
- * Each state is a coloured rail rather than a filled banner: it reads at a
- * glance without turning the form into a warning box.
+ * Each state is a coloured rail rather than a filled banner: the colour lands
+ * on 2px of edge and, for an error, on the words — never on a red box that
+ * would out-shout the form it belongs to. The rails share one geometry so the
+ * three states read as one component in three moods.
+ *
+ * Errors announce themselves assertively because the submit the user just made
+ * did not happen; the quieter states settle into the polite live region.
  */
-export function FormMessage({ message }: { message: Message }) {
+function FormMessage({ message }: { message: Message }) {
   return (
-    <div className="flex w-full max-w-md flex-col gap-2 text-sm">
+    <div className="flex w-full max-w-md flex-col gap-2 text-[0.8125rem] leading-[1.5]">
       {"success" in message && (
-        <div className="border-l-2 border-primary px-4 text-foreground">
+        <p
+          className="border-l-2 border-primary py-0.5 pl-3 text-foreground"
+          role="status"
+        >
           {message.success}
-        </div>
+        </p>
       )}
       {"error" in message && (
-        <div className="border-l-2 border-destructive px-4 text-destructive">
+        <p
+          className="border-l-2 border-destructive py-0.5 pl-3 text-destructive"
+          role="alert"
+        >
           {message.error}
-        </div>
+        </p>
       )}
       {"message" in message && (
-        <div className="border-l-2 border-border px-4 text-muted-foreground">
+        <p
+          className="border-l-2 border-border py-0.5 pl-3 text-muted-foreground"
+          role="status"
+        >
           {message.message}
-        </div>
+        </p>
       )}
     </div>
   );
 }
+
+export { FormMessage, type Message };

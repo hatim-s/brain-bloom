@@ -42,6 +42,14 @@ vi.mock("./AiPanel", () => ({
   ),
 }));
 
+// The layout only reads two canvas facts (queued prompt, streaming flag);
+// the shell tests exercise neither, so the store hook is a static stub.
+vi.mock("../flow/providers/MindmapFlowProvider", () => ({
+  useMindmapFlow: <T,>(
+    selector: (state: { aiPromptRequest: null; aiStreaming: boolean }) => T
+  ): T => selector({ aiPromptRequest: null, aiStreaming: false }),
+}));
+
 const CONTAINER_WIDTH = 1_440;
 
 beforeAll(() => {
@@ -125,6 +133,23 @@ describe("AiPanelLayout", () => {
     expect(
       screen.queryByRole("button", { name: "Open Sprig panel" })
     ).toBeNull();
+  });
+
+  it("keeps the edge tab mounted but out of reach while the panel is open", () => {
+    render(
+      <AiPanelLayout>
+        <div data-testid="canvas" />
+      </AiPanelLayout>
+    );
+
+    // Mounted so it can cross-fade with the panel rather than pop in and out,
+    // but hidden from the accessibility tree and from the tab order meanwhile.
+    const notch = screen.getByLabelText("Open Sprig panel", {
+      selector: "button",
+    });
+
+    expect(notch.getAttribute("aria-hidden")).toBe("true");
+    expect(notch.getAttribute("tabindex")).toBe("-1");
   });
 
   it("collapses to a rail toggle and remembers the choice", async () => {

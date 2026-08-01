@@ -21,6 +21,32 @@ const INTERACTIVE_TARGET_SELECTOR = [
   "[data-radix-popper-content-wrapper]",
 ].join(",");
 
+/**
+ * The mindmap canvas, whose cards are focusable buttons.
+ *
+ * A node card is a Radix popover trigger, so clicking one parks keyboard focus
+ * on a `<button>` — and the guard above would then hand every unmodified key
+ * back to the browser, killing arrow-key map navigation the instant a reader
+ * touched a card. The card is not chrome, it *is* the surface the shortcuts act
+ * on, so keydowns from inside a node keep firing the binding.
+ */
+const CANVAS_SURFACE_SELECTOR = ".react-flow__node";
+
+/**
+ * Overlays that float above the canvas.
+ *
+ * Radix portals popovers, menus and dialogs out of the node they belong to, so
+ * they are already outside `CANVAS_SURFACE_SELECTOR`; naming them keeps the
+ * exemption honest if one is ever rendered in place instead.
+ */
+const OVERLAY_TARGET_SELECTOR = [
+  '[role="menu"]',
+  '[role="menuitem"]',
+  '[role="menuitemradio"]',
+  '[role="dialog"]',
+  "[data-radix-popper-content-wrapper]",
+].join(",");
+
 /** Runs a keyboard callback when its key and requested modifiers match. */
 export function useKey(
   key: KeyboardEvent["key"] | KeyboardEvent["code"],
@@ -54,6 +80,10 @@ export function useKey(
       const isInteractiveTarget =
         target instanceof Element &&
         target.closest(INTERACTIVE_TARGET_SELECTOR) !== null;
+      const isCanvasSurfaceTarget =
+        target instanceof Element &&
+        target.closest(OVERLAY_TARGET_SELECTOR) === null &&
+        target.closest(CANVAS_SURFACE_SELECTOR) !== null;
       const hasCtrlOrMetaBinding = isMetaKey || isCtrlKey;
       const isModifierFreeBinding =
         !isMetaKey && !isCtrlKey && !isShiftKey && !isAltKey;
@@ -79,7 +109,12 @@ export function useKey(
 
       // Escape bindings deliberately opt into typing contexts so editors can
       // close from inputs, including inputs nested inside dialogs.
-      if (!allowWhenTyping && isModifierFreeBinding && isInteractiveTarget) {
+      if (
+        !allowWhenTyping &&
+        isModifierFreeBinding &&
+        isInteractiveTarget &&
+        !isCanvasSurfaceTarget
+      ) {
         return;
       }
 

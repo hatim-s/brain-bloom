@@ -33,9 +33,9 @@ const REJECTION_ERROR_COPY =
 
 /** Shared visual treatment for the healthy div and interactive error button. */
 const PILL_CLASS_NAME = [
-  "sprig-sync-pill flex items-center gap-2 rounded-full border bg-card px-2.5 py-1",
-  "font-mono text-[11px] leading-none select-none",
-  "transition-colors duration-200 ease-organic motion-reduce:transition-none",
+  "sprig-sync-pill flex items-center gap-2 rounded-full border bg-card px-2.5 py-1.5",
+  "text-[11px] font-medium leading-none select-none shadow-rest",
+  "transition-colors duration-200 ease-settle motion-reduce:transition-none",
 ].join(" ");
 
 /**

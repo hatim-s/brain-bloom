@@ -1,7 +1,7 @@
 import { Edge, Position } from "@xyflow/react";
 
 import { ROOT_NODE_ID } from "./const";
-import { getNewEdgeID } from "./mindmap/createEdge";
+import { getNewEdgeID, STEM_EDGE_TYPE } from "./mindmap/createEdge";
 import { getNewNodeID } from "./mindmap/createNode";
 import { BaseFlowNode, NodeTypes } from "./types";
 
@@ -111,29 +111,35 @@ export const INITIAL_NODES: BaseFlowNode[] = [
   },
 ];
 
+// Every edge is a stem so this seed renders with the same growth curves the
+// canvas uses everywhere else.
 export const INITIAL_EDGES: Edge[] = [
   {
     id: getNewEdgeID(ROOT_NODE_ID, LEFT_NODE_1),
     source: ROOT_NODE_ID,
     target: LEFT_NODE_1,
+    type: STEM_EDGE_TYPE,
     sourceHandle: "root-left",
   },
   {
     id: getNewEdgeID(ROOT_NODE_ID, LEFT_NODE_2),
     source: ROOT_NODE_ID,
     target: LEFT_NODE_2,
+    type: STEM_EDGE_TYPE,
     sourceHandle: "root-left",
   },
   {
     id: getNewEdgeID(ROOT_NODE_ID, RIGHT_NODE_1),
     source: ROOT_NODE_ID,
     target: RIGHT_NODE_1,
+    type: STEM_EDGE_TYPE,
     sourceHandle: "root-right",
   },
   {
     id: getNewEdgeID(ROOT_NODE_ID, RIGHT_NODE_2),
     source: ROOT_NODE_ID,
     target: RIGHT_NODE_2,
+    type: STEM_EDGE_TYPE,
     sourceHandle: "root-right",
   },
 ];

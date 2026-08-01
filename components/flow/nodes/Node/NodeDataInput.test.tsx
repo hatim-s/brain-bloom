@@ -22,6 +22,101 @@ let store: ReturnType<typeof useMindmapStoreApi>;
 afterEach(cleanup);
 
 describe("NodeDataInput", () => {
+  it("edits the node in place: title, description, and link fields", () => {
+    renderEditor();
+
+    expect(screen.getByLabelText("Title")).toHaveProperty(
+      "value",
+      "Original title"
+    );
+    expect(screen.getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Original description"
+    );
+    expect(screen.getByLabelText("Link")).toHaveProperty("value", "");
+    // The link row is one affordance line: nothing to open, nothing shown.
+    expect(
+      screen.queryByRole("button", { name: "Open link in a new tab" })
+    ).toBeNull();
+  });
+
+  it("reveals the open-in-new-tab affordance once a link is typed", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.type(screen.getByLabelText("Link"), "example.com");
+
+    expect(
+      screen.getByRole("button", { name: "Open link in a new tab" })
+    ).toBeDefined();
+  });
+
+  it("saves the card's fields on Enter and closes", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    const title = screen.getByLabelText("Title");
+    await user.clear(title);
+    await user.type(title, "Edited title{Enter}");
+
+    const state = store.getState();
+    expect(state.selectedNode).toBeNull();
+    expect(state.nodesMap["right-child"].data).toEqual(
+      expect.objectContaining({
+        title: "Edited title",
+        description: "Original description",
+      })
+    );
+  });
+
+  it("keeps typing a newline inside the description on Shift+Enter", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    const description = screen.getByLabelText("Description");
+    await user.click(description);
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+
+    expect(store.getState().selectedNode).toBe("right-child");
+  });
+
+  it("closes without saving on Escape", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    const title = screen.getByLabelText("Title");
+    await user.clear(title);
+    await user.type(title, "Discarded title");
+    await user.keyboard("{Escape}");
+
+    const state = store.getState();
+    expect(state.selectedNode).toBeNull();
+    expect(state.nodesMap["right-child"].data.title).toBe("Original title");
+  });
+
+  it("cycles focus through the card's own fields on Tab", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    const title = screen.getByLabelText("Title");
+    await user.click(title);
+    await user.keyboard("{Tab}");
+    expect(document.activeElement).toBe(screen.getByLabelText("Description"));
+
+    await user.keyboard("{Tab}");
+    expect(document.activeElement).toBe(screen.getByLabelText("Link"));
+  });
+
+  it("wraps Tab from the last stop back to the title", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    screen.getByRole("button", { name: "Save" }).focus();
+    await user.keyboard("{Tab}");
+
+    expect(document.activeElement).toBe(screen.getByLabelText("Title"));
+  });
+
   it("updates an untouched field when the server reseeds the node", () => {
     renderEditor();
 

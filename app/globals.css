@@ -4,11 +4,21 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Sprig: "organic bloom".
+ * Sprig: "The Grove".
  *
- * Sage/moss greens against bone/paper neutrals. Every surface token sits on a
- * single hue family per theme (~152 for dark moss-shadow, ~95-120 for light
- * bone paper) so the two themes read as siblings rather than inversions.
+ * An organic green-clay world. Dark is the flagship scene: a deep forest
+ * ground (moss-black, never neutral gray, never pure black) where cards and
+ * node cards sit like lit clearings. Light is a warm bone-paper sibling built
+ * from the same two accents, not an inversion.
+ *
+ * Two accents, two jobs:
+ *   moss  (--primary) is the ONE voice of action — buttons, links, selection,
+ *         focus. At most ~10% of any screen. In light, hovers go deeper
+ *         (--primary-deep is darker); in dark, hovers lift lighter.
+ *   clay  (--glow) is AI presence and nothing else: the agent working, the
+ *         node the model just touched. The var keeps its historical --glow
+ *         name; the value is fired clay, not a glow. It is intentionally NOT
+ *         wired to --accent, which shadcn spends on ordinary hover chrome.
  *
  * Two line tokens, deliberately:
  *   --border       quiet hairline for decorative grouping (dividers, card edges).
@@ -17,9 +27,13 @@
  *                  node cards, flow edges). Measured >= 3:1 against every
  *                  surface it is drawn on, per WCAG 1.4.11.
  *
- * --bloom is the AI accent. It means "the model touched this" and nothing else.
- * It is intentionally NOT wired to --accent, which shadcn uses for ordinary
- * hover chrome and would spend the colour on nothing.
+ * The Never Flat Rule: no full-viewport surface ships flat. Tonal steps do the
+ * everyday depth work, soft downward shadows (deep-forest ink, never neutral
+ * black) appear only where something truly floats, and large grounds opt into
+ * `.sprig-atmosphere` below for canopy light plus a whisper of grain.
+ *
+ * No purple. The rejected iris/violet colorway is anti-reference (user-pinned,
+ * 2026-07-30) — nothing in this file lives in the 270-310 hue range.
  */
 
 @theme inline {
@@ -29,6 +43,7 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-primary: var(--primary);
+  --color-primary-deep: var(--primary-deep);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -53,22 +68,30 @@
 
   --color-line-strong: var(--line-strong);
   --color-scrim: var(--scrim);
-  --color-bloom: var(--bloom);
-  --color-bloom-foreground: var(--bloom-foreground);
-  --color-bloom-wash: var(--bloom-wash);
+  --color-glow: var(--glow);
+  --color-glow-foreground: var(--glow-foreground);
+  --color-glow-wash: var(--glow-wash);
   --color-canvas-dot: var(--canvas-dot);
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
 
-  /* 14 / 10 / 8. Panels and node cards are soft, controls are crisper, so the
-     hierarchy is legible instead of everything landing on the same curve. */
+  /* 16 / 12 / 8. Cards and panels are soft (lg), controls sit at md, small
+     chrome at sm, so the hierarchy is legible instead of everything landing
+     on the same curve. */
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 4px);
-  --radius-sm: calc(var(--radius) - 6px);
+  --radius-sm: calc(var(--radius) - 8px);
 
-  /* Weighted decelerate. Everything that moves in Sprig uses this curve. */
-  --ease-organic: cubic-bezier(0.32, 0.72, 0, 1);
+  /* Soft downward shadows from one overhead light, inked in deep forest so
+     depth stays warm. Tonal steps come first; these appear only where
+     something truly floats. */
+  --shadow-rest: var(--shadow-rest);
+  --shadow-raised: var(--shadow-raised);
+  --shadow-floating: var(--shadow-floating);
+
+  /* Weighted decelerate. Everything that moves in Sprig settles on this curve. */
+  --ease-settle: cubic-bezier(0.32, 0.72, 0, 1);
 
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
@@ -146,112 +169,153 @@
 }
 
 @layer base {
-  /* Light: bone paper. Card surfaces sit *above* the page, like sheets on a desk. */
+  /* Light: warm bone paper. Card surfaces sit *above* the page, like sheets
+     laid on a desk. The bone/ink-moss neutrals carry a breath of green so the
+     light theme reads as the same world as the forest, not a different one. */
   :root {
-    --background: oklch(0.965 0.008 95);
-    --foreground: oklch(0.245 0.017 150);
+    --background: oklch(0.965 0.01 95);
+    --foreground: oklch(0.23 0.022 150);
 
-    --card: oklch(0.988 0.005 95);
-    --card-foreground: oklch(0.245 0.017 150);
+    --card: oklch(0.99 0.006 95);
+    --card-foreground: oklch(0.23 0.022 150);
 
-    --popover: oklch(0.995 0.004 95);
-    --popover-foreground: oklch(0.245 0.017 150);
+    --popover: oklch(0.995 0.005 95);
+    --popover-foreground: oklch(0.23 0.022 150);
 
-    --primary: oklch(0.505 0.105 150);
-    --primary-foreground: oklch(0.985 0.006 95);
+    --primary: oklch(0.5 0.115 152);
+    --primary-deep: oklch(0.43 0.115 152);
+    --primary-foreground: oklch(0.99 0.006 95);
 
-    --secondary: oklch(0.933 0.011 100);
-    --secondary-foreground: oklch(0.245 0.017 150);
+    --secondary: oklch(0.938 0.013 92);
+    --secondary-foreground: oklch(0.23 0.022 150);
 
-    --muted: oklch(0.933 0.011 100);
-    --muted-foreground: oklch(0.475 0.019 140);
+    --muted: oklch(0.938 0.013 92);
+    --muted-foreground: oklch(0.44 0.024 148);
 
-    --accent: oklch(0.918 0.013 105);
-    --accent-foreground: oklch(0.245 0.017 150);
+    --accent: oklch(0.945 0.012 93);
+    --accent-foreground: oklch(0.23 0.022 150);
 
-    --destructive: oklch(0.52 0.19 27);
+    --destructive: oklch(0.55 0.19 27);
     --destructive-foreground: oklch(0.99 0.005 60);
 
-    --border: oklch(0.858 0.014 120);
-    --line-strong: oklch(0.63 0.025 145);
+    --border: oklch(0.87 0.016 110);
+    /* hairline-strong. Measured against the lightest surface it is drawn on
+       (popover, L 0.995): ~3.8:1, and ~3.6:1 on the bone ground — so the
+       token keeps its >= 3:1 promise (WCAG 1.4.11) without going darker. */
+    --line-strong: oklch(0.6 0.026 148);
     --input: var(--line-strong);
-    --ring: oklch(0.505 0.105 150);
+    --ring: oklch(0.5 0.115 152);
 
-    --bloom: oklch(0.545 0.145 42);
-    --bloom-foreground: oklch(0.99 0.005 60);
-    --bloom-wash: oklch(0.545 0.145 42 / 0.1);
+    /* Clay: AI presence only. */
+    --glow: oklch(0.58 0.115 45);
+    --glow-foreground: oklch(0.99 0.006 95);
+    --glow-wash: oklch(0.58 0.115 45 / 0.1);
 
-    --canvas-dot: oklch(0.855 0.012 120);
+    --canvas-dot: oklch(0.885 0.014 100);
 
-    /* A scrim is a scrim: the same deep moss shade in both themes, so a modal
-       always dims towards the same place. */
-    --scrim: oklch(0.14 0.012 152 / 0.66);
+    /* A scrim is a scrim: the same deep forest shade in both themes, so a
+       modal always dims towards the same place. */
+    --scrim: oklch(0.14 0.02 152 / 0.62);
 
-    --radius: 0.875rem;
+    --radius: 1rem;
+
+    --shadow-rest: 0 1px 2px oklch(0.14 0.02 152 / 0.05);
+    --shadow-raised:
+      0 2px 8px oklch(0.14 0.02 152 / 0.07),
+      0 1px 2px oklch(0.14 0.02 152 / 0.05);
+    --shadow-floating:
+      0 12px 32px oklch(0.14 0.02 152 / 0.12),
+      0 2px 8px oklch(0.14 0.02 152 / 0.06);
+
+    /* Atmosphere layers for `.sprig-atmosphere` (see The Never Flat Rule).
+       Light gets a bright bone lift near the top and a barely-there tonal
+       settle at the bottom; grain is quieter than in dark because paper
+       already reads as material. */
+    --atmosphere-lift: oklch(0.995 0.005 95 / 0.9);
+    --atmosphere-deep: oklch(0.9 0.016 105 / 0.5);
+    --atmosphere-grain-opacity: 0.02;
 
     /* Header identity clearance and ThemeSwitcher placement are coupled to
        this viewport inset so the floating control never covers account text. */
     --theme-switcher-inset: 1.5rem;
 
-    --sidebar-background: oklch(0.988 0.005 95);
-    --sidebar-foreground: oklch(0.245 0.017 150);
-    --sidebar-primary: oklch(0.505 0.105 150);
-    --sidebar-primary-foreground: oklch(0.985 0.006 95);
-    --sidebar-accent: oklch(0.918 0.013 105);
-    --sidebar-accent-foreground: oklch(0.245 0.017 150);
-    --sidebar-border: var(--line-strong);
-    --sidebar-ring: oklch(0.505 0.105 150);
+    --sidebar-background: oklch(0.99 0.006 95);
+    --sidebar-foreground: oklch(0.23 0.022 150);
+    --sidebar-primary: oklch(0.5 0.115 152);
+    --sidebar-primary-foreground: oklch(0.99 0.006 95);
+    --sidebar-accent: oklch(0.945 0.012 93);
+    --sidebar-accent-foreground: oklch(0.23 0.022 150);
+    --sidebar-border: var(--border);
+    --sidebar-ring: oklch(0.5 0.115 152);
 
-    --scrollbar-color: oklch(0.63 0.025 145);
+    --scrollbar-color: oklch(0.6 0.026 148);
   }
 
-  /* Dark: moss shadow. The default. */
+  /* Dark: the forest. This is the flagship theme — a deep moss-black ground
+     with raised and popover steps lifting out of it, warm ivory text, and
+     moss that has been brightened so it still reads as the one action colour
+     against the dark. Hovers lift lighter here (--primary-deep > --primary). */
   .dark {
-    --background: oklch(0.168 0.011 152);
-    --foreground: oklch(0.945 0.008 100);
+    --background: oklch(0.168 0.018 155);
+    --foreground: oklch(0.94 0.012 110);
 
-    --card: oklch(0.213 0.013 152);
-    --card-foreground: oklch(0.945 0.008 100);
+    --card: oklch(0.205 0.02 154);
+    --card-foreground: oklch(0.94 0.012 110);
 
-    --popover: oklch(0.232 0.013 152);
-    --popover-foreground: oklch(0.945 0.008 100);
+    --popover: oklch(0.238 0.021 152);
+    --popover-foreground: oklch(0.94 0.012 110);
 
-    --primary: oklch(0.74 0.115 148);
-    --primary-foreground: oklch(0.19 0.045 150);
+    --primary: oklch(0.74 0.125 150);
+    --primary-deep: oklch(0.79 0.115 150);
+    --primary-foreground: oklch(0.17 0.045 152);
 
-    --secondary: oklch(0.258 0.013 152);
-    --secondary-foreground: oklch(0.945 0.008 100);
+    --secondary: oklch(0.23 0.02 153);
+    --secondary-foreground: oklch(0.94 0.012 110);
 
-    --muted: oklch(0.258 0.013 152);
-    --muted-foreground: oklch(0.74 0.014 128);
+    --muted: oklch(0.23 0.02 153);
+    --muted-foreground: oklch(0.73 0.02 145);
 
-    --accent: oklch(0.282 0.014 152);
-    --accent-foreground: oklch(0.945 0.008 100);
+    --accent: oklch(0.26 0.021 152);
+    --accent-foreground: oklch(0.94 0.012 110);
 
     --destructive: oklch(0.62 0.17 27);
     --destructive-foreground: oklch(0.2 0.05 27);
 
-    --border: oklch(0.318 0.014 152);
-    --line-strong: oklch(0.53 0.022 150);
+    --border: oklch(0.27 0.02 152);
+    --line-strong: oklch(0.52 0.025 150);
     --input: var(--line-strong);
-    --ring: oklch(0.74 0.115 148);
+    --ring: oklch(0.74 0.125 150);
 
-    --bloom: oklch(0.8 0.115 42);
-    --bloom-foreground: oklch(0.22 0.05 45);
-    --bloom-wash: oklch(0.8 0.115 42 / 0.12);
+    /* Forest clay: AI presence only. */
+    --glow: oklch(0.72 0.105 48);
+    --glow-foreground: oklch(0.2 0.05 48);
+    --glow-wash: oklch(0.72 0.105 48 / 0.14);
 
-    --canvas-dot: oklch(0.3 0.014 152);
+    --canvas-dot: oklch(0.25 0.018 152);
 
-    --sidebar-background: oklch(0.213 0.013 152);
-    --sidebar-foreground: oklch(0.945 0.008 100);
-    --sidebar-primary: oklch(0.74 0.115 148);
-    --sidebar-primary-foreground: oklch(0.19 0.045 150);
-    --sidebar-accent: oklch(0.282 0.014 152);
-    --sidebar-accent-foreground: oklch(0.945 0.008 100);
-    --sidebar-border: var(--line-strong);
-    --sidebar-ring: oklch(0.74 0.115 148);
+    --shadow-rest: 0 1px 2px oklch(0.14 0.02 152 / 0.35);
+    --shadow-raised:
+      0 2px 8px oklch(0.14 0.02 152 / 0.45),
+      0 1px 2px oklch(0.14 0.02 152 / 0.35);
+    --shadow-floating:
+      0 12px 32px oklch(0.14 0.02 152 / 0.55),
+      0 2px 8px oklch(0.14 0.02 152 / 0.4);
 
-    --scrollbar-color: oklch(0.53 0.022 150);
+    /* Canopy light overhead, deeper forest towards the floor. */
+    --atmosphere-lift: oklch(0.27 0.026 152 / 0.85);
+    --atmosphere-deep: oklch(0.13 0.02 158 / 0.7);
+    --atmosphere-grain-opacity: 0.025;
+
+    --sidebar-background: oklch(0.205 0.02 154);
+    --sidebar-foreground: oklch(0.94 0.012 110);
+    --sidebar-primary: oklch(0.74 0.125 150);
+    --sidebar-primary-foreground: oklch(0.17 0.045 152);
+    --sidebar-accent: oklch(0.26 0.021 152);
+    --sidebar-accent-foreground: oklch(0.94 0.012 110);
+    --sidebar-border: var(--border);
+    --sidebar-ring: oklch(0.74 0.125 150);
+
+    --scrollbar-color: oklch(0.52 0.025 150);
   }
 }
 
@@ -272,22 +336,80 @@
   }
 }
 
+/*
+ * .sprig-atmosphere — The Never Flat Rule, packaged.
+ *
+ * WHAT IT IS
+ * Two stacked layers of very cheap depth on top of the theme ground:
+ *   1. a soft radial "canopy light" spilling in from above the top edge, plus
+ *      a vertical tonal drift that settles into deeper ground at the bottom.
+ *      Both are painted from the per-theme --atmosphere-lift / --atmosphere-deep
+ *      helper vars declared in :root and .dark, so the class recolours itself
+ *      with the theme — nothing here is hardcoded to one scene.
+ *   2. an almost-invisible grain (~2% light / ~2.5% dark) so large fields read
+ *      as material rather than as a flat fill.
+ *
+ * WHEN TO USE IT
+ * Full-viewport page grounds and hero surrounds — anywhere a big surface would
+ * otherwise ship as one flat colour. It is a ground, not a card: put it on the
+ * page/section wrapper, not on cards, panels, popovers, or node cards (those
+ * already carry their own raised tonal step and shadow).
+ *
+ * COST
+ * CSS-only. The grain is an inline data: URI feTurbulence tile, so there is no
+ * network fetch, no image asset, and no JS. It tiles seamlessly at 160px via
+ * stitchTiles, and it is a static paint — nothing animates, so there is nothing
+ * for prefers-reduced-motion to turn off.
+ *
+ * Z-INDEX DISCIPLINE
+ * The class opens its own stacking context (isolation: isolate) and the grain
+ * lives on a ::before at z-index: -1. Negative-z children paint after the
+ * element's own background but before in-flow content, so the grain always
+ * lands over the gradients and never over the content. The pseudo-element is
+ * pointer-events: none, so it never eats a click.
+ */
+.sprig-atmosphere {
+  position: relative;
+  isolation: isolate;
+  background-color: var(--background);
+  background-image:
+    radial-gradient(
+      130% 80% at 50% -14%,
+      var(--atmosphere-lift) 0%,
+      transparent 62%
+    ),
+    linear-gradient(to bottom, transparent 38%, var(--atmosphere-deep) 100%);
+  background-repeat: no-repeat;
+}
+
+.sprig-atmosphere::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: var(--atmosphere-grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='sprigGrain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23sprigGrain)'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+  background-repeat: repeat;
+}
+
 /* AI activity. Both keyframes settle back to the resting state so the highlight
-   reads as a pulse of attention, not a permanent badge. P8 applies the classes. */
-@keyframes sprig-bloom-node {
+   reads as a pulse of attention, not a permanent badge. Flow applies the classes. */
+@keyframes sprig-glow-node {
   0%,
   60% {
-    box-shadow: 0 0 0 2px var(--bloom);
+    box-shadow: 0 0 0 2px var(--glow);
   }
   100% {
     box-shadow: 0 0 0 2px transparent;
   }
 }
 
-@keyframes sprig-bloom-edge {
+@keyframes sprig-glow-edge {
   0%,
   60% {
-    stroke: var(--bloom);
+    stroke: var(--glow);
     stroke-width: 2.5;
   }
   100% {
@@ -303,8 +425,9 @@
 }
 
 /* Autosave. The status dot breathes only while a write is outstanding; it uses
-   --primary, not --bloom, because saving is the product working, not the model
-   touching anything. flow.css applies it and handles reduced motion. */
+   --primary (moss), not --glow (clay), because saving is the product working,
+   not the model touching anything. flow.css applies it and handles reduced
+   motion. */
 @keyframes sprig-sync-pulse {
   0%,
   100% {
@@ -318,23 +441,23 @@
 }
 
 /* Generation status in the AI panel. Same breathing cadence as the autosave
-   dot so the two ambient indicators read as one system, but in --bloom,
+   dot so the two ambient indicators read as one system, but in --glow (clay),
    because this one means the model is working rather than the product. */
-.sprig-bloom-dot {
+.sprig-glow-dot {
   flex: none;
   width: 0.375rem;
   height: 0.375rem;
   border-radius: 9999px;
-  background: var(--bloom);
-  animation: sprig-sync-pulse 1400ms var(--ease-organic) infinite;
+  background: var(--glow);
+  animation: sprig-sync-pulse 1400ms var(--ease-settle) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
   /* Without the pulse the dot would be indistinguishable from decoration, so
      it collapses to a hollow outline rather than to a solid dot. */
-  .sprig-bloom-dot {
+  .sprig-glow-dot {
     animation: none;
     background: transparent;
-    box-shadow: inset 0 0 0 1.5px var(--bloom);
+    box-shadow: inset 0 0 0 1.5px var(--glow);
   }
 }

@@ -5,17 +5,9 @@ import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 
 import { ROOT_NODE_ID } from "../const";
 import { generateLeveledNodes } from "../layout/generateLeveledNodes";
-import {
-  addNodeToGraph,
-  calculateNodeHeight,
-  initGraphs,
-  initLayout,
-  NODE_DIMENSIONS,
-} from "../layout/init";
-import {
-  createEdge,
-  createFlowEdgeFromPartialBaseFlowEdge,
-} from "../mindmap/createEdge";
+import { layoutGrove } from "../layout/grove";
+import { estimateNodeSize } from "../layout/nodeSize";
+import { createFlowEdgeFromPartialBaseFlowEdge } from "../mindmap/createEdge";
 import {
   createBaseFlowNodeFromPartialBaseFlowNode,
   createNode,
@@ -32,7 +24,13 @@ import {
   transformMindmapNodesToFlowNodesAndEdges,
 } from "../mindmap/mindmapNodesToFlowNodes";
 import { appendPendingOp, PendingNodePatch } from "../mindmap/pendingOps";
-import { BaseFlowNode, FlowNode, MindmapNode, NodeTypes } from "../types";
+import {
+  BaseFlowNode,
+  FlowEdge,
+  FlowNode,
+  MindmapNode,
+  NodeTypes,
+} from "../types";
 import { MindmapFlowContext, ServerMindmapState } from "./types";
 
 type MindmapStore = MindmapFlowContext;
@@ -53,7 +51,7 @@ type MindmapStoreSeed =
 
 type SeededGraphState = Pick<
   MindmapStore,
-  "layout" | "nodes" | "edges" | "nodesMap" | "mindmapNodesMap" | "leveledNodes"
+  "nodes" | "edges" | "nodesMap" | "mindmapNodesMap" | "leveledNodes"
 >;
 
 type FlowGraphSeed = {
@@ -83,13 +81,10 @@ function createSeededGraphState({
   initialNodes,
   initialEdges,
 }: FlowGraphSeed): SeededGraphState {
-  const layout = initGraphs();
-
-  // An empty server snapshot is authoritative. Dagre needs a root node to
-  // calculate translations, so skip layout while preserving the empty seed.
+  // An empty server snapshot is authoritative: there is no grove to grow, so
+  // the empty seed is preserved rather than invented around.
   if (initialNodes.length === 0) {
     return {
-      layout,
       nodes: [],
       edges: initialEdges,
       nodesMap: {},
@@ -97,7 +92,8 @@ function createSeededGraphState({
       leveledNodes: [],
     };
   }
-  const nodes = initLayout(layout, initialNodes, initialEdges);
+
+  const nodes = layoutGrove(initialNodes, initialEdges);
   const edges = initialEdges;
   const mindmapNodesMap = transformFlowNodesAndEdgesToMindmapNodes(
     nodes,
@@ -105,13 +101,31 @@ function createSeededGraphState({
   );
 
   return {
-    layout,
     nodes,
     edges,
     nodesMap: deriveNodesMap(nodes),
     mindmapNodesMap,
     leveledNodes: deriveLeveledNodes(mindmapNodesMap),
   };
+}
+
+/**
+ * Re-grows the whole grove from the authoritative mindmap tree.
+ *
+ * The layout is a pure function of the tree, so every mutation re-lays out from
+ * scratch instead of patching a mutable graph: cheap at map sizes (hundreds of
+ * nodes at most) and it removes any chance of incremental drift between the
+ * seeded layout and the live one.
+ */
+function relayoutFromMindmapNodes(
+  mindmapNodesMap: Record<string, MindmapNode>
+): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  const graph = transformMindmapNodesToFlowNodesAndEdges(mindmapNodesMap);
+  const baseNodes = graph.nodes.map((node) =>
+    createBaseFlowNodeFromPartialBaseFlowNode(node)
+  );
+
+  return { nodes: layoutGrove(baseNodes, graph.edges), edges: graph.edges };
 }
 
 /**
@@ -214,6 +228,10 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
           state.aiEditNode !== null && liveNodeIds.has(state.aiEditNode)
             ? state.aiEditNode
             : null,
+        toolbarNode:
+          state.toolbarNode !== null && liveNodeIds.has(state.toolbarNode)
+            ? state.toolbarNode
+            : null,
         mindmapDB: {
           ...state.mindmapDB,
           name: serverState.name,
@@ -282,8 +300,9 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
 
       const currentState = get();
       const currentMindmapNodesMap = currentState.mindmapNodesMap;
+      const parentMindmapNode = currentMindmapNodesMap[parentNodeId];
 
-      if (!currentMindmapNodesMap[parentNodeId]) {
+      if (!parentMindmapNode) {
         // eslint-disable-next-line no-console -- needed
         console.error(
           `[MindmapFlowProvider] onAddNode: parent node ${parentNodeId} not found`
@@ -299,38 +318,32 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
         return null;
       }
 
+      // A branch only ever grows into its own hemisphere: the root can seed
+      // either side, but a left node can never sprout a right child.
+      if (
+        parentMindmapNode.type !== NodeTypes.ROOT &&
+        parentMindmapNode.type !== type
+      ) {
+        // eslint-disable-next-line no-console -- needed
+        console.error(
+          `[MindmapFlowProvider] onAddNode: parent node ${parentNodeId} is not on the ${type} side`
+        );
+        return null;
+      }
+
       let newNode = createNode(type, "New Node", id, data);
       while (!id && currentMindmapNodesMap[newNode.id]) {
         newNode = createNode(type, "New Node", undefined, data);
       }
 
-      const newGraph =
-        type === NodeTypes.LEFT
-          ? currentState.layout.leftGraph
-          : currentState.layout.rightGraph;
-      const oldGraph =
-        type === NodeTypes.LEFT
-          ? currentState.layout.rightGraph
-          : currentState.layout.leftGraph;
-
-      if (!newGraph.hasNode(parentNodeId)) {
-        // eslint-disable-next-line no-console -- needed
-        console.error(
-          `[MindmapFlowProvider] onAddNode: parent node ${parentNodeId} not found in ${type} graph`
-        );
-        return null;
-      }
-
-      const newEdge = createEdge(parentNodeId, newNode.id);
-      const siblingOrder = currentMindmapNodesMap[parentNodeId].children.size;
-      addNodeToGraph(newGraph, newNode, newEdge);
+      const siblingOrder = parentMindmapNode.children.size;
 
       let updatedMindmapNodesMap = {
         ...currentMindmapNodesMap,
         [newNode.id]: createMindmapNodeFromFlowNode(
           newNode,
           parentNodeId,
-          currentMindmapNodesMap[parentNodeId].level
+          parentMindmapNode.level
         ),
       };
 
@@ -344,43 +357,14 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
         };
       }
 
-      const newRootNode = newGraph.node(ROOT_NODE_ID);
-      const { nodes: newGraphNodes, edges: newGraphEdges } =
-        transformMindmapNodesToFlowNodesAndEdges(updatedMindmapNodesMap);
+      const { nodes: laidOutNodes, edges: newGraphEdges } =
+        relayoutFromMindmapNodes(updatedMindmapNodesMap);
 
-      const updatedNodes = newGraphNodes.map<FlowNode>((partialNode) => {
-        const node = createBaseFlowNodeFromPartialBaseFlowNode(partialNode);
-
-        if (node.type === NodeTypes.ROOT) {
-          return {
-            ...node,
-            position: {
-              x: newGraph.node(node.id).x! - newRootNode.x!,
-              y: newGraph.node(node.id).y! - newRootNode.y!,
-            },
-          };
-        }
-
-        if (node.type !== type) {
-          return {
-            ...node,
-            // Keep nodes in the untouched graph at their existing layout.
-            position: {
-              x: oldGraph.node(node.id).x! - oldGraph.node(ROOT_NODE_ID).x!,
-              y: oldGraph.node(node.id).y! - oldGraph.node(ROOT_NODE_ID).y!,
-            },
-          };
-        }
-
-        return {
-          ...node,
-          selected: node.id === parentNodeId,
-          position: {
-            x: newGraph.node(node.id).x! - newRootNode.x!,
-            y: newGraph.node(node.id).y! - newRootNode.y!,
-          },
-        };
-      });
+      // The grown-from node keeps the selection, so the reader's place on the
+      // canvas is the branch they just extended.
+      const updatedNodes = laidOutNodes.map<FlowNode>((node) =>
+        node.id === parentNodeId ? { ...node, selected: true } : node
+      );
 
       set((state) => ({
         nodes: updatedNodes,
@@ -434,9 +418,6 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
           return state;
         }
 
-        const updatedNodes = state.nodes.map((node) =>
-          node.id === nodeId ? { ...node, data } : node
-        );
         const currentMindmapNode = state.mindmapNodesMap[nodeId];
         const updatedMindmapNodesMap = currentMindmapNode
           ? {
@@ -444,19 +425,30 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
               [nodeId]: { ...currentMindmapNode, data },
             }
           : state.mindmapNodesMap;
-
-        const updatedNode = { ...currentNode, data };
-        const graph =
-          updatedNode.type === NodeTypes.LEFT
-            ? state.layout.leftGraph
-            : state.layout.rightGraph;
         const patch = createNodeDataPatch(currentNode.data, data);
         const hasChanges = Object.keys(patch).length > 0;
 
-        graph.setNode(nodeId, {
-          height: calculateNodeHeight(updatedNode),
-          width: NODE_DIMENSIONS.width,
-        });
+        // New copy only moves the grove when it changes how much room the card
+        // takes (gaining or losing its description). A title edit keeps every
+        // position, so the canvas is not re-rendered wholesale on each save.
+        const resizesCard =
+          currentMindmapNode !== undefined &&
+          estimateNodeSize(currentNode, currentMindmapNode.level).height !==
+            estimateNodeSize({ data }, currentMindmapNode.level).height;
+
+        // Transient XYFlow flags (selection) are carried across the relayout.
+        const updatedNodes = resizesCard
+          ? relayoutFromMindmapNodes(
+              updatedMindmapNodesMap
+            ).nodes.map<FlowNode>((node) => {
+              const previous = state.nodesMap[node.id];
+              return previous === undefined
+                ? node
+                : { ...node, selected: previous.selected };
+            })
+          : state.nodes.map((node) =>
+              node.id === nodeId ? { ...node, data } : node
+            );
 
         return {
           nodes: updatedNodes,
@@ -504,6 +496,20 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
           set({ aiEditNode });
         }
       },
+      aiEditAction: "grow",
+      setAiEditAction: (aiEditAction) => {
+        if (!readOnly) {
+          set({ aiEditAction });
+        }
+      },
+      toolbarNode: null,
+      setToolbarNode: (toolbarNode) => {
+        if (!readOnly) {
+          set({ toolbarNode });
+        }
+      },
+      aiPromptRequest: null,
+      aiStreaming: false,
       aiTouchedNodeIds: [],
       pendingAiTouchedNodeIds: [],
       setAiTouchedNodeIds: (nodeIds) => {
@@ -688,6 +694,26 @@ function createMindmapStore(seed: MindmapStoreSeed): StoreApi<MindmapStore> {
             syncState,
             lastSyncError: syncState === "error" ? (error ?? null) : null,
           });
+        },
+        requestAiPrompt: (nodeId, prompt) => {
+          if (readOnly) {
+            warnReadOnlyMutation("requestAiPrompt");
+            return;
+          }
+
+          set((state) => ({
+            aiPromptRequest: {
+              requestId: (state.aiPromptRequest?.requestId ?? 0) + 1,
+              nodeId,
+              prompt,
+            },
+          }));
+        },
+        clearAiPromptRequest: () => {
+          set({ aiPromptRequest: null });
+        },
+        setAiStreaming: (aiStreaming) => {
+          set({ aiStreaming });
         },
       },
     };

@@ -26,7 +26,7 @@ import {
   type GeneratedTreeNode,
 } from "@/lib/ai/generatedTree";
 import { generateAIStructured } from "@/lib/ai/providerRouter";
-import { getConvexAuthToken } from "@/lib/convex-server";
+import { getFreshConvexAuthToken } from "@/lib/convex-server";
 import { AIMindmap } from "@/types/AI";
 
 import { editAIMindmap } from "./ai-node-edit";
@@ -206,7 +206,10 @@ async function persistGeneratedMindmap(
   nodes: FlowNodeSnapshot[],
   edges: FlowEdgeSnapshot[]
 ) {
-  const token = await getConvexAuthToken();
+  // Minted here, after generation: the token from route entry would be past
+  // its ~60s validity by the time a multi-minute generation finishes, and
+  // Convex rejects it as an expired OIDC claim.
+  const token = await getFreshConvexAuthToken();
   if (token === null) {
     throw new Error("Convex auth is not configured — see docs/ENV.md");
   }

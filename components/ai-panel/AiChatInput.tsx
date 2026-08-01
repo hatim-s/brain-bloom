@@ -25,6 +25,11 @@ type AiChatInputProps = {
  * chat surface has trained writers on. The submit control becomes a stop
  * control while a turn is in flight rather than appearing next to it, so the
  * one primary action in the composer is always the one that applies.
+ *
+ * This is where the panel spends its moss: Send is the default (moss-filled)
+ * button, the single voice of action in the surface. Stop drops to outline —
+ * interrupting the model is a correction, not the promoted next step — and no
+ * clay appears here, because nothing in the composer is the model acting.
  */
 function AiChatInput({
   isSendDisabled,
@@ -121,7 +126,7 @@ function AiChatInput({
         value={value}
       />
       <div className="flex items-center justify-between gap-3">
-        <p className="font-mono text-[11px] leading-none text-muted-foreground">
+        <p className="text-[11px] leading-none text-muted-foreground">
           Enter sends · Shift+Enter for a new line
         </p>
         <Button

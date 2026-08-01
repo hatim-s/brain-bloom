@@ -16,6 +16,7 @@ export function useMindmapNavigation({
   onAddNode,
   setSelectedNode,
   setAiEditNode,
+  setToolbarNode,
 }: {
   readOnly: boolean;
   mindmapNodesMap: Record<string, MindmapNode>;
@@ -28,13 +29,25 @@ export function useMindmapNavigation({
   ) => void;
   setSelectedNode: (nodeId: string | null) => void;
   setAiEditNode: (nodeId: string | null) => void;
+  setToolbarNode?: (nodeId: string | null) => void;
 }) {
   const handleNavigate = useCallback(
     (operation: Operation) => {
-      if (!activeNode) return;
+      const currentNode = activeNode ? mindmapNodesMap[activeNode] : undefined;
+
+      // An arrow key is the way *in* as much as the way around: with nothing
+      // standing on the map — a fresh page, a click on the empty pane, a node
+      // that vanished under a server reseed — the first press lands on the
+      // root, which is the only entry point that is always there.
+      if (!currentNode) {
+        const root = mindmapNodesMap[ROOT_NODE_ID];
+        if (root) setActiveNode(root.id);
+        return;
+      }
+
       const newNode = navigate(
         operation,
-        mindmapNodesMap[activeNode],
+        currentNode,
         mindmapNodesMap,
         leveledNodes
       );
@@ -96,6 +109,7 @@ export function useMindmapNavigation({
   const onStartAiEditing = useEventCallback(() => {
     setAiEditNode(activeNode);
     setSelectedNode(null); // we unset the selected node to prevent user from editing the node
+    setToolbarNode?.(null);
   });
 
   useKey("k", onStartAiEditing, {
@@ -109,6 +123,7 @@ export function useMindmapNavigation({
     () => {
       setSelectedNode(null);
       setAiEditNode(null);
+      setToolbarNode?.(null);
     },
     { allowWhenTyping: true }
   );

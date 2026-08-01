@@ -1,77 +1,113 @@
 "use client";
 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type Ref, useEffect, useState } from "react";
 
-import { cn } from "@/lib/utils";
-
-import { Box } from "./ui/box";
 import { Textarea } from "./ui/textarea";
 
+/** How long one example prompt holds before the next one takes its place. */
+const EXAMPLE_INTERVAL_MS = 3000;
+
+type PromptInputProps = {
+  /** Disables writing while a map is being generated. */
+  disabled?: boolean;
+  /** Prompts cycled through the empty field, one at a time. */
+  examples: string[];
+  /** Invoked on ⌘/Ctrl + Enter, so the prompt can be sent without reaching. */
+  onSubmit?: () => void;
+  onValueChange: (value: string) => void;
+  /** Lets the composer hand focus back to the field, e.g. after an example. */
+  textareaRef?: Ref<HTMLTextAreaElement>;
+  value: string;
+};
+
 /**
- * Prompt field whose empty state cycles through example prompts.
+ * The writing surface of the prompt-to-map path.
  *
- * The cycling is the point of the component, so under `prefers-reduced-motion`
- * it settles on the first example rather than disappearing.
+ * Borderless by design: it sits inside the composer frame, which owns the
+ * hairline and the focus ring, so the field reads as paper rather than as a
+ * control stacked on a control. The empty state cycles through example
+ * prompts as a soft overlay rather than a native placeholder, because a
+ * native one cannot animate; under `prefers-reduced-motion` it settles on the
+ * first example instead of disappearing.
  */
-const PromptInput = ({
-  placeholders,
-  onChange,
-}: {
-  placeholders: string[];
-  onChange?: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
-}) => {
-  const [currentPlaceholder, setCurrentPlaceholder] = useState(0);
+function PromptInput({
+  disabled,
+  examples,
+  onSubmit,
+  onValueChange,
+  textareaRef,
+  value,
+}: PromptInputProps) {
+  const [currentExample, setCurrentExample] = useState(0);
   const prefersReducedMotion = useReducedMotion();
+
+  const hasValue = value.length > 0;
 
   useEffect(() => {
     if (prefersReducedMotion) {
-      setCurrentPlaceholder(0);
+      setCurrentExample(0);
+      return;
+    }
+
+    // No cycling while the user has text in the field: the overlay is hidden
+    // and rotating its key would only churn renders.
+    if (hasValue) {
       return;
     }
 
     const interval = setInterval(() => {
-      setCurrentPlaceholder((previous) => (previous + 1) % placeholders.length);
-    }, 3000);
+      setCurrentExample((previous) => (previous + 1) % examples.length);
+    }, EXAMPLE_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [placeholders.length, prefersReducedMotion]);
+  }, [examples.length, hasValue, prefersReducedMotion]);
 
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const [value, setValue] = useState("");
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      onSubmit?.();
+    }
+  };
 
   return (
-    <Box className="relative">
+    <div className="relative">
       <Textarea
-        className={cn(
-          "min-h-32 w-full rounded-lg text-sm sm:text-base",
-          "resize-none"
-        )}
-        onChange={(e) => {
-          setValue(e.target.value);
-          onChange?.(e);
-        }}
-        ref={inputRef}
+        aria-label="What do you want to think through?"
+        className="min-h-[8.5rem] resize-none border-0 bg-transparent px-5 py-4 text-base shadow-none focus-visible:ring-0 md:text-base sm:min-h-[9.5rem]"
+        disabled={disabled}
+        onChange={(event) => onValueChange(event.target.value)}
+        onKeyDown={handleKeyDown}
+        ref={textareaRef}
         value={value}
       />
-      <div className="absolute flex items-center rounded-full pointer-events-none top-0">
-        <AnimatePresence mode="wait">
-          {!value && (
+      {/* Overlaid on the field, so it must match the field's own padding and
+          type scale exactly or the text appears to jump on the first keypress.
+          The whole overlay unmounts on the value prop, not through an exit
+          animation: mode="wait" can strand the outgoing example when the
+          cycling key changes in the same commit, leaving ghost text under a
+          typed prompt. */}
+      {!hasValue && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-0 px-5 py-4"
+        >
+          <AnimatePresence mode="wait">
             <motion.p
-              initial={prefersReducedMotion ? false : { y: 5, opacity: 0 }}
-              key={`current-placeholder-${currentPlaceholder}`}
               animate={{ y: 0, opacity: 1 }}
+              className="truncate text-base text-muted-foreground"
               exit={prefersReducedMotion ? undefined : { y: -15, opacity: 0 }}
+              initial={prefersReducedMotion ? false : { y: 5, opacity: 0 }}
+              key={`current-example-${currentExample}`}
               transition={{ duration: 0.3, ease: [0.32, 0.72, 0, 1] }}
-              className="px-3 py-2 text-left text-sm font-normal text-muted-foreground sm:text-base"
             >
-              {placeholders[currentPlaceholder]}
+              {examples[currentExample]}
             </motion.p>
-          )}
-        </AnimatePresence>
-      </div>
-    </Box>
+          </AnimatePresence>
+        </div>
+      )}
+    </div>
   );
-};
+}
 
 export { PromptInput };

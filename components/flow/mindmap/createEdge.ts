@@ -6,7 +6,16 @@ import { PartialBaseFlowEdge } from "./mindmapNodesToFlowNodes";
 const EDGE_ID_PREFIX = "e";
 const EDGE_ID_SEPARATOR = "@";
 
-export const getNewEdgeID = (source: string, target: string) => {
+/**
+ * Every mindmap edge is a stem.
+ *
+ * Registered in `Flow.tsx` as `edgeTypes.stem`. This is presentation only — the
+ * Convex node projection has no edge rows, so nothing about the persisted data
+ * model changes.
+ */
+const STEM_EDGE_TYPE = "stem";
+
+const getNewEdgeID = (source: string, target: string) => {
   return [EDGE_ID_PREFIX, source, target].join(EDGE_ID_SEPARATOR);
 };
 
@@ -25,20 +34,29 @@ function getEdgeSourceHandle(
   return null;
 }
 
-export function createEdge(source: string, target: string) {
+function createEdge(source: string, target: string): FlowEdge {
   return {
     id: getNewEdgeID(source, target),
     source,
     target,
+    type: STEM_EDGE_TYPE,
     ...getEdgeSourceHandle(source, target),
   };
 }
 
-export function createFlowEdgeFromPartialBaseFlowEdge(
+function createFlowEdgeFromPartialBaseFlowEdge(
   edge: PartialBaseFlowEdge
 ): FlowEdge {
   return {
     ...edge,
+    type: STEM_EDGE_TYPE,
     ...getEdgeSourceHandle(edge.source, edge.target),
   };
 }
+
+export {
+  createEdge,
+  createFlowEdgeFromPartialBaseFlowEdge,
+  getNewEdgeID,
+  STEM_EDGE_TYPE,
+};

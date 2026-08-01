@@ -168,12 +168,14 @@ const ShareMindmap = () => {
           <button
             aria-label={triggerLabel}
             className={cn(
-              "flex items-center gap-1.5 rounded-full border border-line-strong bg-card px-2.5 py-1",
-              "font-mono text-[11px] leading-none select-none",
-              "transition-colors duration-200 ease-organic motion-reduce:transition-none",
-              isShared
-                ? "text-foreground"
-                : "text-muted-foreground hover:text-foreground"
+              "flex items-center gap-1.5 rounded-full border border-line-strong bg-card px-2.5 py-1.5",
+              "text-[11px] font-medium leading-none select-none shadow-rest",
+              "transition-colors duration-200 ease-settle motion-reduce:transition-none",
+              // Moss on hover: this is the one *action* on the canvas's right
+              // rail (the save pill beside it is ambient status), so it speaks
+              // the same action voice as the camera sheet bottom-left.
+              "hover:text-primary",
+              isShared ? "text-foreground" : "text-muted-foreground"
             )}
             title={triggerLabel}
             type="button"
@@ -206,7 +208,7 @@ const ShareMindmap = () => {
                 aria-labelledby={switchLabelId}
                 className={cn(
                   "mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full border border-line-strong p-0.5",
-                  "transition-colors duration-200 ease-organic motion-reduce:transition-none",
+                  "transition-colors duration-200 ease-settle motion-reduce:transition-none",
                   isPending && "cursor-not-allowed opacity-60",
                   isShared ? "bg-primary" : "bg-secondary"
                 )}
@@ -218,7 +220,7 @@ const ShareMindmap = () => {
                   aria-hidden="true"
                   className={cn(
                     "size-3.5 rounded-full bg-card",
-                    "transition-transform duration-200 ease-organic motion-reduce:transition-none",
+                    "transition-transform duration-200 ease-settle motion-reduce:transition-none",
                     isShared ? "translate-x-4" : "translate-x-0"
                   )}
                 />
@@ -226,7 +228,7 @@ const ShareMindmap = () => {
             </div>
 
             {isPending ? (
-              <p className="font-mono text-[11px] uppercase tracking-[0.09em] text-muted-foreground">
+              <p className="text-[11px] font-medium text-muted-foreground">
                 Updating…
               </p>
             ) : null}
@@ -244,7 +246,7 @@ const ShareMindmap = () => {
                   className={cn(
                     "flex size-8 shrink-0 items-center justify-center rounded-md border border-line-strong",
                     "text-muted-foreground hover:text-foreground",
-                    "transition-colors duration-200 ease-organic motion-reduce:transition-none"
+                    "transition-colors duration-200 ease-settle motion-reduce:transition-none"
                   )}
                   onClick={() => void handleCopy()}
                   title={hasCopied ? "Link copied" : "Copy link"}

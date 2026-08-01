@@ -16,9 +16,10 @@ import {
   PanelResizeHandle,
 } from "react-resizable-panels";
 
-import { Button } from "@/components/ui/button";
+import { PanelEdgeNotch } from "@/components/app-shell/panel-edge-notch";
 import { useEventCallback } from "@/hooks/use-event-callback";
 
+import { useMindmapFlow } from "../flow/providers/MindmapFlowProvider";
 import { AiPanel } from "./AiPanel";
 import {
   AI_PANEL_DEFAULT_WIDTH_PX,
@@ -34,6 +35,25 @@ import {
 
 /** Keeps the canvas from ever being squeezed out by the panel. */
 const MAX_PANEL_PERCENT = 60;
+
+/**
+ * How long the panel takes to slide open or closed, in ms.
+ *
+ * Matches the navigation panel's own `duration-300` on the opposite edge, so
+ * the two floating cards travel the shared settle curve at the same speed.
+ */
+const PANEL_TRAVEL_MS = 300;
+
+/**
+ * The travelling classes, applied only while a toggle is in flight.
+ *
+ * react-resizable-panels lays the group out with `flex-grow`, so that is what
+ * has to animate. It is not left on permanently: a transition on `flex-grow`
+ * would put the panel a third of a second behind the pointer during a drag of
+ * the seam, which is the one place the panel must feel directly held.
+ */
+const PANEL_TRAVEL_CLASS =
+  "lg:transition-[flex-grow] lg:duration-300 lg:ease-settle motion-reduce:transition-none";
 
 type PanelConstraints = {
   defaultSize: number;
@@ -99,9 +119,15 @@ function AiPanelLayout({ children }: PropsWithChildren) {
   const persistWidthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
+  const travelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [isOpen, setIsOpen] = useState(true);
   const [containerWidth, setContainerWidth] = useState(0);
+  // True only for the length of one open/close journey; see PANEL_TRAVEL_CLASS.
+  const [isTravelling, setIsTravelling] = useState(false);
+
+  const aiPromptRequest = useMindmapFlow((state) => state.aiPromptRequest);
+  const aiStreaming = useMindmapFlow((state) => state.aiStreaming);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -187,6 +213,9 @@ function AiPanelLayout({ children }: PropsWithChildren) {
       if (persistWidthTimerRef.current !== null) {
         clearTimeout(persistWidthTimerRef.current);
       }
+      if (travelTimerRef.current !== null) {
+        clearTimeout(travelTimerRef.current);
+      }
     },
     []
   );
@@ -202,6 +231,17 @@ function AiPanelLayout({ children }: PropsWithChildren) {
     isOpenRef.current = nextIsOpen;
     setIsOpen(nextIsOpen);
     writeAiPanelOpen(nextIsOpen);
+
+    // Arm the travelling transition for exactly this journey, then disarm it so
+    // a later drag of the seam is not animated.
+    setIsTravelling(true);
+    if (travelTimerRef.current !== null) {
+      clearTimeout(travelTimerRef.current);
+    }
+    travelTimerRef.current = setTimeout(() => {
+      travelTimerRef.current = null;
+      setIsTravelling(false);
+    }, PANEL_TRAVEL_MS);
 
     if (!nextIsOpen) {
       requestAnimationFrame(() => {
@@ -232,6 +272,24 @@ function AiPanelLayout({ children }: PropsWithChildren) {
       }
     });
   });
+
+  // A canvas-dispatched instruction means the writer wants to see the answer.
+  // On desktop the panel opens itself; on small screens it stays collapsed
+  // (opening a full overlay would cover the very node being grown) and the
+  // edge tab's clay dot carries the "Sprig is working" signal instead.
+  useEffect(() => {
+    if (
+      aiPromptRequest === null ||
+      isOpenRef.current ||
+      typeof window === "undefined" ||
+      !window.matchMedia("(min-width: 1024px)").matches
+    ) {
+      return;
+    }
+
+    handleToggle();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleToggle is a stable event callback
+  }, [aiPromptRequest]);
 
   // react-resizable-panels can report a new size while its parent is rendering,
   // so this callback cannot use the event-only hook that rejects render calls.
@@ -267,7 +325,12 @@ function AiPanelLayout({ children }: PropsWithChildren) {
     <div className="relative flex h-full w-full flex-1" ref={containerRef}>
       <PanelGroup className="h-full w-full" direction="horizontal">
         <Panel
-          className="relative flex min-w-0 max-lg:!w-full max-lg:!flex-[1_1_100%]"
+          className={
+            "relative flex min-w-0 max-lg:!w-full max-lg:!flex-[1_1_100%] " +
+            // The canvas widens on the same curve the panel narrows on, so the
+            // seam between them is one moving line rather than two.
+            (isTravelling ? PANEL_TRAVEL_CLASS : "")
+          }
           // Declared so the first paint matches the prerendered layout instead
           // of shifting once the group registers its panels.
           defaultSize={isOpen ? 100 - constraints.defaultSize : 100}
@@ -279,10 +342,12 @@ function AiPanelLayout({ children }: PropsWithChildren) {
         <PanelResizeHandle
           aria-label="Resize Sprig panel"
           className={
-            "relative w-1 bg-line-strong outline-none transition-colors duration-200 ease-organic " +
+            "group relative w-1.5 outline-none " +
             "after:absolute after:-left-1.5 after:top-0 after:h-full after:w-4 after:content-[''] " +
-            "hover:bg-primary focus-visible:bg-primary focus-visible:ring-2 focus-visible:ring-ring " +
-            "data-[resize-handle-state=drag]:bg-primary motion-reduce:transition-none " +
+            "before:absolute before:inset-y-14 before:left-1/2 before:w-px before:-translate-x-1/2 before:rounded-full before:content-[''] " +
+            "before:bg-transparent hover:before:bg-primary focus-visible:before:bg-primary " +
+            "data-[resize-handle-state=drag]:before:bg-primary " +
+            "before:transition-colors before:duration-200 before:ease-settle motion-reduce:before:transition-none " +
             (isOpen ? "max-lg:hidden" : "hidden")
           }
           id="sprig-panel-seam"
@@ -290,9 +355,14 @@ function AiPanelLayout({ children }: PropsWithChildren) {
         <Panel
           aria-hidden={!isOpen}
           className={
-            "min-w-0 border-l border-line-strong max-lg:fixed! max-lg:inset-y-0 max-lg:right-0 " +
-            "max-lg:z-30 max-lg:w-[min(90vw,35rem)]! max-lg:max-w-[90vw]! max-lg:shadow-xl " +
-            (isOpen ? "" : "pointer-events-none invisible")
+            "min-w-0 max-lg:fixed! max-lg:inset-y-0 max-lg:right-0 " +
+            "max-lg:z-30 max-lg:w-[min(90vw,35rem)]! max-lg:max-w-[90vw]! " +
+            // Below `lg` the panel is a fixed-width overlay, so it leaves by
+            // sliding through the right edge instead of by narrowing.
+            "max-lg:transition-transform max-lg:duration-300 max-lg:ease-settle " +
+            "motion-reduce:transition-none " +
+            (isTravelling ? PANEL_TRAVEL_CLASS + " " : "") +
+            (isOpen ? "" : "pointer-events-none max-lg:translate-x-full")
           }
           collapsedSize={0}
           collapsible
@@ -305,23 +375,38 @@ function AiPanelLayout({ children }: PropsWithChildren) {
           order={2}
           ref={panelRef}
         >
-          <AiPanel onCollapse={handleToggle} />
+          {/* The shared app-shell panel frame (panel-geometry.ts): the same
+              width, the same edge inset and the same clearance under the
+              chrome band as the navigation panel on the other edge, so the two
+              floating cards start and end on the same lines. The left gutter
+              is a hairline instead — the drag seam lives there. */}
+          <div className="h-full pb-[var(--panel-inset)] pl-1 pr-[var(--panel-inset)] pt-[var(--panel-top-inset)] max-lg:pl-[var(--panel-inset)]">
+            <AiPanel onCollapse={handleToggle} />
+          </div>
         </Panel>
       </PanelGroup>
-      {isOpen ? null : (
-        /* A tab on the canvas edge, below the save pill's row, so it never
-           collides with the floating header, theme switcher, or that pill. */
-        <Button
-          aria-label="Open Sprig panel"
-          className="absolute right-0 top-28 z-10 h-9 w-8 rounded-l-md rounded-r-none border border-r-0 border-line-strong bg-card text-muted-foreground hover:text-foreground"
-          onClick={handleToggle}
-          size="icon"
-          type="button"
-          variant="ghost"
-        >
-          <PanelRightOpen aria-hidden="true" className="!size-4" />
-        </Button>
-      )}
+      {/* A tab on the canvas edge, below the save pill's row, so it never
+          collides with the floating header, theme switcher, or that pill — the
+          mirror of the navigation panel's tab on the left edge. While a turn
+          streams, its clay dot (`--glow`) is the collapsed panel's only tell
+          that the model is working — the sole clay on the canvas chrome, so it
+          cannot be mistaken for ordinary decoration. */}
+      <PanelEdgeNotch
+        isVisible={!isOpen}
+        label={
+          aiStreaming
+            ? "Open Sprig panel — Sprig is working"
+            : "Open Sprig panel"
+        }
+        onClick={handleToggle}
+        side="right"
+      >
+        {aiStreaming ? (
+          <span aria-hidden="true" className="sprig-glow-dot" />
+        ) : (
+          <PanelRightOpen aria-hidden="true" className="size-4" />
+        )}
+      </PanelEdgeNotch>
     </div>
   );
 }

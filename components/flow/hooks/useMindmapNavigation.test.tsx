@@ -42,15 +42,41 @@ describe("useMindmapNavigation", () => {
     expect(fixture.setActiveNode).toHaveBeenCalledWith("right-b");
   });
 
-  it("ignores arrow keys when there is no active node", () => {
-    const fixture = renderNavigationHook(null);
+  it.each(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"])(
+    "enters the map at the root on %s with no active node",
+    (key) => {
+      const fixture = renderNavigationHook(null);
 
-    dispatchKey({ key: "ArrowLeft" });
-    dispatchKey({ key: "ArrowRight" });
-    dispatchKey({ key: "ArrowUp" });
+      // Nothing is selected on a freshly loaded canvas until the reader clicks,
+      // so an arrow key has to be a way *in*, not a no-op.
+      dispatchKey({ key });
+
+      expect(fixture.setActiveNode).toHaveBeenCalledWith("root");
+    }
+  );
+
+  it("enters the map at the root when the active node has vanished", () => {
+    const fixture = renderNavigationHook("deleted-by-a-reseed");
+
     dispatchKey({ key: "ArrowDown" });
 
-    expect(fixture.setActiveNode).not.toHaveBeenCalled();
+    expect(fixture.setActiveNode).toHaveBeenCalledWith("root");
+  });
+
+  it("keeps arrow keys alive from a focused node card", () => {
+    const fixture = createNavigationFixture("right-a-child");
+    const view = render(
+      <NavigationOnCanvasCard fixture={fixture} label="Right A child" />
+    );
+    const card = view.getByRole("button", { name: "Right A child" });
+    card.focus();
+
+    // A node card is a popover trigger, so clicking one parks focus on a
+    // button. Navigation used to die there.
+    const event = dispatchKeyOn(card, { key: "ArrowLeft" });
+
+    expect(fixture.setActiveNode).toHaveBeenCalledWith("right-a");
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it("adds a child with the active non-root node type and id on Tab", () => {
@@ -221,6 +247,22 @@ function NavigationWithButton({
 }) {
   useMindmapNavigation(fixture);
   return <button type="button">Plain action</button>;
+}
+
+/** Mounts the canvas bindings around a node card, XYFlow wrapper and all. */
+function NavigationOnCanvasCard({
+  fixture,
+  label,
+}: {
+  fixture: ReturnType<typeof createNavigationFixture>;
+  label: string;
+}) {
+  useMindmapNavigation(fixture);
+  return (
+    <div className="react-flow__node">
+      <button type="button">{label}</button>
+    </div>
+  );
 }
 
 /** Dispatches a cancelable keydown event through the hook's real window listeners. */

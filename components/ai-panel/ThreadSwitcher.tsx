@@ -31,6 +31,10 @@ type ThreadSwitcherProps = {
  * the panel is showing, not a form value being edited. The rows are
  * `menuitemradio` so the reader hears which conversation is already open, and
  * the list owns arrow/Home/End roving because a `role="menu"` promises it.
+ *
+ * Choosing a conversation is the writer's action, so the open row's check is
+ * moss (`text-primary`) — selection, per the one-voice rule. No clay anywhere in
+ * this menu: past conversations are history, not the model working.
  */
 function ThreadSwitcher({
   activeThreadId,
@@ -170,7 +174,7 @@ function ThreadSwitcher({
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72 p-0" sideOffset={8}>
-        <p className="border-b border-border px-3 py-2 font-mono text-[11px] uppercase tracking-[0.09em] text-muted-foreground">
+        <p className="border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">
           Conversations
         </p>
         {threads === undefined ? (
@@ -198,7 +202,7 @@ function ThreadSwitcher({
                   aria-checked={isActive}
                   className={cn(
                     "flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-sm",
-                    "transition-colors duration-200 ease-organic motion-reduce:transition-none",
+                    "transition-colors duration-200 ease-settle motion-reduce:transition-none",
                     "hover:bg-accent hover:text-accent-foreground",
                     isActive ? "text-foreground" : "text-muted-foreground"
                   )}

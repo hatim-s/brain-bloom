@@ -41,8 +41,9 @@ function isAIConfigurationError(error: Error | undefined): boolean {
  * The Sprig conversation surface.
  *
  * A quiet card that sits beside the canvas rather than over it: one hairline
- * on the left, mono for anything the machine says about itself, and the bloom
- * accent reserved for the single moment the model is actually working.
+ * on the left, mono for anything the machine says about itself, and clay
+ * (`--glow`) reserved for the moments the model is present — the streaming dot
+ * and Sprig's own empty-state mark. Everything the writer does is moss.
  */
 function AiPanel({ onCollapse }: { onCollapse: () => void }) {
   const router = useRouter();
@@ -53,6 +54,13 @@ function AiPanel({ onCollapse }: { onCollapse: () => void }) {
   const pendingOpsLength = useMindmapFlow((state) => state.pendingOps.length);
   const syncState = useMindmapFlow((state) => state.syncState);
   const flushNow = useMindmapFlow((state) => state.actions.flushNow);
+  const aiPromptRequest = useMindmapFlow((state) => state.aiPromptRequest);
+  const clearAiPromptRequest = useMindmapFlow(
+    (state) => state.actions.clearAiPromptRequest
+  );
+  const setAiStreaming = useMindmapFlow(
+    (state) => state.actions.setAiStreaming
+  );
   const undoTo = useMutation(api.ops.undoTo);
 
   const [dismissedNodeId, setDismissedNodeId] = useState<string | null>(null);
@@ -109,6 +117,29 @@ function AiPanel({ onCollapse }: { onCollapse: () => void }) {
 
   const chat = useSprigChat({ mindmapId, onTurnFinished: handleTurnFinished });
   const hasAIConfigurationError = isAIConfigurationError(chat.error);
+
+  // Mirror the transport's streaming state into the store so canvas surfaces
+  // (the inline node prompt, the collapsed panel tab) can read it without
+  // owning a chat hook of their own.
+  useEffect(() => {
+    setAiStreaming(chat.isStreaming);
+    return () => setAiStreaming(false);
+  }, [chat.isStreaming, setAiStreaming]);
+
+  // Consume the instruction the inline node prompt queued. It waits while a
+  // turn is already in flight (the prompt disables its submit for the same
+  // reason, so a queued request is a rare race, not a surprise send).
+  useEffect(() => {
+    if (aiPromptRequest === null || chat.isStreaming || chat.isHistoryLoading) {
+      return;
+    }
+
+    const { nodeId, prompt } = aiPromptRequest;
+
+    clearAiPromptRequest();
+    aiTurnSeededUpdatedAtRef.current = store.getState().seededUpdatedAt;
+    void chat.sendPrompt(prompt, nodeId);
+  }, [aiPromptRequest, chat, clearAiPromptRequest, store]);
 
   const activeNodeTitle =
     activeNode === null
@@ -181,19 +212,21 @@ function AiPanel({ onCollapse }: { onCollapse: () => void }) {
   return (
     <section
       aria-label="Sprig assistant"
-      className="flex h-full min-h-0 w-full flex-col bg-card"
+      className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-lg border border-border bg-card shadow-floating"
     >
       <div aria-live="polite" className="sr-only" role="status">
         {announcement}
       </div>
-      {/* The floating header and theme switcher already own the top band of the
-          viewport, so the panel starts its own chrome below them. */}
-      <div className="flex items-center gap-2 border-b border-border px-3 pb-2.5 pt-16">
-        <span className="font-mono text-[11px] uppercase tracking-[0.09em] text-muted-foreground">
-          Sprig
-        </span>
+      {/* Header chrome stays neutral on hover on purpose: clay already lives in
+          this band while a turn streams, and moss hovers beside it would put two
+          accents in one 40px row (the One Voice Rule). Moss speaks in the
+          composer's send button, where the writer's action actually is. */}
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
+        <span className="text-[13px] font-medium text-foreground">Sprig</span>
+        {/* The one clay moment in the header: the model is working right now.
+            It settles away the instant the turn ends — never a standing badge. */}
         {chat.isStreaming ? (
-          <span aria-hidden="true" className="sprig-bloom-dot" />
+          <span aria-hidden="true" className="sprig-glow-dot" />
         ) : null}
         <div className="ml-auto flex items-center gap-1">
           <ThreadSwitcher
@@ -235,7 +268,9 @@ function AiPanel({ onCollapse }: { onCollapse: () => void }) {
           ) : chat.messages.length === 0 ? (
             <ConversationEmptyState
               description="Ask for a branch, a rewrite, or a reshuffle. Every change is saved to the map and can be undone from here."
-              icon={<Sprout aria-hidden="true" className="size-5" />}
+              // Sprig introducing itself is an AI-presence moment, so the sprout
+              // wears clay. It is gone the moment a conversation exists.
+              icon={<Sprout aria-hidden="true" className="size-5 text-glow" />}
               title="Nothing here yet"
             />
           ) : (

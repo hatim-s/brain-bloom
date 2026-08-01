@@ -48,7 +48,11 @@ function getUndoErrorMessage(error: unknown): string {
  * One turn in the transcript, plus whatever the model did to the map.
  *
  * The tool strip is mono and muted so it reads as a receipt under the prose
- * rather than as a second voice in the conversation.
+ * rather than as a second voice in the conversation. It stays deliberately
+ * uncolored: clay marks the model *acting* (the header's streaming dot, the node
+ * card's ring), and a permanent clay rail on every past turn would turn that
+ * pulse into wallpaper. Undo is the writer's action, so it is quiet ghost chrome
+ * rather than moss — the composer keeps the panel's single moss voice.
  */
 function AiMessage({
   message,

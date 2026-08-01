@@ -17,7 +17,7 @@ import {
   createMindmapTools,
   type MindmapToolConvexLayer,
 } from "@/lib/ai/tools";
-import { getConvexAuthToken } from "@/lib/convex-server";
+import { createConvexTokenSource } from "@/lib/convex-server";
 
 const THREAD_TITLE_LENGTH = 60;
 const MAX_MESSAGES_PER_REQUEST = 40;
@@ -92,18 +92,22 @@ function getThreadTitle(messages: UIMessage[]): string {
 }
 
 /**
- * Creates the request-scoped Convex adapter used by tools and persistence so
- * every call shares the one Clerk JWT acquired by the route.
+ * Creates the request-scoped Convex adapter used by tools and persistence.
+ * Every call fetches a currently-valid Clerk JWT from the token source: a
+ * streaming chat turn outlives one token's ~60s validity, so a token captured
+ * once at route entry would expire before late tool calls and persistence.
  */
-function createConvexLayer(token: string): MindmapToolConvexLayer {
+function createConvexLayer(
+  freshToken: () => Promise<string>
+): MindmapToolConvexLayer {
   return {
-    getMindmap: (mindmapId) =>
+    getMindmap: async (mindmapId) =>
       fetchQuery(
         api.mindmaps.get,
         { mindmapId: mindmapId as Id<"mindmaps"> },
-        { token }
+        { token: await freshToken() }
       ),
-    applyOps: ({ mindmapId, ops, description, source }) =>
+    applyOps: async ({ mindmapId, ops, description, source }) =>
       fetchMutation(
         api.ops.apply,
         {
@@ -112,9 +116,9 @@ function createConvexLayer(token: string): MindmapToolConvexLayer {
           description,
           source,
         },
-        { token }
+        { token: await freshToken() }
       ),
-    renameMindmap: ({ mindmapId, name, source }) =>
+    renameMindmap: async ({ mindmapId, name, source }) =>
       fetchMutation(
         api.mindmaps.rename,
         {
@@ -122,28 +126,28 @@ function createConvexLayer(token: string): MindmapToolConvexLayer {
           name,
           source,
         },
-        { token }
+        { token: await freshToken() }
       ),
-    getHistory: ({ mindmapId, paginationOpts }) =>
+    getHistory: async ({ mindmapId, paginationOpts }) =>
       fetchQuery(
         api.ops.history,
         {
           mindmapId: mindmapId as Id<"mindmaps">,
           paginationOpts,
         },
-        { token }
+        { token: await freshToken() }
       ),
-    getOperation: (operationId) =>
+    getOperation: async (operationId) =>
       fetchQuery(
         api.ops.getOperation,
         { operationId: operationId as Id<"operations"> },
-        { token }
+        { token: await freshToken() }
       ),
-    undoTo: (operationId) =>
+    undoTo: async (operationId) =>
       fetchMutation(
         api.ops.undoTo,
         { operationId: operationId as Id<"operations"> },
-        { token }
+        { token: await freshToken() }
       ),
   };
 }
@@ -179,10 +183,13 @@ async function POST(request: Request): Promise<Response> {
     return jsonError("AI is not configured", 503);
   }
 
-  const token = await getConvexAuthToken(authState);
-  if (!token) {
+  const getConvexToken = createConvexTokenSource(authState);
+  const initialToken = await getConvexToken();
+  if (!initialToken) {
     return jsonError("Convex auth is not configured", 503);
   }
+  /** Currently-valid JWT; configuration was proven non-null at route entry. */
+  const freshToken = async () => (await getConvexToken()) as string;
 
   const contentLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BYTES) {
@@ -225,7 +232,7 @@ async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const convex = createConvexLayer(token);
+    const convex = createConvexLayer(freshToken);
     const currentMindmap = await convex.getMindmap(mindmapId);
     let threadId = parsedRequest.data.threadId;
 
@@ -234,7 +241,7 @@ async function POST(request: Request): Promise<Response> {
         const thread = await fetchQuery(
           api.threads.getThread,
           { threadId: threadId as Id<"threads"> },
-          { token }
+          { token: await freshToken() }
         );
 
         if (thread.mindmapId !== mindmapId) {
@@ -254,7 +261,7 @@ async function POST(request: Request): Promise<Response> {
           mindmapId: mindmapId as Id<"mindmaps">,
           title: getThreadTitle(messages),
         },
-        { token }
+        { token: await freshToken() }
       );
     }
 
@@ -291,7 +298,7 @@ async function POST(request: Request): Promise<Response> {
             role: "user",
             content: lastUserMessage.parts,
           },
-          { token }
+          { token: await freshToken() }
         );
         await fetchMutation(
           api.threads.addMessage,
@@ -306,7 +313,7 @@ async function POST(request: Request): Promise<Response> {
                 }
               : {}),
           },
-          { token }
+          { token: await freshToken() }
         );
       },
     });

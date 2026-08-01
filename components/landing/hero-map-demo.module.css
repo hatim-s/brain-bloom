@@ -1,0 +1,622 @@
+/*
+ * Hero demonstration: one prompt growing into a mindmap, forever.
+ *
+ * The Grove's sanctioned ambient loop — the product quietly demonstrating
+ * itself on the landing page. A single 18s master cycle drives every element:
+ * growth, a long rest where the finished map breathes, a graceful dissolve in
+ * reverse order, and an empty beat before it begins again.
+ *
+ * Why percentage keyframes instead of `animation-delay` staggers: a group of
+ * elements each carrying its own delay only lines up on the FIRST pass. Once
+ * `infinite` kicks in, each element restarts on its own clock and the ensemble
+ * drifts apart within a cycle or two. So every element here shares ONE
+ * duration (`--cycle`) and ONE delay (`--lead-in`, a single beat after page
+ * load), and bakes its personal schedule into its own @keyframes percentages.
+ *
+ * Seamlessness: for every element the declared state at 100% is byte-identical
+ * to its state at 0% (cards `opacity: 0; translateY(4px)`, edges
+ * `stroke-dashoffset: 100`, caret `opacity: 1`), and the 16.5s–18.0s empty beat
+ * means nothing is mid-transition at the wrap. The loop point is invisible.
+ *
+ * Motion vocabulary: opacity + a 4px translateY + stroke-dashoffset only. No
+ * filters, no blur, no scale beyond a 0.6% root breath — cheap compositing and
+ * nothing bounces. Arrival is the shared damped decelerate curve.
+ *
+ * Reduced motion: every animation lives inside
+ * `@media (prefers-reduced-motion: no-preference)`, so the default
+ * server-rendered state — the FINISHED map, fully opaque, edges undashed — is
+ * what a motion-averse visitor sees, static and complete.
+ *
+ * ---------------------------------------------------------------------------
+ * SECONDS → PERCENT MAP (master cycle = 18s, so 1s = 100/18 = 5.5556%)
+ * ---------------------------------------------------------------------------
+ *   0.00s →  0.000%   |   7.55s → 41.944%   |  14.42s → 80.111%
+ *   0.80s →  4.444%   |   7.65s → 42.500%   |  14.48s → 80.444%
+ *   1.00s →  5.556%   |   7.70s → 42.778%   |  14.54s → 80.778%
+ *   1.25s →  6.944%   |   7.95s → 44.167%   |  14.60s → 81.111%
+ *   1.60s →  8.889%   |   8.10s → 45.000%   |  14.66s → 81.444%
+ *   1.70s →  9.444%   |   8.20s → 45.556%   |  14.70s → 81.667%
+ *   2.10s → 11.667%   |   8.25s → 45.833%   |  14.78s → 82.111%
+ *   2.15s → 11.944%   |   8.50s → 47.222%   |  14.82s → 82.333%
+ *   2.50s → 13.889%   |   8.65s → 48.056%   |  14.90s → 82.778%
+ *   2.70s → 15.000%   |   8.75s → 48.611%   |  14.94s → 83.000%
+ *   2.80s → 15.556%   |   9.05s → 50.278%   |  15.00s → 83.333%
+ *   3.20s → 17.778%   |   9.30s → 51.667%   |  15.06s → 83.667%
+ *   3.60s → 20.000%   |   9.50s → 52.778%   |  15.12s → 84.000%
+ *   3.90s → 21.667%   |  11.75s → 65.278%   |  15.18s → 84.333%
+ *   4.50s → 25.000%   |  14.00s → 77.778%   |  15.24s → 84.667%
+ *   4.90s → 27.222%   |  14.12s → 78.444%   |  15.30s → 85.000%
+ *   5.30s → 29.444%   |  14.24s → 79.111%   |  15.36s → 85.333%
+ *   5.50s → 30.556%   |  14.30s → 79.444%   |  15.42s → 85.667%
+ *   5.90s → 32.778%   |  14.36s → 79.778%   |  15.48s → 86.000%
+ *   6.05s → 33.611%   |  15.50s → 86.111%   |  15.54s → 86.333%
+ *   6.30s → 35.000%   |  15.60s → 86.667%   |  15.62s → 86.778%
+ *   6.45s → 35.833%   |  15.74s → 87.444%   |  15.80s → 87.778%
+ *   6.55s → 36.389%   |  15.90s → 88.333%   |  15.95s → 88.611%
+ *   6.60s → 36.667%   |  16.07s → 89.278%   |  16.15s → 89.722%
+ *   6.85s → 38.056%   |  16.19s → 89.944%   |  16.27s → 90.389%
+ *   7.00s → 38.889%   |  16.39s → 91.056%   |  16.50s → 91.667%
+ *   7.10s → 39.444%   |  18.00s → 100.000%
+ *   7.15s → 39.722%
+ *   7.40s → 41.111%
+ *
+ * ---------------------------------------------------------------------------
+ * THE 18s TIMELINE
+ * ---------------------------------------------------------------------------
+ *  0.0 – 0.8s   prompt card rises; caret blinks twice (0.8–2.15s) then rests
+ *  1.0 – 1.6s   root card rises
+ *  1.6 – 5.3s   level-1: each stem draws just ahead of its branch card
+ *  5.5 – 9.3s   level-2: six stems draw, six leaf cards rise, gently staggered
+ *  9.5 – 14.0s  REST — the finished map holds and breathes (root 1 → 1.006 → 1)
+ * 14.0 – 16.5s  DISSOLVE — reverse order: leaves, their stems, branches, their
+ *               stems, then root and prompt; ~600–900ms each, overlapping
+ * 16.5 – 18.0s  empty canvas beat, then a seamless restart
+ */
+
+.stage {
+  /* The one arrival curve: damped decelerate, never overshoots. */
+  --settle: cubic-bezier(0.32, 0.72, 0, 1);
+  /* Master cycle. Every animated element shares this exact duration. */
+  --cycle: 18s;
+  /* A single shared beat after page load. Never a per-element stagger. */
+  --lead-in: 300ms;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /*
+   * One shorthand shape for all 21 animated elements:
+   *   <name> <duration> <timing> <delay> infinite both
+   * `both` holds the 0% state through the lead-in delay, so nothing flashes
+   * the finished map before the cycle starts. The element-level timing function
+   * is the settle curve; hold segments interpolate between identical values, so
+   * the curve is invisible there and only shapes real arrivals and departures.
+   */
+
+  .prompt {
+    animation: prompt-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  /* Two deliberate blinks while the model "thinks", then a solid rest. */
+  .caret {
+    animation: caret-cycle var(--cycle) linear var(--lead-in) infinite both;
+  }
+
+  .root {
+    /* fill-box so the rest-breath scales about the card's own centre. */
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: root-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .branch1 {
+    animation: branch1-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .branch2 {
+    animation: branch2-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .branch3 {
+    animation: branch3-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .leaf1 {
+    animation: leaf1-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .leaf2 {
+    animation: leaf2-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .leaf3 {
+    animation: leaf3-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .leaf4 {
+    animation: leaf4-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .leaf5 {
+    animation: leaf5-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .leaf6 {
+    animation: leaf6-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  /*
+   * Stems. Each path carries `pathLength="100"` in the markup, so a dasharray
+   * of 100 normalises every curve to the same 0–100 scale: a stem's draw takes
+   * exactly its scheduled slice of the cycle regardless of its real length.
+   */
+  .edge {
+    stroke-dasharray: 100;
+    stroke-dashoffset: 100;
+  }
+
+  .edgeL1 {
+    animation: edgeL1-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .edgeL2 {
+    animation: edgeL2-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .edgeL3 {
+    animation: edgeL3-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .edgeD1 {
+    animation: edgeD1-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .edgeD2 {
+    animation: edgeD2-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .edgeD3 {
+    animation: edgeD3-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .edgeD4 {
+    animation: edgeD4-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .edgeD5 {
+    animation: edgeD5-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+
+  .edgeD6 {
+    animation: edgeD6-cycle var(--cycle) var(--settle) var(--lead-in) infinite
+      both;
+  }
+}
+
+/* ==========================================================================
+ * Card cycles. Shape: hidden → rise → long hold → downward settle → hidden.
+ * The 100% declaration always mirrors 0% exactly; that is the loop seam.
+ * ========================================================================== */
+
+/* prompt: rises 0.0–0.8s, dissolves 15.90–16.50s (last out, with the root). */
+@keyframes prompt-cycle {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  4.444%,
+  88.333% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  91.667%,
+  100% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/*
+ * caret: two hard blinks at 0.80–1.25s and 1.70–2.15s, then solid for the rest
+ * of the cycle. Paired percentages 0.001% apart give a step, not a fade, so it
+ * reads as a text cursor. Its opacity multiplies the prompt group's, so it
+ * vanishes with the card during the dissolve without its own fade.
+ */
+@keyframes caret-cycle {
+  0%,
+  4.444% {
+    opacity: 1;
+  }
+  4.445%,
+  6.944% {
+    opacity: 0;
+  }
+  6.945%,
+  9.444% {
+    opacity: 1;
+  }
+  9.445%,
+  11.944% {
+    opacity: 0;
+  }
+  11.945%,
+  100% {
+    opacity: 1;
+  }
+}
+
+/*
+ * root: rises 1.0–1.6s; breathes once across the 9.5–14.0s rest (scale peaks
+ * 1.006 at 11.75s, ease-in-out so the whisper has no edges); dissolves
+ * 15.80–16.50s.
+ */
+@keyframes root-cycle {
+  0%,
+  5.556% {
+    opacity: 0;
+    transform: translateY(4px) scale(1);
+  }
+  8.889% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  52.778% {
+    transform: translateY(0) scale(1);
+    animation-timing-function: ease-in-out;
+  }
+  65.278% {
+    transform: translateY(0) scale(1.006);
+    animation-timing-function: ease-in-out;
+  }
+  77.778%,
+  87.778% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  91.667%,
+  100% {
+    opacity: 0;
+    transform: translateY(4px) scale(1);
+  }
+}
+
+/* branch1 "Light reactions": rises 2.1–2.8s, dissolves 15.54–16.19s. */
+@keyframes branch1-cycle {
+  0%,
+  11.667% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  15.556%,
+  86.333% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  89.944%,
+  100% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* branch2 "Calvin cycle": rises 3.2–3.9s, dissolves 15.42–16.07s. */
+@keyframes branch2-cycle {
+  0%,
+  17.778% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  21.667%,
+  85.667% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  89.278%,
+  100% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* branch3 "Chloroplast structure": rises 4.5–5.3s, dissolves 15.30–15.95s. */
+@keyframes branch3-cycle {
+  0%,
+  25% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  29.444%,
+  85% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  88.611%,
+  100% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* leaf1 "Photosystem II": rises 5.90–6.55s, dissolves 14.60–15.30s. */
+@keyframes leaf1-cycle {
+  0%,
+  32.778% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  36.389%,
+  81.111% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  85%,
+  100% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* leaf2 "ATP synthase": rises 6.45–7.10s, dissolves 14.48–15.18s. */
+@keyframes leaf2-cycle {
+  0%,
+  35.833% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  39.444%,
+  80.444% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  84.333%,
+  100% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* leaf3 "Carbon fixation": rises 7.00–7.65s, dissolves 14.36–15.06s. */
+@keyframes leaf3-cycle {
+  0%,
+  38.889% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  42.5%,
+  79.778% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  83.667%,
+  100% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* leaf4 "RuBisCO": rises 7.55–8.20s, dissolves 14.24–14.94s. */
+@keyframes leaf4-cycle {
+  0%,
+  41.944% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  45.556%,
+  79.111% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  83%,
+  100% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* leaf5 "Thylakoids": rises 8.10–8.75s, dissolves 14.12–14.82s. */
+@keyframes leaf5-cycle {
+  0%,
+  45% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  48.611%,
+  78.444% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  82.333%,
+  100% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* leaf6 "Stroma": rises 8.65–9.30s (growth completes), dissolves first at
+ * 14.00–14.70s — last in, first out. */
+@keyframes leaf6-cycle {
+  0%,
+  48.056% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  51.667%,
+  77.778% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  81.667%,
+  100% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* ==========================================================================
+ * Stem cycles. Shape: retracted → draws out → holds → retracts → retracted.
+ * Each stem draws slightly AHEAD of the card it feeds, and retracts slightly
+ * AFTER that card has faded, so the map always grows and empties from the
+ * root outward and back.
+ * ========================================================================== */
+
+/* edgeL1 → branch1: draws 1.6–2.5s, retracts 15.74–16.39s. */
+@keyframes edgeL1-cycle {
+  0%,
+  8.889% {
+    stroke-dashoffset: 100;
+  }
+  13.889%,
+  87.444% {
+    stroke-dashoffset: 0;
+  }
+  91.056%,
+  100% {
+    stroke-dashoffset: 100;
+  }
+}
+
+/* edgeL2 → branch2: draws 2.7–3.6s, retracts 15.62–16.27s. */
+@keyframes edgeL2-cycle {
+  0%,
+  15% {
+    stroke-dashoffset: 100;
+  }
+  20%,
+  86.778% {
+    stroke-dashoffset: 0;
+  }
+  90.389%,
+  100% {
+    stroke-dashoffset: 100;
+  }
+}
+
+/* edgeL3 → branch3: draws 3.9–4.9s, retracts 15.50–16.15s. */
+@keyframes edgeL3-cycle {
+  0%,
+  21.667% {
+    stroke-dashoffset: 100;
+  }
+  27.222%,
+  86.111% {
+    stroke-dashoffset: 0;
+  }
+  89.722%,
+  100% {
+    stroke-dashoffset: 100;
+  }
+}
+
+/* edgeD1 → leaf1: draws 5.50–6.30s, retracts 14.90–15.60s. */
+@keyframes edgeD1-cycle {
+  0%,
+  30.556% {
+    stroke-dashoffset: 100;
+  }
+  35%,
+  82.778% {
+    stroke-dashoffset: 0;
+  }
+  86.667%,
+  100% {
+    stroke-dashoffset: 100;
+  }
+}
+
+/* edgeD2 → leaf2: draws 6.05–6.85s, retracts 14.78–15.48s. */
+@keyframes edgeD2-cycle {
+  0%,
+  33.611% {
+    stroke-dashoffset: 100;
+  }
+  38.056%,
+  82.111% {
+    stroke-dashoffset: 0;
+  }
+  86%,
+  100% {
+    stroke-dashoffset: 100;
+  }
+}
+
+/* edgeD3 → leaf3: draws 6.60–7.40s, retracts 14.66–15.36s. */
+@keyframes edgeD3-cycle {
+  0%,
+  36.667% {
+    stroke-dashoffset: 100;
+  }
+  41.111%,
+  81.444% {
+    stroke-dashoffset: 0;
+  }
+  85.333%,
+  100% {
+    stroke-dashoffset: 100;
+  }
+}
+
+/* edgeD4 → leaf4: draws 7.15–7.95s, retracts 14.54–15.24s. */
+@keyframes edgeD4-cycle {
+  0%,
+  39.722% {
+    stroke-dashoffset: 100;
+  }
+  44.167%,
+  80.778% {
+    stroke-dashoffset: 0;
+  }
+  84.667%,
+  100% {
+    stroke-dashoffset: 100;
+  }
+}
+
+/* edgeD5 → leaf5: draws 7.70–8.50s, retracts 14.42–15.12s. */
+@keyframes edgeD5-cycle {
+  0%,
+  42.778% {
+    stroke-dashoffset: 100;
+  }
+  47.222%,
+  80.111% {
+    stroke-dashoffset: 0;
+  }
+  84%,
+  100% {
+    stroke-dashoffset: 100;
+  }
+}
+
+/* edgeD6 → leaf6: draws 8.25–9.05s, retracts 14.30–15.00s. */
+@keyframes edgeD6-cycle {
+  0%,
+  45.833% {
+    stroke-dashoffset: 100;
+  }
+  50.278%,
+  79.444% {
+    stroke-dashoffset: 0;
+  }
+  83.333%,
+  100% {
+    stroke-dashoffset: 100;
+  }
+}

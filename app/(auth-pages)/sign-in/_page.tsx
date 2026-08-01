@@ -4,7 +4,7 @@ import { useSignIn } from "@clerk/nextjs";
 import type { SignInStatus } from "@clerk/nextjs/types";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, Suspense, useState } from "react";
+import { FormEvent, ReactNode, Suspense, useState } from "react";
 
 import { FormMessage } from "@/components/form-message";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,26 @@ import { type AuthOAuthStrategy, OAuthButtons } from "../oauth-buttons";
 
 type SignInMode = "password" | "reset";
 type ResetStep = "email" | "code" | "password";
+
+/**
+ * The auth sheet: one raised card lifted off the grove ground, 16px rounding, a
+ * decorative hairline edge and the Rest shadow. Every branch of the flow renders
+ * into the same sheet so switching between sign-in and password recovery never
+ * changes the shape of the surface under the user.
+ */
+const AUTH_SHEET_CLASS =
+  "flex w-full flex-col gap-6 rounded-lg border border-border bg-card p-6 text-card-foreground shadow-rest sm:p-8";
+
+/**
+ * Accent link finish: moss text over a faint underline that firms up on hover,
+ * so the link is legible at rest without drawing a hard rule through the copy.
+ */
+const ACCENT_LINK_CLASS =
+  "rounded-sm font-medium text-primary underline decoration-primary/30 underline-offset-4 transition-colors duration-200 ease-settle hover:decoration-primary motion-reduce:transition-none";
+
+/** Tertiary action finish: quiet until pointed at, never competing with moss. */
+const QUIET_ACTION_CLASS =
+  "rounded-sm text-[0.8125rem] font-medium text-muted-foreground underline-offset-4 transition-colors duration-200 ease-settle hover:text-foreground hover:underline disabled:opacity-50 motion-reduce:transition-none";
 
 /**
  * Explains every incomplete Core 3 sign-in state without collapsing distinct
@@ -38,6 +58,46 @@ function getIncompleteSignInMessage(status: SignInStatus): string {
     case "complete":
       return "Sign-in is ready to finish.";
   }
+}
+
+/**
+ * Masthead of the auth card: an optional quiet step marker, the headline, and
+ * one warm line of invitation. Sentence case throughout — the system has no
+ * uppercase-tracked labels.
+ */
+function CardHeading({
+  children,
+  step,
+  title,
+}: {
+  children: ReactNode;
+  step?: string;
+  title: string;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      {step ? (
+        <p className="text-[0.8125rem] font-medium text-muted-foreground">
+          {step}
+        </p>
+      ) : null}
+      <h1 className="text-[1.75rem] font-semibold leading-[1.2] tracking-[-0.02em] text-foreground">
+        {title}
+      </h1>
+      <p className="text-[0.9375rem] leading-[1.55] text-muted-foreground">
+        {children}
+      </p>
+    </div>
+  );
+}
+
+/** Inline submission result, rendered at the same finish in every flow state. */
+function FormAlert({ message }: { message: string }) {
+  return (
+    <div role="alert">
+      <FormMessage message={{ error: message }} />
+    </div>
+  );
 }
 
 /** Provides password sign-in and Clerk Core 3 email-code password recovery. */
@@ -211,30 +271,28 @@ function LoginForm() {
 
   if (mode === "reset") {
     return (
-      <div className="flex flex-col gap-8">
-        <div className="flex flex-col gap-2">
-          <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
-            Password recovery
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {resetStep === "email"
+      <div className={AUTH_SHEET_CLASS}>
+        <CardHeading
+          step="Password recovery"
+          title={
+            resetStep === "email"
               ? "Reset your password"
               : resetStep === "code"
                 ? "Check your email"
-                : "Choose a new password"}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {resetStep === "email"
-              ? "Enter your account email and we will send a verification code."
-              : resetStep === "code"
-                ? "Enter the one-time code sent to your account email."
-                : "Your identity is verified. Set the password you will use next time."}
-          </p>
-        </div>
+                : "Choose a new password"
+          }
+        >
+          {resetStep === "email"
+            ? "Tell us the email on your account and we will send a code to get you back in."
+            : resetStep === "code"
+              ? "Enter the one-time code we just sent. It only works once."
+              : "You are verified. Set the password you will use next time."}
+        </CardHeading>
 
         {resetStep === "email" ? (
           <form
-            className="flex flex-col gap-5"
+            aria-busy={isSubmitting}
+            className="flex flex-col gap-4"
             onSubmit={handleResetEmailSubmit}
           >
             <div className="flex flex-col gap-2">
@@ -248,12 +306,13 @@ function LoginForm() {
                 type="email"
               />
             </div>
-            {errorMessage ? (
-              <div role="alert">
-                <FormMessage message={{ error: errorMessage }} />
-              </div>
-            ) : null}
-            <Button className="w-full" disabled={isSubmitting} type="submit">
+            {errorMessage ? <FormAlert message={errorMessage} /> : null}
+            <Button
+              className="w-full"
+              disabled={isSubmitting}
+              size="lg"
+              type="submit"
+            >
               {isSubmitting ? "Sending code…" : "Send reset code"}
             </Button>
           </form>
@@ -261,26 +320,28 @@ function LoginForm() {
 
         {resetStep === "code" ? (
           <form
-            className="flex flex-col gap-5"
+            aria-busy={isSubmitting}
+            className="flex flex-col gap-4"
             onSubmit={handleResetCodeSubmit}
           >
             <div className="flex flex-col gap-2">
               <Label htmlFor="reset-code">Verification code</Label>
               <Input
                 autoComplete="one-time-code"
-                className="font-mono tracking-[0.35em]"
+                className="text-center font-mono text-base tracking-[0.35em]"
                 id="reset-code"
                 inputMode="numeric"
                 name="code"
                 required
               />
             </div>
-            {errorMessage ? (
-              <div role="alert">
-                <FormMessage message={{ error: errorMessage }} />
-              </div>
-            ) : null}
-            <Button className="w-full" disabled={isSubmitting} type="submit">
+            {errorMessage ? <FormAlert message={errorMessage} /> : null}
+            <Button
+              className="w-full"
+              disabled={isSubmitting}
+              size="lg"
+              type="submit"
+            >
               {isSubmitting ? "Verifying…" : "Verify code"}
             </Button>
           </form>
@@ -288,7 +349,8 @@ function LoginForm() {
 
         {resetStep === "password" ? (
           <form
-            className="flex flex-col gap-5"
+            aria-busy={isSubmitting}
+            className="flex flex-col gap-4"
             onSubmit={handleNewPasswordSubmit}
           >
             <div className="flex flex-col gap-2">
@@ -304,56 +366,51 @@ function LoginForm() {
                 type="password"
               />
               <p
-                className="text-xs text-muted-foreground"
+                className="text-[0.8125rem] text-muted-foreground"
                 id="new-password-hint"
               >
                 At least 8 characters.
               </p>
             </div>
-            {errorMessage ? (
-              <div role="alert">
-                <FormMessage message={{ error: errorMessage }} />
-              </div>
-            ) : null}
-            <Button className="w-full" disabled={isSubmitting} type="submit">
+            {errorMessage ? <FormAlert message={errorMessage} /> : null}
+            <Button
+              className="w-full"
+              disabled={isSubmitting}
+              size="lg"
+              type="submit"
+            >
               {isSubmitting ? "Saving password…" : "Save new password"}
             </Button>
           </form>
         ) : null}
 
-        <button
-          className="self-start text-sm font-medium text-primary underline underline-offset-4 transition-colors duration-200 ease-organic hover:text-primary/80 motion-reduce:transition-none"
-          disabled={isSubmitting}
-          onClick={handleBackToPassword}
-          type="button"
-        >
-          Back to sign in
-        </button>
+        <div className="border-t border-border pt-5 text-center">
+          <button
+            className={QUIET_ACTION_CLASS}
+            disabled={isSubmitting}
+            onClick={handleBackToPassword}
+            type="button"
+          >
+            Back to sign in
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-8">
-      <div className="flex flex-col gap-2">
-        <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
-          Sign in
-        </p>
-        <h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
-        <p className="text-sm text-muted-foreground">
-          Don&apos;t have an account?{" "}
-          <Link
-            className="font-medium text-primary underline underline-offset-4 transition-colors duration-200 ease-organic hover:text-primary/80 motion-reduce:transition-none"
-            href={signUpUrl}
-          >
-            Sign up
-          </Link>
-        </p>
-      </div>
+    <div className={AUTH_SHEET_CLASS}>
+      <CardHeading title="Welcome back">
+        Pick up where your thinking left off.
+      </CardHeading>
 
       <OAuthButtons disabled={isSubmitting} onSelect={handleOAuth} />
 
-      <form className="flex flex-col gap-5" onSubmit={handlePasswordSubmit}>
+      <form
+        aria-busy={isSubmitting}
+        className="flex flex-col gap-4"
+        onSubmit={handlePasswordSubmit}
+      >
         <div className="flex flex-col gap-2">
           <Label htmlFor="identifier">Email</Label>
           <Input
@@ -366,10 +423,10 @@ function LoginForm() {
           />
         </div>
         <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex items-baseline justify-between gap-4">
             <Label htmlFor="password">Password</Label>
             <button
-              className="text-xs font-medium text-muted-foreground underline underline-offset-4 transition-colors duration-200 ease-organic hover:text-foreground motion-reduce:transition-none"
+              className={QUIET_ACTION_CLASS}
               disabled={isSubmitting}
               onClick={() => {
                 setErrorMessage(null);
@@ -389,15 +446,23 @@ function LoginForm() {
             type="password"
           />
         </div>
-        {errorMessage ? (
-          <div role="alert">
-            <FormMessage message={{ error: errorMessage }} />
-          </div>
-        ) : null}
-        <Button className="w-full" disabled={isSubmitting} type="submit">
+        {errorMessage ? <FormAlert message={errorMessage} /> : null}
+        <Button
+          className="w-full"
+          disabled={isSubmitting}
+          size="lg"
+          type="submit"
+        >
           {isSubmitting ? "Signing in…" : "Sign in"}
         </Button>
       </form>
+
+      <p className="border-t border-border pt-5 text-center text-[0.8125rem] text-muted-foreground">
+        New to Sprig?{" "}
+        <Link className={ACCENT_LINK_CLASS} href={signUpUrl}>
+          Create an account
+        </Link>
+      </p>
     </div>
   );
 }

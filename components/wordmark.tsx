@@ -1,25 +1,32 @@
 import { cn } from "@/lib/utils";
 
 /**
- * The Sprig lockup: a leaf-dot in --primary followed by the mono wordmark.
+ * The Sprig lockup: a quiet two-tone leaf-dot beside a confident, tight-tracked
+ * sans wordmark, sentence case per the system's chrome rules.
  *
- * Every public surface (landing, 404, shared canvas) draws its identity from
- * here so the leaf-dot spacing and the letter-spacing stay in one place.
+ * The leaf is moss (--primary, the one voice of action) with a 2px clay heart
+ * (--glow) at its centre — the two colours the product actually speaks in,
+ * stated once at 6px so the mark reads as a seed rather than a badge. The heart
+ * is drawn, not animated: nothing in the identity is allowed to pulse.
  *
- * The trailing negative margin eats the last letter-space that `tracking`
- * appends after the "g", so the lockup optically centres inside its box and
- * sits flush against whatever follows it in a row.
+ * Every public surface (landing, 404, auth, shared canvas) draws its identity
+ * from here so the leaf-dot spacing and the tracking stay in one place.
  */
 function Wordmark({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        "flex items-center gap-2.5 font-mono text-sm uppercase tracking-[0.28em] text-foreground",
+        "flex items-center gap-2 text-[0.9375rem] font-semibold tracking-[-0.02em] text-foreground",
         className
       )}
     >
-      <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
-      <span className="-mr-[0.28em]">Sprig</span>
+      <span
+        aria-hidden="true"
+        className="flex size-1.5 shrink-0 items-center justify-center rounded-full bg-primary"
+      >
+        <span className="size-[2px] rounded-full bg-glow" />
+      </span>
+      <span>Sprig</span>
     </span>
   );
 }

@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 const buttonVariants = cva(
   [
     "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium",
-    "transition-[background-color,border-color,color,transform] duration-200 ease-organic",
+    "transition-[background-color,border-color,color,transform] duration-200 ease-settle",
     // A 1px settle on press. Enough to feel like the control took the click,
     // small enough that it never reads as the layout moving.
     "active:translate-y-px motion-reduce:transition-none motion-reduce:active:translate-y-0",
@@ -17,7 +17,7 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        default: "bg-primary text-primary-foreground hover:bg-primary-deep",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         outline:
@@ -28,11 +28,13 @@ const buttonVariants = cva(
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
-        default: "h-10 px-4 py-2",
-        sm: "h-9 rounded-md px-3",
-        lg: "h-11 rounded-md px-8",
+        // 36 / 40 / 30: the Quiet Study control heights. Prominent actions get
+        // lg; compact chrome gets sm.
+        default: "h-9 px-5",
+        sm: "h-[1.875rem] rounded-sm px-3",
+        lg: "h-10 rounded-md px-6",
         // Icon buttons are the one pill in the system; everything else is on
-        // the 14/10/8 radius scale.
+        // the 16/12/8 radius scale.
         icon: "size-9 rounded-full",
       },
     },

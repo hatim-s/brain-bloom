@@ -81,6 +81,12 @@ describe("createBaseFlowNodeFromPartialBaseFlowNode", () => {
           x: 0,
           y: 0,
         },
+        {
+          position: Position.Right,
+          type: "target",
+          x: 0,
+          y: 0,
+        },
       ],
     });
   });
@@ -105,6 +111,12 @@ describe("createBaseFlowNodeFromPartialBaseFlowNode", () => {
         {
           position: Position.Right,
           type: "source",
+          x: 0,
+          y: 0,
+        },
+        {
+          position: Position.Left,
+          type: "target",
           x: 0,
           y: 0,
         },
@@ -153,5 +165,29 @@ describe("getNodeSourceHandles", () => {
     expect(getNodeSourceHandles(NodeTypes.ROOT)).toMatchObject({
       handles: [{ id: "root-left" }, { id: "root-right" }],
     });
+  });
+
+  it("declares both branch handles so selection retains incoming edges", () => {
+    expect(getNodeSourceHandles(NodeTypes.LEFT)?.handles).toEqual([
+      expect.objectContaining({
+        position: Position.Left,
+        type: "source",
+      }),
+      expect.objectContaining({
+        position: Position.Right,
+        type: "target",
+      }),
+    ]);
+
+    expect(getNodeSourceHandles(NodeTypes.RIGHT)?.handles).toEqual([
+      expect.objectContaining({
+        position: Position.Right,
+        type: "source",
+      }),
+      expect.objectContaining({
+        position: Position.Left,
+        type: "target",
+      }),
+    ]);
   });
 });

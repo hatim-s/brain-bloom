@@ -57,12 +57,13 @@ describe("useMindmapLiveSync", () => {
     mocks.query.current = createServerState(1);
     const view = renderLiveHarness();
     const initialNodes = store.getState().nodes;
-    const initialLayout = store.getState().layout;
+    const initialMindmapNodes = store.getState().mindmapNodesMap;
 
     view.rerender(createLiveHarness());
 
+    // Nothing was re-laid-out: the derived graph views keep their identity.
     expect(store.getState().nodes).toBe(initialNodes);
-    expect(store.getState().layout).toBe(initialLayout);
+    expect(store.getState().mindmapNodesMap).toBe(initialMindmapNodes);
     expect(store.getState().pendingServerState).toBeNull();
   });
 

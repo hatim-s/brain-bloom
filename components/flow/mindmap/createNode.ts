@@ -9,7 +9,7 @@ const LEFT_NODE_ID_PREFIX = "l";
 const RIGHT_NODE_ID_PREFIX = "r";
 
 /** Creates a side-prefixed node id with an exact five-character base-36 suffix. */
-export function getNewNodeID(type: NodeTypes) {
+function getNewNodeID(type: NodeTypes) {
   const suffix = Math.floor(Math.random() * 36 ** 5)
     .toString(36)
     .padStart(5, "0");
@@ -20,7 +20,7 @@ export function getNewNodeID(type: NodeTypes) {
   ].join(NODE_ID_SEPARATOR);
 }
 
-export function getNodeTypeFromId(id: string) {
+function getNodeTypeFromId(id: string) {
   if (id === ROOT_NODE_ID) {
     return NodeTypes.ROOT;
   } else if (id.startsWith(LEFT_NODE_ID_PREFIX)) {
@@ -31,7 +31,10 @@ export function getNodeTypeFromId(id: string) {
   return null;
 }
 
-export function getNodeSourceHandles(
+/**
+ * Declares every handle XYFlow must retain when a controlled node is replaced.
+ */
+function getNodeSourceHandles(
   type: NodeTypes
 ): Pick<FlowNode, "handles" | "sourcePosition" | "targetPosition"> | null {
   if (type === NodeTypes.ROOT) {
@@ -64,6 +67,12 @@ export function getNodeSourceHandles(
           x: 0,
           y: 0,
         },
+        {
+          position: Position.Right,
+          type: "target",
+          x: 0,
+          y: 0,
+        },
       ],
       sourcePosition: Position.Left,
       targetPosition: Position.Right,
@@ -76,6 +85,12 @@ export function getNodeSourceHandles(
         {
           position: Position.Right,
           type: "source",
+          x: 0,
+          y: 0,
+        },
+        {
+          position: Position.Left,
+          type: "target",
           x: 0,
           y: 0,
         },
@@ -94,7 +109,7 @@ function getAdditionalBaseFlowNodeProps(): Pick<BaseFlowNode, "selectable"> {
   };
 }
 
-export function createNode(
+function createNode(
   type: NodeTypes.LEFT | NodeTypes.RIGHT,
   title: string,
   id?: string,
@@ -109,7 +124,7 @@ export function createNode(
   };
 }
 
-export function createBaseFlowNodeFromPartialBaseFlowNode(
+function createBaseFlowNodeFromPartialBaseFlowNode(
   node: PartialBaseFlowNode
 ): BaseFlowNode {
   return {
@@ -118,3 +133,11 @@ export function createBaseFlowNodeFromPartialBaseFlowNode(
     ...getNodeSourceHandles(node.type),
   };
 }
+
+export {
+  createBaseFlowNodeFromPartialBaseFlowNode,
+  createNode,
+  getNewNodeID,
+  getNodeSourceHandles,
+  getNodeTypeFromId,
+};

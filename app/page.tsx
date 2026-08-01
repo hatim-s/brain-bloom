@@ -2,15 +2,45 @@ import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 import { Suspense } from "react";
 
+import { ConversationDemo } from "@/components/landing/conversation-demo";
+import { DepthChain } from "@/components/landing/depth-chain";
+import { HeroMapDemo } from "@/components/landing/hero-map-demo";
 import { Button } from "@/components/ui/button";
 import { Wordmark } from "@/components/wordmark";
 
+/*
+ * Direction contract — The Grove, canvas canon played straight in the dark.
+ *
+ * THESIS: the product demonstrates itself; a real prompt grows a real map in
+ * the first viewport and keeps breathing there on a slow ambient loop. Refuses
+ * the icon-card feature grid.
+ * OWN-WORLD: a deep forest ground carrying canopy atmosphere and a whisper of
+ * grain; warm ivory type tight-tracked on top of it; moss green is the one
+ * voice of action; clay marks only where the model touched the map; shadows are
+ * forest ink falling from one soft overhead light.
+ * STORY: a learner sees their question become structure, believes growth is
+ * conversational and deep, and signs in.
+ * FIRST VIEWPORT: a centered hook standing in a soft clearing of canopy light,
+ * one moss action, and beneath it an elevated canvas sheet where the
+ * photosynthesis map grows and settles.
+ * FORM: canon canvas-tool landing (user's standing canon commitment) staged on
+ * the product's own canvas. Scrolling descends through layered ground rather
+ * than past hairlines: atmospheric clearing, a lifted band, a sheet standing on
+ * the bare ground, then the closing clearing. Nothing here is flat.
+ */
+
 /** Resolves the request-specific landing action without blocking the shell. */
-async function LandingAuthCta() {
+async function LandingAuthCta({
+  size,
+  variant,
+}: {
+  size?: "default" | "lg";
+  variant?: "default" | "outline";
+}) {
   const { userId } = await auth();
 
   return (
-    <Button asChild>
+    <Button asChild size={size} variant={variant}>
       <Link href={userId ? "/maps" : "/sign-in"}>
         {userId ? "Open your maps" : "Sign in"}
       </Link>
@@ -19,143 +49,204 @@ async function LandingAuthCta() {
 }
 
 /**
- * The product, drawn once: a root idea and the two branches it grew.
- *
- * Deliberately hand-built geometry rather than an illustration — same hairline
- * tokens, same 14/10/8 radius family, and the same leaf-dot as the wordmark, so
- * it reads as a piece of the canvas instead of marketing art. Nothing animates.
+ * Suspense-wrapped CTA so each placement stays statically prerenderable.
+ * The header placement is an outline so only the hero and the close carry
+ * moss — one saturated voice per viewport.
  */
-function MindmapGlyph() {
+function AuthCta({
+  size,
+  variant,
+}: {
+  size?: "default" | "lg";
+  variant?: "default" | "outline";
+}) {
   return (
-    <svg
-      aria-hidden="true"
-      className="h-auto w-full max-w-[19rem] text-line-strong"
-      fill="none"
-      role="presentation"
-      viewBox="0 0 224 140"
-      xmlns="http://www.w3.org/2000/svg"
+    <Suspense
+      fallback={
+        <Button disabled size={size} type="button" variant={variant}>
+          Checking account…
+        </Button>
+      }
     >
-      {/* Branch connectors leave the root's right edge flat, then settle into
-          each child, matching the curve the canvas draws between nodes. */}
-      <path
-        d="M96 70 C 116 70 120 30 140 30"
-        stroke="currentColor"
-        strokeWidth="1.25"
-      />
-      <path
-        d="M96 70 C 116 70 120 110 140 110"
-        stroke="currentColor"
-        strokeWidth="1.25"
-      />
-
-      <rect
-        className="fill-card"
-        height="36"
-        rx="12"
-        stroke="currentColor"
-        strokeWidth="1.25"
-        width="88"
-        x="8"
-        y="52"
-      />
-      <circle className="fill-primary" cx="24" cy="70" r="3" />
-      <rect
-        className="fill-border"
-        height="3"
-        rx="1.5"
-        width="44"
-        x="34"
-        y="68.5"
-      />
-
-      <rect
-        className="fill-card"
-        height="28"
-        rx="10"
-        stroke="currentColor"
-        strokeWidth="1.25"
-        width="76"
-        x="140"
-        y="16"
-      />
-      <rect
-        className="fill-border"
-        height="3"
-        rx="1.5"
-        width="48"
-        x="152"
-        y="28.5"
-      />
-
-      <rect
-        className="fill-card"
-        height="28"
-        rx="10"
-        stroke="currentColor"
-        strokeWidth="1.25"
-        width="76"
-        x="140"
-        y="96"
-      />
-      <rect
-        className="fill-border"
-        height="3"
-        rx="1.5"
-        width="36"
-        x="152"
-        y="108.5"
-      />
-    </svg>
+      <LandingAuthCta size={size} variant={variant} />
+    </Suspense>
   );
 }
+
+/**
+ * The reading column. Every band is full-bleed so its tonal field can run edge
+ * to edge; the copy inside each one lands on this shared measure.
+ */
+const COLUMN = "mx-auto w-full max-w-5xl px-6 sm:px-8";
+
+/**
+ * A section sheet: the raised surface a passage of copy and its demo stand on,
+ * lifted off whatever band it sits in. Hero-family radius per the shapes scale.
+ */
+const SHEET =
+  "overflow-hidden rounded-[22px] border border-border bg-card shadow-floating";
+
+/**
+ * The well inside a sheet — a tonal step back down, so the demo reads as
+ * something looked into rather than another flat panel.
+ */
+const WELL = "border-t border-border bg-background/50";
 
 /** Public, statically prerenderable introduction to Sprig. */
 function Home() {
   return (
-    <div className="h-full w-full overflow-y-auto">
-      <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col gap-16 px-8 py-12">
-        <header>
-          <Link
-            aria-label="Sprig home"
-            className="inline-flex rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            href="/"
-          >
-            <Wordmark />
-          </Link>
-        </header>
-
-        <main className="my-auto grid w-full items-center gap-14 md:grid-cols-[minmax(0,1fr)_auto] md:gap-16">
-          <div className="flex max-w-xl flex-col items-start gap-5">
-            <h1 className="text-4xl font-semibold leading-[1.1] tracking-tight sm:text-5xl">
-              Grow an idea into a map you can see.
-            </h1>
-            <p className="text-lg leading-relaxed text-muted-foreground">
-              Start with one thought, branch it as far as it goes, and keep the
-              whole shape of your thinking in view.
-            </p>
-            {/* Dynamic island: the CTA depends on the request's session, so it
-                is the only part of this page that is not prerendered. */}
-            <Suspense
-              fallback={
-                <Button disabled type="button">
-                  Checking account…
-                </Button>
-              }
+    <div className="h-full w-full overflow-y-auto bg-background">
+      {/* The forest floor. `sprig-atmosphere` rides a content-height wrapper
+          rather than the scroll container so its canopy gradient and grain span
+          the whole page instead of only the first screenful. */}
+      <div className="sprig-atmosphere flex min-h-full flex-col">
+        <div className={COLUMN}>
+          {/* Right padding clears the globally-fixed ThemeSwitcher, which sits
+              in the same row until the centered container's margin exceeds the
+              switcher strip (~1136px); xl releases it. */}
+          <header className="flex items-center justify-between py-6 pr-[calc(var(--theme-switcher-inset)+1.25rem)] xl:pr-0">
+            <Link
+              aria-label="Sprig home"
+              className="inline-flex rounded-sm"
+              href="/"
             >
-              <LandingAuthCta />
-            </Suspense>
-          </div>
-          <div className="flex justify-start md:justify-end">
-            <MindmapGlyph />
-          </div>
+              <Wordmark />
+            </Link>
+            <AuthCta variant="outline" />
+          </header>
+        </div>
+
+        <main className="flex flex-col">
+          {/* Band 1 — the lit clearing. The hook, one action, and the product
+              proving itself on an elevated canvas sheet. */}
+          <section className={`${COLUMN} pb-24 pt-14 sm:pb-28 sm:pt-20`}>
+            <div className="relative flex flex-col items-center gap-14 sm:gap-16">
+              {/* Canopy light pooling behind the display type, so the h1 stands
+                  in a clearing instead of on a bare field. */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 -top-20 h-[24rem] bg-[radial-gradient(52%_58%_at_50%_42%,var(--card),transparent_70%)] opacity-70"
+              />
+
+              <div className="relative flex max-w-2xl flex-col items-center gap-5 text-center">
+                <h1 className="text-balance text-[2.75rem] font-semibold leading-[1.05] tracking-[-0.03em] sm:text-6xl">
+                  Turn one question into a map of understanding.
+                </h1>
+                <p className="max-w-xl text-pretty text-lg leading-relaxed text-muted-foreground">
+                  Sprig asks a real AI agent to think your topic through, then
+                  draws the whole shape of it — branch by branch, ready to
+                  explore.
+                </p>
+                <AuthCta size="lg" />
+              </div>
+
+              {/* The canvas frame: a raised sheet under overhead light, kept a
+                  tonal step *below* the node cards inside it so the map still
+                  reads as clearings on a ground. */}
+              <div className="relative w-full overflow-hidden rounded-[22px] border border-border bg-card/35 shadow-floating">
+                <div
+                  aria-hidden="true"
+                  className="absolute inset-0 bg-[radial-gradient(var(--canvas-dot)_1px,transparent_1px)] bg-[size:24px_24px]"
+                />
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_85%_at_50%_-12%,var(--card),transparent_62%)] opacity-60"
+                />
+                {/* The lit top edge of the sheet. */}
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-x-0 top-0 h-px bg-card"
+                />
+                <div className="relative px-2 py-6 sm:px-8 sm:py-12">
+                  <HeroMapDemo />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Band 2 — a lifted tonal field. Conversational growth, shown as the
+              exchange it actually is. */}
+          <section className="border-y border-border bg-card/40 py-20 sm:py-24">
+            <div className={COLUMN}>
+              <div className={SHEET}>
+                <div className="px-6 pb-8 pt-10 sm:px-10 sm:pb-9 sm:pt-12">
+                  <div className="flex max-w-xl flex-col gap-3">
+                    <h2 className="text-[1.75rem] font-semibold leading-tight tracking-[-0.02em]">
+                      Grow it by talking to it.
+                    </h2>
+                    <p className="leading-relaxed text-muted-foreground">
+                      Every branch is a conversation away. Ask for depth where
+                      you need it and Sprig extends the map in place — it never
+                      regenerates what you have already built.
+                    </p>
+                  </div>
+                </div>
+                <div className={`${WELL} px-6 py-10 sm:px-10 sm:py-12`}>
+                  <ConversationDemo />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Band 3 — back down onto the bare ground, lit from one corner, with
+              the sheet standing on it. Depth demonstrated as one followed path. */}
+          <section className="relative py-20 sm:py-24">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 bg-[radial-gradient(65%_95%_at_12%_0%,var(--card),transparent_68%)] opacity-45"
+            />
+            <div className={`relative ${COLUMN}`}>
+              <div className={SHEET}>
+                <div className="px-6 pb-8 pt-10 sm:px-10 sm:pb-9 sm:pt-12">
+                  <div className="flex max-w-xl flex-col gap-3">
+                    <h2 className="text-[1.75rem] font-semibold leading-tight tracking-[-0.02em]">
+                      Depth, not decoration.
+                    </h2>
+                    <p className="leading-relaxed text-muted-foreground">
+                      Generation runs on a real coding agent — the same
+                      multi-step reasoning that plans software plans your map.
+                      Branches follow the actual structure of a topic, and keep
+                      going until it makes sense.
+                    </p>
+                  </div>
+                </div>
+                <div className={`${WELL} px-6 py-10 sm:px-10 sm:py-12`}>
+                  <DepthChain />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Band 4 — the close: its own clearing in the atmosphere, one moss
+              action, nothing else competing. */}
+          <section className="sprig-atmosphere border-t border-border py-24 sm:py-32">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 bg-[radial-gradient(48%_62%_at_50%_34%,var(--popover),transparent_72%)] opacity-55"
+            />
+            <div
+              className={`relative flex flex-col items-center gap-6 text-center ${COLUMN}`}
+            >
+              <h2 className="text-balance text-3xl font-semibold leading-tight tracking-[-0.02em] sm:text-4xl">
+                Give a topic room to grow.
+              </h2>
+              <p className="max-w-md text-pretty leading-relaxed text-muted-foreground">
+                Your first map is a single prompt away.
+              </p>
+              <AuthCta size="lg" />
+            </div>
+          </section>
         </main>
 
-        <footer className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border pt-6">
-          <Wordmark className="text-xs" />
-          <p className="text-sm text-muted-foreground">
-            Grow and organize ideas.
-          </p>
-        </footer>
+        <div className={COLUMN}>
+          <footer className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-border py-8">
+            <Wordmark className="text-sm" />
+            <p className="text-sm text-muted-foreground">
+              Runs on your own Claude Code or Codex subscription — no hosted
+              keys.
+            </p>
+          </footer>
+        </div>
       </div>
     </div>
   );

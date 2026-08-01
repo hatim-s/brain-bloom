@@ -154,7 +154,7 @@ describe("AiPanel", () => {
 
     renderPanel();
 
-    expect(screen.getByText("Working on:")).toBeDefined();
+    expect(screen.getByText(/Working on/)).toBeDefined();
     expect(screen.getByText("Root")).toBeDefined();
 
     await user.type(screen.getByLabelText("Message Sprig"), "add three ideas");
@@ -174,7 +174,7 @@ describe("AiPanel", () => {
       screen.getByRole("button", { name: "Stop working on Root" })
     );
 
-    expect(screen.queryByText("Working on:")).toBeNull();
+    expect(screen.queryByText(/Working on/)).toBeNull();
 
     await user.type(screen.getByLabelText("Message Sprig"), "rename the map");
     await user.click(screen.getByRole("button", { name: "Send message" }));

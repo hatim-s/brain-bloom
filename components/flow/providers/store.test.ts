@@ -6,16 +6,16 @@ import { describe, expect, it, vi } from "vitest";
 import { MindmapDB, MindmapNodeProjection } from "@/types/Mindmap";
 
 import { ROOT_NODE_ID } from "../const";
-import { initGraphs, initLayout } from "../layout/init";
+import { layoutGrove } from "../layout/grove";
 import { createEdge } from "../mindmap/createEdge";
 import { createBaseFlowNodeFromPartialBaseFlowNode } from "../mindmap/createNode";
 import { BaseFlowNode, NodeTypes } from "../types";
 import { createMindmapStore, MindmapStore } from "./store";
 
 describe("createMindmapStore", () => {
-  it("seeds the same nodes and positions as initLayout", () => {
+  it("seeds the same nodes and positions as the grove layout", () => {
     const { initialNodes, initialEdges, mindmapDB } = createStoreFixture();
-    const expectedNodes = initLayout(initGraphs(), initialNodes, initialEdges);
+    const expectedNodes = layoutGrove(initialNodes, initialEdges);
 
     const store = createMindmapStore({
       mindmapDB,
@@ -166,21 +166,26 @@ describe("createMindmapStore", () => {
     expect(store.getState().flushedWatermark).toBe(0);
   });
 
-  it("resyncs the owning dagre node height when node data changes", () => {
+  it("re-grows the grove when node data changes the card's size", () => {
     const store = createFixtureStore();
-    const rightGraph = store.getState().layout.rightGraph;
-
-    expect(rightGraph.node("r-child").height).toBe(52);
+    const previousPosition = store.getState().nodesMap["r-child"].position;
 
     store.getState().actions.onUpdateNode("r-child", {
       title: "Updated right child",
-      description: "A description increases the rendered node height",
+      description:
+        "A description makes the card taller, so its branch resettles",
     });
+    const state = store.getState();
 
-    expect(rightGraph.node("r-child")).toEqual({
-      height: 100,
-      width: 300,
-    });
+    // A taller card claims more room on its ring, so the layout is a different
+    // (still deterministic) arrangement.
+    expect(state.nodesMap["r-child"].position).not.toEqual(previousPosition);
+    expect(state.nodes.map((node) => node.position)).toEqual(
+      layoutGrove(
+        state.nodes.map(({ position: _position, ...node }) => node),
+        state.edges
+      ).map((node) => node.position)
+    );
   });
 
   it("reads the current public mindmap map before adding a node", () => {
@@ -201,7 +206,7 @@ describe("createMindmapStore", () => {
     error.mockRestore();
   });
 
-  it("rejects a parent missing from the target-side graph", () => {
+  it("rejects a child growing into the wrong hemisphere", () => {
     const store = createFixtureStore();
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -210,9 +215,9 @@ describe("createMindmapStore", () => {
       .actions.onAddNode(NodeTypes.RIGHT, "l-child", "r-wrong-side");
 
     expect(result).toBeNull();
-    expect(store.getState().layout.rightGraph.hasNode("l-child")).toBe(false);
+    expect(store.getState().nodesMap["r-wrong-side"]).toBeUndefined();
     expect(error).toHaveBeenCalledWith(
-      "[MindmapFlowProvider] onAddNode: parent node l-child not found in right graph"
+      "[MindmapFlowProvider] onAddNode: parent node l-child is not on the right side"
     );
     error.mockRestore();
   });
@@ -265,7 +270,7 @@ describe("createMindmapStore", () => {
 
   it("reseeds every derived graph while preserving valid UI and sync state", () => {
     const store = createFixtureStore();
-    const previousLayout = store.getState().layout;
+    const previousNodes = store.getState().nodes;
 
     store.getState().setActiveNode("l-child");
     store.getState().setSelectedNode("r-child");
@@ -285,8 +290,7 @@ describe("createMindmapStore", () => {
     const state = store.getState();
 
     expect(reseeded).toBe(true);
-    expect(state.layout).not.toBe(previousLayout);
-    expect(state.layout.rightGraph.hasNode("r-server")).toBe(true);
+    expect(state.nodes).not.toBe(previousNodes);
     expect(state.nodesMap["r-server"].data.title).toBe("Server child");
     expect(state.mindmapNodesMap["root"].children.has("r-server")).toBe(true);
     expect(state.activeNode).toBe("l-child");
@@ -331,6 +335,40 @@ describe("createMindmapStore", () => {
       "[MindmapFlowProvider] ignored reseedFromServer in read-only mode"
     );
     warning.mockRestore();
+  });
+
+  it("queues node-scoped prompts with monotonically unique request ids", () => {
+    const store = createFixtureStore();
+
+    store.getState().actions.requestAiPrompt("r-child", "Grow this branch.");
+    expect(store.getState().aiPromptRequest).toEqual({
+      requestId: 1,
+      nodeId: "r-child",
+      prompt: "Grow this branch.",
+    });
+
+    // An identical retry still re-triggers a consumer keyed on requestId.
+    store.getState().actions.requestAiPrompt("r-child", "Grow this branch.");
+    expect(store.getState().aiPromptRequest?.requestId).toBe(2);
+
+    store.getState().actions.clearAiPromptRequest();
+    expect(store.getState().aiPromptRequest).toBeNull();
+  });
+
+  it("drops the toolbar when its node vanishes in a server reseed", () => {
+    const store = createFixtureStore();
+
+    store.getState().setToolbarNode("r-child");
+    store.getState().actions.reseedFromServer({
+      name: "Server fixture",
+      nodes: createServerNodes(),
+      updatedAt: 2,
+      visibility: "shared",
+    });
+
+    // The fixture's server snapshot has no r-child; chrome must not point at
+    // a node that no longer exists.
+    expect(store.getState().toolbarNode).toBeNull();
   });
 
   it("ignores a queued snapshot older than the acknowledged flush", () => {
@@ -424,7 +462,7 @@ describe("createMindmapStore", () => {
       .actions.onAddNode(NodeTypes.LEFT, "l-grandchild", "l-great-grandchild");
 
     const state = store.getState();
-    const batchNodes = initLayout(initGraphs(), state.nodes, state.edges);
+    const batchNodes = layoutGrove(state.nodes, state.edges);
 
     expect(toNodePositions(state.nodes)).toEqual(toNodePositions(batchNodes));
   });
@@ -461,7 +499,7 @@ describe("createMindmapStore", () => {
   });
 });
 
-/** Creates a fresh store so mutable dagre graphs never cross test cases. */
+/** Creates a fresh store so no fixture state ever crosses test cases. */
 function createFixtureStore() {
   return createMindmapStore(createStoreFixture());
 }

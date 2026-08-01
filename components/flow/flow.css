@@ -1,5 +1,5 @@
 /*
- * Canvas surface for the mindmap.
+ * The grove floor — canvas surface for the mindmap.
  *
  * xyflow reads its own `--xy-*` custom properties before falling back to its
  * bundled defaults, so the whole canvas is retheme-able from here without
@@ -7,13 +7,21 @@
  */
 
 .react-flow {
-  --xy-background-color: var(--background);
+  /* Transparent, so the wrapper's atmosphere (canopy light, grain, tonal
+     pools) reads through the pane instead of being painted over by a flat
+     fill. See `.sprig-canvas` below. */
+  --xy-background-color: transparent;
 
-  /* Dots recede. They give the canvas a sense of scale and nothing else, so
-     they sit well below the 3:1 line and never compete with the nodes. */
-  --xy-background-pattern-color: var(--canvas-dot);
+  /* Dots recede almost to nothing. They give the canvas a sense of scale and
+     nothing else, so they sit well below the 3:1 line and never compete with
+     the cards or the stems. */
+  --xy-background-pattern-color: color-mix(
+    in oklab,
+    var(--canvas-dot) 62%,
+    transparent
+  );
 
-  /* Edges carry the structure of the map, so they use the perceivable line
+  /* Stems carry the structure of the map, so they use the perceivable line
      token rather than the decorative hairline. */
   --xy-edge-stroke: var(--line-strong);
   --xy-edge-stroke-selected: var(--primary);
@@ -25,13 +33,144 @@
   --xy-handle-border-color: var(--background);
 }
 
+/*
+ * The coarse half of the dot lattice.
+ *
+ * `Flow.tsx` mounts a second `<Background>` at five times the gap, whose
+ * half-cell auto-offset therefore lands its dots on top of every fifth fine
+ * one. One dot in twenty-five reads a touch larger and a touch more present,
+ * which gives the ground texture some life without ever becoming a second,
+ * competing grid — a lattice at a different phase would only buzz.
+ */
+.react-flow .sprig-dots-coarse {
+  --xy-background-pattern-color: color-mix(
+    in oklab,
+    var(--canvas-dot) 88%,
+    transparent
+  );
+}
+
+/*
+ * Grove atmosphere, layered over `.sprig-atmosphere` (globals.css).
+ *
+ * THREE CANOPY POOLS
+ * Moss-tinted tonal fields at three different scales and positions, so the
+ * ground has a near, a middle and a far instead of one flat field, plus a
+ * vignette that settles towards the theme's deep atmosphere tone at the edges.
+ * Chroma is kept extremely low on purpose: this is ground, not content, and it
+ * has to stay visibly quieter than any node card sitting on it. Every colour is
+ * mixed from semantic tokens — no literal hues live here — and each pool is
+ * shaped by `background-size` and placed by `background-position`, so the drift
+ * below only ever has to move the position.
+ *
+ * Light gets slightly more chroma than dark: bone paper swallows a green wash,
+ * where a bright forest-moss pool on a deep ground blooms.
+ */
+.sprig-canvas {
+  --canvas-pool-near: color-mix(in oklab, var(--primary) 7.5%, transparent);
+  --canvas-pool-mid: color-mix(in oklab, var(--primary) 5%, transparent);
+  --canvas-pool-far: color-mix(in oklab, var(--primary) 3.5%, transparent);
+
+  /* The grove floor is the largest surface in the product, so it carries a
+     little more of `.sprig-atmosphere`'s grain than a page ground does — enough
+     to read as material at any zoom, still under the threshold where it would
+     look like noise over the cards. */
+  --atmosphere-grain-opacity: 0.034;
+}
+
+.dark .sprig-canvas {
+  --canvas-pool-near: color-mix(in oklab, var(--primary) 6%, transparent);
+  --canvas-pool-mid: color-mix(in oklab, var(--primary) 4%, transparent);
+  --canvas-pool-far: color-mix(in oklab, var(--primary) 2.5%, transparent);
+  --atmosphere-grain-opacity: 0.045;
+}
+
+.sprig-canvas::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(
+      ellipse closest-side at 50% 50%,
+      var(--canvas-pool-near) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse closest-side at 50% 50%,
+      var(--canvas-pool-mid) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse closest-side at 50% 50%,
+      var(--canvas-pool-far) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      118% 88% at 50% 46%,
+      transparent 54%,
+      var(--atmosphere-deep) 100%
+    );
+  background-repeat: no-repeat;
+  /* Each pool is deliberately smaller than the pane. A percentage
+     `background-position` resolves against `container - image`, so a layer
+     sized at 100% cannot be moved at all — the headroom left here is exactly
+     what the drift below has to travel in. The vignette keeps the full 100% for
+     the same reason, in reverse: it must never move. */
+  background-size:
+    70% 62%,
+    52% 48%,
+    88% 74%,
+    100% 100%;
+  background-position:
+    12% 18%,
+    88% 78%,
+    55% 8%,
+    50% 50%;
+  animation: sprig-canopy-drift 168s ease-in-out infinite;
+}
+
+/*
+ * The one sanctioned continuous movement on the canvas.
+ *
+ * A 168s round trip that moves the three pools by a few percent and breathes
+ * their collective opacity — slow enough that it is never *seen* moving, only
+ * noticed as the ground not being dead. Nothing but `background-position` and
+ * `opacity` animates (both compositor-cheap, neither reflows), the vignette
+ * layer stays pinned at the centre, and the 0%/100% keyframes are identical so
+ * the loop has no seam. Reduced motion parks it on frame zero.
+ */
+@keyframes sprig-canopy-drift {
+  0%,
+  100% {
+    background-position:
+      12% 18%,
+      88% 78%,
+      55% 8%,
+      50% 50%;
+    opacity: 0.9;
+  }
+  50% {
+    /* Near pool travels furthest, far pool least — the parallax that keeps the
+       three fields reading as different distances rather than one sheet. */
+    background-position:
+      30% 34%,
+      74% 66%,
+      42% 18%,
+      50% 50%;
+    opacity: 1;
+  }
+}
+
 div.react-flow__panel.react-flow__attribution {
   display: none;
 }
 
-/* Connections are not user-editable here, so the handles are pure geometry.
-   Hiding them lets each edge appear to grow straight out of the card edge
-   instead of bolting onto a visible stud. */
+/* Connections are not user-editable here, and the stems compute their own
+   floating anchors from the card boxes, so the handles are pure xyflow
+   bookkeeping. Hiding them lets each stem appear to grow straight out of the
+   card edge instead of bolting onto a visible stud. */
 .react-flow__handle {
   width: 1px;
   height: 1px;
@@ -44,36 +183,159 @@ div.react-flow__panel.react-flow__attribution {
 /* Nodes are positioned by the layout pass; easing the transform turns a
    re-layout (new branch, AI insert) into a readable movement instead of a jump. */
 .react-flow__node {
-  transition: transform 340ms var(--ease-organic);
+  transition: transform 340ms var(--ease-settle);
+}
+
+/*
+ * The node card at rest and raised.
+ *
+ * Cards are lit clearings on the forest ground: a rest shadow always, a raised
+ * shadow when the pointer is over them, and — when selected — a moss double
+ * ring held off the card by a 2px gap in the canvas colour so it stays legible
+ * at any zoom without thickening the card's own border.
+ */
+.sprig-node-card {
+  box-shadow: var(--shadow-rest);
+}
+
+.react-flow__node:hover .sprig-node-card {
+  box-shadow: var(--shadow-raised);
+}
+
+/* The grove's heart rests one elevation step above its branches. This lives
+   here because the unlayered .sprig-node-card rule above outranks any Tailwind
+   shadow utility a component could set. */
+.sprig-node-card[data-root] {
+  box-shadow: var(--shadow-raised);
+}
+
+.sprig-node-card[data-selected="true"] {
+  border-color: var(--primary);
+  box-shadow:
+    0 0 0 2px var(--background),
+    0 0 0 4px var(--primary),
+    var(--shadow-raised);
 }
 
 .react-flow__edge-path {
   transition:
-    stroke 220ms var(--ease-organic),
-    stroke-width 220ms var(--ease-organic);
+    stroke 200ms var(--ease-settle),
+    stroke-width 200ms var(--ease-settle);
 }
 
 /*
- * AI activity states. P8 sets these by putting the class on the node/edge
- * object; xyflow forwards it to the rendered wrapper.
+ * The active trail: every stem from the root down to the active card.
+ *
+ * Three things separate it from a resting stem, because weight alone did not:
+ * 2px moss against 1.5px line-strong was too close a call to follow across a
+ * zoomed-out map, especially on bone paper.
+ *
+ *   1. Full moss at 2.5px — the trail is the one thing on the canvas allowed to
+ *      use the action colour at full strength.
+ *   2. An underglow: a second, wider, low-opacity moss stroke painted *beneath*
+ *      the main one by `StemEdge` (a real path, not a filter — a drop-shadow
+ *      glow would bleed a halo the design system does not have, and would cost
+ *      a filter pass per edge).
+ *   3. Everything not on the trail dims (see below), so the trail wins by
+ *      contrast as well as by weight.
+ *
+ * `Flow.tsx` computes the chain from the mindmap tree and puts the class on the
+ * edge objects; xyflow forwards it to the rendered `<g>`.
+ */
+.react-flow__edge.sprig-stem-active .react-flow__edge-path {
+  stroke: var(--primary);
+  stroke-width: 2.5;
+}
+
+/*
+ * The underglow layer, rendered on every stem and only inked on the trail.
+ *
+ * Transparent at rest costs nothing and keeps the transition symmetrical in
+ * both directions. Round caps keep the halo from ending in a blunt edge where
+ * the stem leaves a card.
+ */
+.sprig-stem-underglow {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 7;
+  stroke-linecap: round;
+  transition:
+    stroke 200ms var(--ease-settle),
+    stroke-width 200ms var(--ease-settle);
+}
+
+.react-flow__edge.sprig-stem-active .sprig-stem-underglow {
+  /* Light: moss is a mid-dark green on warm bone, so the halo can carry a
+     little more of it before it reads as a smudge. */
+  stroke: color-mix(in oklab, var(--primary) 26%, transparent);
+  stroke-width: 9;
+}
+
+/* Dark: forest-moss is a bright colour on a deep ground and blooms further, so
+   the same halo is dialled back to stay atmosphere rather than neon. */
+.dark .react-flow__edge.sprig-stem-active .sprig-stem-underglow {
+  stroke: color-mix(in oklab, var(--primary) 18%, transparent);
+}
+
+/* Clay outranks moss on a stem (The Clay Means AI Rule), and the stroke rules
+   below already hand an AI stem to clay — so the trail's moss halo steps aside
+   rather than glowing green under an orange stroke. Written with four classes
+   so it outranks the dark-theme halo above in both themes. */
+.react-flow__edge.sprig-ai-active.sprig-stem-active .sprig-stem-underglow,
+.react-flow__edge.sprig-ai-touched.sprig-stem-active .sprig-stem-underglow {
+  stroke: transparent;
+}
+
+/*
+ * While a trail is lit, every stem that is not on it recedes.
+ *
+ * `Flow.tsx` flags the canvas ground with `data-trail-active` whenever the
+ * root-to-active chain is non-empty, which is what lets a rule scoped to one
+ * edge reach the *other* edges. AI stems are exempt: clay marks the model's
+ * touch and that signal outranks the reader's trail, so a pulsing stem never
+ * fades mid-pulse.
+ */
+.react-flow__edge {
+  transition: opacity 200ms var(--ease-settle);
+}
+
+.sprig-canvas[data-trail-active="true"]
+  .react-flow__edge:not(.sprig-stem-active):not(.sprig-ai-active):not(
+    .sprig-ai-touched
+  ) {
+  opacity: 0.55;
+}
+
+/*
+ * AI activity. P8 sets these by putting the class on the node/edge object;
+ * xyflow forwards it to the rendered wrapper.
  *
  *   .sprig-ai-touched  one-shot bloom pulse that settles back to rest
  *   .sprig-ai-active   sustained state while a generation is in flight
  */
-.react-flow__node.sprig-ai-touched > * {
-  animation: sprig-bloom-node 1600ms var(--ease-organic) forwards;
-  border-radius: var(--radius);
+
+/* The pulse is drawn on the card itself so it inherits the card's own
+   (asymmetric, leaf-cornered) radius instead of being forced back to a uniform
+   one. */
+.react-flow__node.sprig-ai-touched .sprig-node-card {
+  animation: sprig-glow-node 1600ms var(--ease-settle) forwards;
 }
 
 .react-flow__edge.sprig-ai-touched .react-flow__edge-path {
-  animation: sprig-bloom-edge 1600ms var(--ease-organic) forwards;
+  animation: sprig-glow-edge 1600ms var(--ease-settle) forwards;
 }
 
 .react-flow__edge.sprig-ai-active .react-flow__edge-path {
-  stroke: var(--bloom);
+  stroke: var(--glow);
   stroke-width: 2;
   stroke-dasharray: 6 10;
   animation: sprig-edge-flow 900ms linear infinite;
+}
+
+/* Clay outranks moss on a stem: an AI-touched branch that also happens to be
+   the active path still reads as the model's doing. */
+.react-flow__edge.sprig-ai-active.sprig-stem-active .react-flow__edge-path {
+  stroke: var(--glow);
 }
 
 /*
@@ -93,7 +355,7 @@ div.react-flow__panel.react-flow__attribution {
 
 .sprig-sync-pill[data-sync-state="dirty"] .sprig-sync-dot,
 .sprig-sync-pill[data-sync-state="saving"] .sprig-sync-dot {
-  animation: sprig-sync-pulse 1400ms var(--ease-organic) infinite;
+  animation: sprig-sync-pulse 1400ms var(--ease-settle) infinite;
 }
 
 .sprig-sync-pill[data-sync-state="error"] .sprig-sync-dot {
@@ -102,8 +364,16 @@ div.react-flow__panel.react-flow__attribution {
 
 @media (prefers-reduced-motion: reduce) {
   .react-flow__node,
-  .react-flow__edge-path {
+  .react-flow__edge,
+  .react-flow__edge-path,
+  .sprig-stem-underglow {
     transition: none;
+  }
+
+  /* The pools stay exactly where the first keyframe put them: the depth is the
+     point, the drift was only ever the flourish. */
+  .sprig-canvas::after {
+    animation: none;
   }
 
   /* The pulse is what separates "saving" from "saved" at a glance, so it
@@ -116,16 +386,17 @@ div.react-flow__panel.react-flow__attribution {
   }
 
   /* The AI signal still has to land without motion, so the pulse collapses to
-     a static bloom outline rather than disappearing entirely. */
-  .react-flow__node.sprig-ai-touched > * {
+     a static glow outline rather than disappearing entirely. It stays on the
+     card element, so the ring keeps following the card's own corners. */
+  .react-flow__node.sprig-ai-touched .sprig-node-card {
     animation: none;
-    box-shadow: 0 0 0 2px var(--bloom);
+    box-shadow: 0 0 0 2px var(--glow);
   }
 
   .react-flow__edge.sprig-ai-touched .react-flow__edge-path,
   .react-flow__edge.sprig-ai-active .react-flow__edge-path {
     animation: none;
-    stroke: var(--bloom);
+    stroke: var(--glow);
     stroke-width: 2;
     stroke-dasharray: none;
   }

@@ -162,6 +162,42 @@ describe("useKey", () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
+  it("keeps firing from a focused canvas node card", () => {
+    const callback = vi.fn();
+    // What a mindmap card is: a button inside XYFlow's node wrapper. A pointer
+    // click leaves focus there, and arrow-key navigation has to survive it.
+    const view = render(
+      <div className="react-flow__node">
+        <button type="button">Node title</button>
+      </div>
+    );
+    const target = view.getByText("Node title");
+    renderHook(() => useKey("ArrowDown", callback));
+
+    const event = dispatchKeyOn(target, { key: "ArrowDown" });
+
+    expect(callback).toHaveBeenCalledOnce();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("leaves an overlay inside a canvas node native", () => {
+    const callback = vi.fn();
+    const view = render(
+      <div className="react-flow__node">
+        <div data-radix-popper-content-wrapper="">
+          <button type="button">Toolbar action</button>
+        </div>
+      </div>
+    );
+    const target = view.getByText("Toolbar action");
+    renderHook(() => useKey("ArrowDown", callback));
+
+    const event = dispatchKeyOn(target, { key: "ArrowDown" });
+
+    expect(callback).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
   it("allows an opted-in Escape binding from an input inside a dialog", () => {
     const callback = vi.fn();
     const view = render(

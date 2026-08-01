@@ -6,6 +6,10 @@ import clsx from "clsx";
 import { PanelLeft } from "lucide-react";
 import * as React from "react";
 
+import {
+  APP_PANEL_CSS_VARS,
+  APP_SIDEBAR_TRACK_WIDTH_PX,
+} from "@/components/app-shell/panel-geometry";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -28,7 +32,12 @@ import { cn } from "@/lib/utils";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
-const SIDEBAR_WIDTH = "300px";
+/**
+ * The navigation panel's track: the shared panel card plus its side insets.
+ * Derived from the one app-shell geometry so this panel can never disagree
+ * with the Sprig panel on the other edge of the canvas.
+ */
+const SIDEBAR_WIDTH = `${APP_SIDEBAR_TRACK_WIDTH_PX}px`;
 const SIDEBAR_WIDTH_MOBILE = "18rem";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_KEYBOARD_SHORTCUT = "/";
@@ -52,6 +61,18 @@ function useSidebar() {
   }
 
   return context;
+}
+
+/**
+ * Reads the navigation panel's state where there may not be one.
+ *
+ * Canvas chrome (the camera sheet) has to step aside for the open panel on the
+ * app shell's routes, but the same canvas also renders on the public share
+ * route and inside tests, neither of which mounts a provider. Those surfaces
+ * get `null` and keep the viewport inset rather than throwing.
+ */
+function useOptionalSidebar(): SidebarContextProps | null {
+  return React.useContext(SidebarContext);
 }
 
 const SidebarProvider = React.forwardRef<
@@ -142,13 +163,23 @@ const SidebarProvider = React.forwardRef<
           <div
             style={
               {
+                // Published here rather than in globals.css so the numbers have
+                // a single definition (panel-geometry.ts) shared by the CSS
+                // consumers and the Sprig panel's pixel maths.
+                ...APP_PANEL_CSS_VARS,
                 "--sidebar-width": SIDEBAR_WIDTH,
                 "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
                 ...style,
               } as React.CSSProperties
             }
+            // A definite height, not just a floor: the shell's scroll containers
+            // are `h-full`, and a percentage height against an auto-height
+            // parent resolves to auto — which left short pages painting their
+            // ground only as far as the content reached (a hard seam mid
+            // viewport). `min-h-svh` stays so content taller than the viewport
+            // still grows the wrapper.
             className={cn(
-              "group/sidebar-wrapper flex min-h-svh w-full has-[[data-variant=inset]]:bg-sidebar",
+              "group/sidebar-wrapper flex h-svh min-h-svh w-full has-[[data-variant=inset]]:bg-sidebar",
               className
             )}
             ref={ref}
@@ -199,9 +230,16 @@ const Sidebar = React.forwardRef<
       );
     }
 
-    if (isMobile) {
-      return (
-        <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
+    // Both renditions render on every viewport and defer to CSS (`hidden
+    // md:block`) and the closed-by-default sheet portal, instead of forking on
+    // isMobile. A render fork would hydrate wrong inside the app layout's
+    // Suspense: this subtree streams in late, after the provider's matchMedia
+    // effect has already flipped isMobile, so the client would build the
+    // mobile branch against desktop server HTML and React would discard the
+    // whole tree (observed as a hydration error on every mobile page).
+    return (
+      <>
+        <Sheet open={isMobile && openMobile} onOpenChange={setOpenMobile}>
           <SheetContent
             data-sidebar="sidebar"
             data-mobile="true"
@@ -220,42 +258,42 @@ const Sidebar = React.forwardRef<
             <div className="flex h-full w-full flex-col">{children}</div>
           </SheetContent>
         </Sheet>
-      );
-    }
-
-    return (
-      <div
-        ref={ref}
-        className={clsx("group peer hidden text-sidebar-foreground md:block", {
-          "absolute z-30": variant === "floating",
-        })}
-        data-state={state}
-        data-collapsible={state === "collapsed" ? collapsible : ""}
-        data-variant={variant}
-        data-side={side}
-      >
         <div
-          className={cn(
-            "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-300 ease-organic motion-reduce:transition-none md:flex",
-            side === "left"
-              ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
-              : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
-            // Adjust the padding for floating and inset variants.
-            variant === "floating" || variant === "inset"
-              ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_theme(spacing.4)_+2px)]"
-              : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
-            className
+          ref={ref}
+          className={clsx(
+            "group peer hidden text-sidebar-foreground md:block",
+            {
+              "absolute z-30": variant === "floating",
+            }
           )}
-          {...props}
+          data-state={state}
+          data-collapsible={state === "collapsed" ? collapsible : ""}
+          data-variant={variant}
+          data-side={side}
         >
           <div
-            data-sidebar="sidebar"
-            className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border"
+            className={cn(
+              "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-300 ease-settle motion-reduce:transition-none md:flex",
+              side === "left"
+                ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
+                : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
+              // Adjust the padding for floating and inset variants.
+              variant === "floating" || variant === "inset"
+                ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_theme(spacing.4)_+2px)]"
+                : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
+              className
+            )}
+            {...props}
           >
-            {children}
+            <div
+              data-sidebar="sidebar"
+              className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border"
+            >
+              {children}
+            </div>
           </div>
         </div>
-      </div>
+      </>
     );
   }
 );
@@ -438,7 +476,7 @@ const SidebarGroupLabel = React.forwardRef<
       ref={ref}
       data-sidebar="group-label"
       className={cn(
-        "flex h-8 shrink-0 items-center rounded-sm px-2 text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground transition-[margin,opacity] duration-300 ease-organic motion-reduce:transition-none [&>svg]:size-4 [&>svg]:shrink-0",
+        "flex h-8 shrink-0 items-center rounded-sm px-2 text-xs font-medium text-muted-foreground transition-[margin,opacity] duration-300 ease-settle motion-reduce:transition-none [&>svg]:size-4 [&>svg]:shrink-0",
         "group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0",
         className
       )}
@@ -459,7 +497,7 @@ const SidebarGroupAction = React.forwardRef<
       ref={ref}
       data-sidebar="group-action"
       className={cn(
-        "absolute right-3 top-3.5 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-sidebar-foreground transition-colors duration-200 ease-organic motion-reduce:transition-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&>svg]:size-4 [&>svg]:shrink-0",
+        "absolute right-3 top-3.5 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-sidebar-foreground transition-colors duration-200 ease-settle motion-reduce:transition-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&>svg]:size-4 [&>svg]:shrink-0",
         // Increases the hit area of the button on mobile.
         "after:absolute after:-inset-2 after:md:hidden",
         "group-data-[collapsible=icon]:hidden",
@@ -511,7 +549,7 @@ const SidebarMenuItem = React.forwardRef<
 SidebarMenuItem.displayName = "SidebarMenuItem";
 
 const sidebarMenuButtonVariants = cva(
-  "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm transition-colors duration-200 ease-organic motion-reduce:transition-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-[[data-sidebar=menu-action]]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-2 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
+  "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm transition-colors duration-200 ease-settle motion-reduce:transition-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-[[data-sidebar=menu-action]]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-2 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
   {
     variants: {
       variant: {
@@ -605,7 +643,7 @@ const SidebarMenuAction = React.forwardRef<
       ref={ref}
       data-sidebar="menu-action"
       className={cn(
-        "absolute right-1 top-1.5 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-sidebar-foreground transition-colors duration-200 ease-organic motion-reduce:transition-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground peer-hover/menu-button:text-sidebar-accent-foreground [&>svg]:size-4 [&>svg]:shrink-0",
+        "absolute right-1 top-1.5 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-sidebar-foreground transition-colors duration-200 ease-settle motion-reduce:transition-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground peer-hover/menu-button:text-sidebar-accent-foreground [&>svg]:size-4 [&>svg]:shrink-0",
         // Increases the hit area of the button on mobile.
         "after:absolute after:-inset-2 after:md:hidden",
         "peer-data-[size=sm]/menu-button:top-1",
@@ -721,7 +759,7 @@ const SidebarMenuSubButton = React.forwardRef<
       data-size={size}
       data-active={isActive}
       className={cn(
-        "flex h-9 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-md px-2.5 text-muted-foreground transition-colors duration-200 ease-organic motion-reduce:transition-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
+        "flex h-9 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-md px-2.5 text-muted-foreground transition-colors duration-200 ease-settle motion-reduce:transition-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
         // The active map is marked by a moss rail inset into the row, so the
         // cue survives the row's own hover fill.
         "data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[active=true]:shadow-[inset_2px_0_0_var(--primary)]",
@@ -760,5 +798,6 @@ export {
   SidebarRail,
   SidebarSeparator,
   SidebarTrigger,
+  useOptionalSidebar,
   useSidebar,
 };
