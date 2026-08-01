@@ -1,0 +1,253 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-30T00:00:00Z",
+  "title": "Design System: Sprig",
+  "extensions": {
+    "colorMeta": {
+      "moss": {
+        "role": "primary",
+        "displayName": "Moss",
+        "canonical": "oklch(0.50 0.115 152)",
+        "tonalRamp": [
+          "oklch(0.18 0.055 152)",
+          "oklch(0.27 0.08 152)",
+          "oklch(0.37 0.105 152)",
+          "oklch(0.50 0.115 152)",
+          "oklch(0.62 0.125 152)",
+          "oklch(0.74 0.115 150)",
+          "oklch(0.86 0.07 151)",
+          "oklch(0.95 0.028 151)"
+        ]
+      },
+      "clay": {
+        "role": "secondary",
+        "displayName": "Clay (AI presence)",
+        "canonical": "oklch(0.58 0.115 45)",
+        "tonalRamp": [
+          "oklch(0.20 0.05 45)",
+          "oklch(0.31 0.075 45)",
+          "oklch(0.44 0.10 45)",
+          "oklch(0.58 0.115 45)",
+          "oklch(0.72 0.105 48)",
+          "oklch(0.82 0.08 48)",
+          "oklch(0.90 0.05 48)",
+          "oklch(0.96 0.022 48)"
+        ]
+      },
+      "ink-moss": {
+        "role": "neutral",
+        "displayName": "Ink Moss",
+        "canonical": "oklch(0.23 0.022 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.02 150)",
+          "oklch(0.23 0.022 150)",
+          "oklch(0.34 0.024 149)",
+          "oklch(0.44 0.024 148)",
+          "oklch(0.58 0.02 145)",
+          "oklch(0.74 0.016 146)",
+          "oklch(0.87 0.012 148)",
+          "oklch(0.95 0.008 148)"
+        ]
+      },
+      "bone": {
+        "role": "neutral",
+        "displayName": "Bone",
+        "canonical": "oklch(0.965 0.01 95)",
+        "tonalRamp": [
+          "oklch(0.30 0.014 95)",
+          "oklch(0.45 0.014 95)",
+          "oklch(0.60 0.014 95)",
+          "oklch(0.75 0.014 98)",
+          "oklch(0.87 0.016 110)",
+          "oklch(0.938 0.013 92)",
+          "oklch(0.965 0.01 95)",
+          "oklch(0.99 0.006 95)"
+        ]
+      },
+      "forest": {
+        "role": "neutral",
+        "displayName": "Forest",
+        "canonical": "oklch(0.168 0.018 155)",
+        "tonalRamp": [
+          "oklch(0.10 0.014 156)",
+          "oklch(0.168 0.018 155)",
+          "oklch(0.205 0.02 154)",
+          "oklch(0.238 0.021 152)",
+          "oklch(0.32 0.022 152)",
+          "oklch(0.48 0.024 151)",
+          "oklch(0.72 0.02 145)",
+          "oklch(0.94 0.012 110)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Landing hero; one per page."
+      },
+      "headline": { "displayName": "Headline", "purpose": "Page titles." },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Card titles, panel headers, root node."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default reading text; chat and descriptions."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Buttons, form labels, metadata. Sentence case."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "The smallest voice — dense chrome only (panel hints, keyboard hints, status chips). Never for body content."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Keyboard shortcuts and technical values only."
+      }
+    },
+    "shadows": [
+      {
+        "name": "rest",
+        "value": "0 1px 2px oklch(0.14 0.02 152 / 0.35)",
+        "purpose": "Cards and node cards at rest. Shadow ink is deep forest, never neutral black. Dark is the flagship theme so these are the dark values; the light theme uses the same geometry at low opacity (0.05)."
+      },
+      {
+        "name": "raised",
+        "value": "0 2px 8px oklch(0.14 0.02 152 / 0.45), 0 1px 2px oklch(0.14 0.02 152 / 0.35)",
+        "purpose": "Hovered cards, active node. Dark values shown; the light theme uses the same geometry at low opacity (0.07 / 0.05)."
+      },
+      {
+        "name": "floating",
+        "value": "0 12px 32px oklch(0.14 0.02 152 / 0.55), 0 2px 8px oklch(0.14 0.02 152 / 0.4)",
+        "purpose": "Popovers, the node context toolbar, dragged nodes, floating panels. Dark values shown; the light theme uses the same geometry at low opacity (0.12 / 0.06)."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-settle",
+        "value": "cubic-bezier(0.32, 0.72, 0, 1)",
+        "purpose": "The one damped decelerate curve for every transition, 150-300ms."
+      },
+      {
+        "name": "ambient-loop",
+        "value": "16-20s seamless cycles",
+        "purpose": "Sanctioned continuous movement: slow, seamless ambient loops where the product demonstrates itself (hero demo, breathing indicators)."
+      }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single obvious next action per view; moss fill.",
+      "html": "<button class=\"ds-btn-primary\">Create map</button>",
+      "css": ".ds-btn-primary { background: oklch(0.50 0.115 152); color: oklch(0.99 0.006 95); font: 500 0.8125rem/1.3 Geist, ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.01em; padding: 10px 20px; border: none; border-radius: 12px; cursor: pointer; transition: background 150ms cubic-bezier(0.32,0.72,0,1); } .ds-btn-primary:hover { background: oklch(0.43 0.115 152); } .ds-btn-primary:focus-visible { outline: 2px solid oklch(0.50 0.115 152); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Quiet companion action; sunken bone fill.",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary { background: oklch(0.938 0.013 92); color: oklch(0.23 0.022 150); font: 500 0.8125rem/1.3 Geist, ui-sans-serif, system-ui, sans-serif; padding: 10px 20px; border: 1px solid oklch(0.87 0.016 110); border-radius: 12px; cursor: pointer; transition: background 150ms cubic-bezier(0.32,0.72,0,1); } .ds-btn-secondary:hover { background: oklch(0.918 0.014 92); } .ds-btn-secondary:focus-visible { outline: 2px solid oklch(0.50 0.115 152); outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Standard field; hairline-strong border, moss focus.",
+      "html": "<input class=\"ds-input\" placeholder=\"What do you want to understand?\" />",
+      "css": ".ds-input { background: oklch(0.99 0.006 95); color: oklch(0.23 0.022 150); font: 400 0.9375rem/1.55 Geist, ui-sans-serif, system-ui, sans-serif; padding: 10px 14px; border: 1px solid oklch(0.60 0.026 148); border-radius: 12px; width: 100%; transition: border-color 150ms cubic-bezier(0.32,0.72,0,1); } .ds-input::placeholder { color: oklch(0.58 0.02 145); } .ds-input:focus-visible { outline: 2px solid oklch(0.50 0.115 152); outline-offset: 2px; border-color: oklch(0.50 0.115 152); }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Bone-raised sheet above the page ground; rest shadow, raised on hover.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-title\">Photosynthesis</div><div class=\"ds-card-meta\">18 nodes · updated 2h ago</div></div>",
+      "css": ".ds-card { background: oklch(0.99 0.006 95); border: 1px solid oklch(0.87 0.016 110); border-radius: 16px; padding: 24px; box-shadow: 0 1px 2px oklch(0.14 0.02 152 / 0.05); transition: box-shadow 200ms cubic-bezier(0.32,0.72,0,1); } .ds-card:hover { box-shadow: 0 2px 8px oklch(0.14 0.02 152 / 0.07), 0 1px 2px oklch(0.14 0.02 152 / 0.05); } .ds-card-title { font: 590 1.0625rem/1.35 Geist, ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.01em; color: oklch(0.23 0.022 150); } .ds-card-meta { font: 500 0.8125rem/1.3 Geist, ui-sans-serif, system-ui, sans-serif; color: oklch(0.58 0.02 145); margin-top: 8px; }"
+    },
+    {
+      "name": "Node Card",
+      "kind": "custom",
+      "refersTo": "node-card",
+      "description": "Signature object: a mindmap node as a lit clearing on the ground; moss border when selected, clay ring when AI-touched.",
+      "html": "<div class=\"ds-node\">Light reactions<span class=\"ds-node-selected\">Calvin cycle</span><span class=\"ds-node-ai\">Rubisco</span></div>",
+      "css": ".ds-node { display: inline-flex; gap: 12px; align-items: center; background: oklch(0.99 0.006 95); color: oklch(0.23 0.022 150); font: 590 1.0625rem/1.35 Geist, ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.01em; padding: 12px 20px; border: 1px solid oklch(0.60 0.026 148); border-radius: 14px 14px 14px 5px; box-shadow: 0 1px 2px oklch(0.14 0.02 152 / 0.05); } .ds-node-selected { background: oklch(0.99 0.006 95); border: 1px solid oklch(0.50 0.115 152); border-radius: 14px 14px 14px 5px; padding: 12px 20px; box-shadow: 0 2px 8px oklch(0.14 0.02 152 / 0.07), 0 1px 2px oklch(0.14 0.02 152 / 0.05); } .ds-node-ai { background: oklch(0.99 0.006 95); border: 1px solid oklch(0.60 0.026 148); border-radius: 14px 14px 14px 5px; padding: 12px 20px; box-shadow: 0 0 0 2px oklch(0.58 0.115 45), 0 1px 2px oklch(0.14 0.02 152 / 0.05); }"
+    },
+    {
+      "name": "Ghost Nav Item",
+      "kind": "nav",
+      "description": "App chrome nav; sunken fill when active, never accent fills.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item ds-nav-active\" href=\"#\">Your maps</a><a class=\"ds-nav-item\" href=\"#\">Shared</a></nav>",
+      "css": ".ds-nav { display: flex; gap: 4px; } .ds-nav-item { font: 500 0.8125rem/1.3 Geist, ui-sans-serif, system-ui, sans-serif; color: oklch(0.44 0.024 148); text-decoration: none; padding: 8px 12px; border-radius: 8px; transition: background 150ms cubic-bezier(0.32,0.72,0,1); } .ds-nav-item:hover { background: oklch(0.945 0.012 93); } .ds-nav-active { background: oklch(0.938 0.013 92); color: oklch(0.23 0.022 150); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Grove",
+    "overview": "Sprig is the polished canvas-tool canon at Things 3 / Craft / Notion / FigJam craft, rendered in the user-pinned organic green-clay material world. Dark-first: a deep forest ground where node cards sit like lit clearings; living moss green is the one voice of action; fired clay marks the model's touch. Light sibling: warm bone paper with the same moss and clay. Depth is real and layered — atmosphere, elevation, and grain are welcome where they serve calm richness. The purple/iris colorway is explicitly rejected (user, 2026-07-30) and is anti-reference. The canvas itself is free-flowing and nature-inspired: growth radiates organically from the root rather than filing into columns; edges curve like stems, not wires.",
+    "keyCharacteristics": [
+      "Dark-first (a reader in a lamplit room); warm bone-paper light sibling, not an inversion.",
+      "Restrained but organic: forest neutrals + moss action green + clay AI accent; accents on ≤10% of a screen.",
+      "Real layered depth: soft overhead shadows plus atmospheric elevation (layered tonal fields, subtle grain); never flat, never glassmorphism.",
+      "Type does the luxury: tight-tracked Geist at confident sizes, quiet labels.",
+      "Motion is one damped decelerate curve; growth settles like a branch coming to rest — slow, looping ambience is welcome where the product is demonstrating itself."
+    ],
+    "rules": [
+      {
+        "name": "The One Voice Rule",
+        "body": "Moss appears on at most ~10% of any screen. If two accents compete, one of them is wrong.",
+        "section": "colors"
+      },
+      {
+        "name": "The Clay Means AI Rule",
+        "body": "Clay marks the model's touch and nothing else. It never styles ordinary hover, badges, or decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The No Purple Rule",
+        "body": "The rejected iris/violet colorway never returns — no purple hues anywhere (user-pinned, 2026-07-30).",
+        "section": "colors"
+      },
+      {
+        "name": "The Sentence Case Rule",
+        "body": "Everything is sentence case: buttons, labels, nav, empty states. No SHOUTING, no Title Case Chrome.",
+        "section": "typography"
+      },
+      {
+        "name": "The Real Light Rule",
+        "body": "All shadows fall down, from one soft overhead light. Accent pulses are rings, not shadows.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Never Flat Rule",
+        "body": "Every full-viewport surface carries at least one layer of depth — a tonal field, an elevated sheet, or atmospheric ground — before content lands on it.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep one moss-colored primary action per view; everything else is quiet.",
+      "Do use tonal steps (raised/sunken) before reaching for a shadow — then give big surfaces atmosphere (layered tonal fields, subtle grain).",
+      "Do give every interactive state the shared 150–300ms damped decelerate (cubic-bezier(0.32, 0.72, 0, 1)); ambient loops (hero demo, breathing indicators) run slow and seamless.",
+      "Do keep the two-line-token discipline: hairline for decoration, hairline-strong for actionable edges.",
+      "Do design empty, loading, and error states at the same finish as happy paths."
+    ],
+    "donts": [
+      "Don't use any purple/iris/violet hue — the rejected colorway (user-pinned).",
+      "Don't ship a flat full-viewport surface; see The Never Flat Rule.",
+      "Don't use glassmorphism, neon glows, or neutral-black shadows (shadow ink is deep forest).",
+      "Don't uppercase-track labels or ship Title Case chrome.",
+      "Don't let AI presence shout: Clay pulses settle; no permanent sparkle badges.",
+      "Don't bounce or spring-overshoot; arrival is damped. Slow ambient looping motion is the one sanctioned continuous movement."
+    ]
+  }
+}
