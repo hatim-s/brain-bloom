@@ -42,5 +42,9 @@ yarn-error.log*
 next-env.d.ts
 .logs/
 
+# local embedding benchmark artifacts and generated reports
+/.cache/local-embeddings/
+/benchmarks/local-embeddings/results/
+
 # clerk configuration (can include secrets)
 /.clerk/
