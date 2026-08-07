@@ -139,8 +139,8 @@ export default [
   {
     ignores: [
       // Repository-copied agent skills are third-party tooling, not app source.
-      ".agents/**",
-      ".claude/**",
+      ".agents/skills/**",
+      ".claude/skills/**",
       ".github/skills/**",
       "node_modules/",
       ".next/",
