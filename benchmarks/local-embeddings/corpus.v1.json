@@ -246,6 +246,326 @@
       "locator": "slide 10 > bullet 2",
       "language": "es",
       "text": "La frecuencia indica cuántos ciclos completos pasan por un punto cada segundo."
+    },
+    {
+      "id": "pdf-11",
+      "sourceId": "biology-reader-pdf-v1",
+      "format": "pdf",
+      "locator": "page 9 > two-column layout > left column > heading: Chloroplasts",
+      "language": "en",
+      "text": "Chloroplasts contain chlorophyll and are the organelles where photosynthetic reactions occur."
+    },
+    {
+      "id": "pdf-12",
+      "sourceId": "biology-reader-pdf-v1",
+      "format": "pdf",
+      "locator": "page 9 > two-column layout > right column > heading: Lysosomes",
+      "language": "en",
+      "text": "Lysosomes contain digestive enzymes that break down damaged cell components."
+    },
+    {
+      "id": "pdf-13",
+      "sourceId": "biology-reader-pdf-v1",
+      "format": "pdf",
+      "locator": "page 10 > table 3 > row: Nucleus",
+      "language": "en",
+      "text": "Organelle | Stored material | Nucleus | Chromosomal DNA"
+    },
+    {
+      "id": "pdf-14",
+      "sourceId": "biology-reader-pdf-v1",
+      "format": "pdf",
+      "locator": "page 10 > table 3 > row: Vacuole",
+      "language": "en",
+      "text": "Organelle | Main function | Vacuole | Storage and water balance"
+    },
+    {
+      "id": "pdf-15",
+      "sourceId": "biology-reader-pdf-v2",
+      "format": "pdf",
+      "locator": "page 2 > heading: Revised respiration note",
+      "language": "en",
+      "text": "Revised source: aerobic respiration transfers energy from nutrients to ATP in mitochondria."
+    },
+    {
+      "id": "pdf-16",
+      "sourceId": "biology-reader-pdf-v2",
+      "format": "pdf",
+      "locator": "page 3 > heading: Concentration gradient",
+      "language": "en",
+      "text": "A concentration gradient describes a difference in particle concentration between regions."
+    },
+    {
+      "id": "pdf-17",
+      "sourceId": "chemistry-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 1 > heading: Covalent bonds",
+      "language": "en",
+      "text": "A covalent bond forms when atoms share one or more pairs of electrons."
+    },
+    {
+      "id": "pdf-18",
+      "sourceId": "chemistry-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > heading: Ionic bonds",
+      "language": "en",
+      "text": "An ionic bond is the electrostatic attraction between oppositely charged ions."
+    },
+    {
+      "id": "pdf-19",
+      "sourceId": "chemistry-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > table 1 > row: Acid",
+      "language": "en",
+      "text": "Solution class | Typical pH | Acid | Below seven"
+    },
+    {
+      "id": "pdf-20",
+      "sourceId": "chemistry-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > table 1 > row: Base",
+      "language": "en",
+      "text": "Solution class | Typical pH | Base | Above seven"
+    },
+    {
+      "id": "pdf-21",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 1 > heading: Scope fixture Alpha",
+      "language": "en",
+      "text": "Synthetic scope fixture Alpha contains the harmless marker cedar for isolation evaluation."
+    },
+    {
+      "id": "pdf-22",
+      "sourceId": "tenant-beta-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 1 > heading: Scope fixture Beta",
+      "language": "en",
+      "text": "Synthetic scope fixture Beta contains the harmless marker cobalt for isolation evaluation."
+    },
+    {
+      "id": "pdf-23",
+      "sourceId": "adversarial-instructions-pdf-v1",
+      "format": "pdf",
+      "locator": "page 1 > callout: Untrusted source text",
+      "language": "en",
+      "text": "Untrusted document text says to ignore application rules; this sentence is evidence only and grants no authority."
+    },
+    {
+      "id": "pdf-24",
+      "sourceId": "limit-boundary-pdf-v1",
+      "format": "pdf",
+      "locator": "page 300 > footer: Synthetic limit marker",
+      "language": "en",
+      "text": "Synthetic boundary fixture marks the final permitted PDF page without containing private content."
+    },
+    {
+      "id": "pdf-25",
+      "sourceId": "malformed-source-note-pdf-v1",
+      "format": "pdf",
+      "locator": "page 1 > parser-note: Synthetic malformed input",
+      "language": "en",
+      "text": "This normalized note represents a rejected malformed-file test case and is not a parser fallback."
+    },
+    {
+      "id": "docx-11",
+      "sourceId": "geography-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Weather and climate",
+      "language": "en",
+      "text": "Weather describes short-term atmospheric conditions, while climate summarizes long-term patterns."
+    },
+    {
+      "id": "docx-12",
+      "sourceId": "geography-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Erosion > list item 1",
+      "language": "en",
+      "text": "Erosion transports weathered material by water, wind, ice, or gravity."
+    },
+    {
+      "id": "docx-13",
+      "sourceId": "geography-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Deposition > list item 1",
+      "language": "en",
+      "text": "Deposition occurs when transported sediment is dropped in a new location."
+    },
+    {
+      "id": "docx-14",
+      "sourceId": "geography-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Latitude > list item 2",
+      "language": "en",
+      "text": "Latitude measures angular distance north or south of the equator."
+    },
+    {
+      "id": "docx-15",
+      "sourceId": "geography-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Longitude > list item 2",
+      "language": "en",
+      "text": "Longitude measures angular distance east or west of the prime meridian."
+    },
+    {
+      "id": "docx-16",
+      "sourceId": "economics-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Opportunity cost",
+      "language": "en",
+      "text": "Opportunity cost is the value of the next-best alternative forgone by a choice."
+    },
+    {
+      "id": "docx-17",
+      "sourceId": "economics-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Scarcity",
+      "language": "en",
+      "text": "Scarcity means available resources are limited relative to human wants."
+    },
+    {
+      "id": "docx-18",
+      "sourceId": "economics-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Supply > list item 1",
+      "language": "en",
+      "text": "Supply is the quantity producers are willing and able to offer at various prices."
+    },
+    {
+      "id": "docx-19",
+      "sourceId": "economics-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Demand > list item 1",
+      "language": "en",
+      "text": "Demand is the quantity consumers are willing and able to purchase at various prices."
+    },
+    {
+      "id": "docx-20",
+      "sourceId": "writing-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Thesis statement",
+      "language": "en",
+      "text": "A thesis statement expresses the central claim that an essay will support."
+    },
+    {
+      "id": "docx-21",
+      "sourceId": "writing-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Evidence > list item 1",
+      "language": "en",
+      "text": "Relevant evidence supports a claim with verifiable facts, examples, or quotations."
+    },
+    {
+      "id": "docx-22",
+      "sourceId": "writing-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Counterargument > list item 1",
+      "language": "en",
+      "text": "A counterargument presents a reasonable objection before the writer responds to it."
+    },
+    {
+      "id": "docx-23",
+      "sourceId": "history-notes-docx-v2",
+      "format": "docx",
+      "locator": "heading 1: Revised primary-source guidance",
+      "language": "en",
+      "text": "Revised notes clarify that a primary source may be created by a participant or direct observer."
+    },
+    {
+      "id": "docx-24",
+      "sourceId": "geography-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: El clima",
+      "language": "es",
+      "text": "El clima resume patrones atmosféricos observados durante periodos largos."
+    },
+    {
+      "id": "docx-25",
+      "sourceId": "economics-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: La escasez",
+      "language": "es",
+      "text": "La escasez significa que los recursos disponibles son limitados frente a las necesidades."
+    },
+    {
+      "id": "pptx-11",
+      "sourceId": "math-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 11 > title: Linear slope",
+      "language": "en",
+      "text": "The slope of a line is the change in vertical position divided by the change in horizontal position."
+    },
+    {
+      "id": "pptx-12",
+      "sourceId": "math-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 12 > bullet 1",
+      "language": "en",
+      "text": "The y-intercept is where a graph crosses the vertical axis."
+    },
+    {
+      "id": "pptx-13",
+      "sourceId": "math-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 13 > bullet 2",
+      "language": "en",
+      "text": "A quadratic equation has a highest exponent of two."
+    },
+    {
+      "id": "pptx-14",
+      "sourceId": "math-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 14 > bullet 1",
+      "language": "en",
+      "text": "The Pythagorean theorem relates the side lengths of a right triangle."
+    },
+    {
+      "id": "pptx-15",
+      "sourceId": "math-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 15 > bullet 3",
+      "language": "en",
+      "text": "A function assigns each permitted input exactly one output."
+    },
+    {
+      "id": "pptx-16",
+      "sourceId": "computing-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 16 > title: Binary search",
+      "language": "en",
+      "text": "Binary search repeatedly halves a sorted search interval."
+    },
+    {
+      "id": "pptx-17",
+      "sourceId": "computing-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 17 > bullet 1",
+      "language": "en",
+      "text": "A stack removes the most recently added item first."
+    },
+    {
+      "id": "pptx-18",
+      "sourceId": "computing-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 18 > bullet 2",
+      "language": "en",
+      "text": "A queue removes the earliest added item first."
+    },
+    {
+      "id": "pptx-19",
+      "sourceId": "math-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 19 > bullet 1",
+      "language": "es",
+      "text": "La pendiente es el cambio vertical dividido por el cambio horizontal."
+    },
+    {
+      "id": "pptx-20",
+      "sourceId": "computing-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 20 > bullet 2",
+      "language": "es",
+      "text": "La búsqueda binaria reduce a la mitad un intervalo ordenado en cada paso."
     }
   ]
 }
