@@ -260,6 +260,7 @@ class StdioCodexProbeSession implements CodexProbeSession {
   private readonly abortHandler: () => void;
   private readonly abortSignal?: AbortSignal;
   private readonly exited: Promise<void>;
+  private readonly terminateTree: ProcessTreeTerminator;
   private nextId = 0;
   private stderrBytes = 0;
   private closed = false;
@@ -274,9 +275,10 @@ class StdioCodexProbeSession implements CodexProbeSession {
     > = process.env,
     command = "codex",
     spawnProcess: SpawnCodexProcess = spawn as SpawnCodexProcess,
-    private readonly terminateTree: ProcessTreeTerminator = terminateProcessTree
+    terminateTree: ProcessTreeTerminator = terminateProcessTree
   ) {
     assertSignalNotAborted(signal);
+    this.terminateTree = terminateTree;
     this.abortSignal = signal;
     this.abortHandler = () =>
       void this.shutdown(new Error("Provider probe cancelled"));

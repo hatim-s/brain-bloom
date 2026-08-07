@@ -1,6 +1,7 @@
 import {
   type ChildProcessWithoutNullStreams,
   spawn as nodeSpawn,
+  spawnSync,
 } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
@@ -159,6 +160,36 @@ function createFakeCodexChild(
     });
   }
   return child;
+}
+
+/** Runs the exact strip-only Node entry command without recursively invoking pnpm. */
+function runProviderSpikeEntry(command: string) {
+  const credentialCanary = "entry-smoke-credential-canary-824d5f24";
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--experimental-strip-types",
+      "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON",
+      "scripts/provider-spike/cli.ts",
+      "--",
+      command,
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        LANG: "C",
+        NODE_ENV: "test",
+        PATH: "",
+        OPENAI_API_KEY: credentialCanary,
+        ANTHROPIC_API_KEY: credentialCanary,
+        CLAUDE_CODE_OAUTH_TOKEN: credentialCanary,
+      },
+      timeout: 5_000,
+    }
+  );
+
+  return { credentialCanary, result };
 }
 
 describe("provider spike security", () => {
@@ -830,6 +861,37 @@ describe("Claude setup-token probe", () => {
 });
 
 describe("provider spike CLI", () => {
+  it("loads the real strip-only Node entry path for help", () => {
+    const { credentialCanary, result } = runProviderSpikeEntry("help");
+
+    expect(result.status).toBe(0);
+    expect(result.error).toBeUndefined();
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Sprig provider seam spike");
+    expect(result.stdout).toContain("Without --execute no provider process");
+    expect(result.stdout).not.toContain(credentialCanary);
+  });
+
+  it.each(["claude-token", "codex-device", "codex-logout-restart"])(
+    "loads the real entry path for credential-free %s dry run",
+    (command) => {
+      const { credentialCanary, result } = runProviderSpikeEntry(command);
+
+      expect(result.status).toBe(0);
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toEqual(
+        expect.objectContaining({
+          mode: "dry-run",
+          command,
+          providerProcessStarted: false,
+          stdinRead: false,
+        })
+      );
+      expect(result.stdout).not.toContain(credentialCanary);
+    }
+  );
+
   it("prints help with no arguments", () => {
     expect(parseCliOptions([])).toEqual({ command: "help", execute: false });
     expect(parseCliOptions(["--", "help"])).toEqual({
