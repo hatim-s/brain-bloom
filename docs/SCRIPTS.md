@@ -16,6 +16,7 @@
 | `format:check` | Checks Prettier formatting without changing files. | Use in verification and CI. |
 | `fix:all` | Applies ESLint fixes and then formats the repository with Prettier. | Use when both lint fixes and formatting are needed. |
 | `migrate:supabase` | Previews the Supabase-to-Convex mindmap migration without writing by default. Pass `--execute --owner <Clerk subject>` after `--` to perform the import for one owner. | Run `pnpm migrate:supabase` for a dry-run report. After human approval, run `pnpm migrate:supabase -- --execute --owner <Clerk subject>` to write to Convex. |
+| `provider:spike` | Runs the disposable Phase 0 Codex/Claude provider-seam harness through Node's strip-only TypeScript runner. It prints help or a dry-run plan unless `--execute` is supplied. | Use only for human-invoked credential ceremony proofs described in `docs/PROVIDER_SPIKE.md`; ordinary tests use injected fakes. |
 
 Vercel does not invoke the `dev` or `build` package scripts. `vercel.json` pins
 `"devCommand": "next"` and `"buildCommand": "next build"`, so changes to those
