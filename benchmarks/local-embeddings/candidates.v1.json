@@ -7,6 +7,15 @@
     "maxResidentMemoryMb": 1024,
     "maxCacheBytes": 1073741824
   },
+  "cacheLimits": {
+    "maxBytes": 1073741824,
+    "maxFiles": 2000,
+    "maxDepth": 8
+  },
+  "measurement": {
+    "warmQueryPasses": 3,
+    "memorySampleIntervalMs": 5
+  },
   "candidates": [
     {
       "key": "minilm-l6-v2",
@@ -14,7 +23,25 @@
       "revision": "c9745ed1d9f207416be6d2e6f8de32d1f16199bf",
       "dimensions": 384,
       "artifactChecksum": "sha256:6d5b837a241bf1827ef79af30b8655633b9f2669268d97753616da2029d4c5d7",
-      "offlineCachePath": ".cache/local-embeddings/minilm-l6-v2-c9745ed1"
+      "offlineCachePath": "minilm-l6-v2-c9745ed1",
+      "adapter": {
+        "id": "sprig-local-embedding-adapter",
+        "version": "1.0.0",
+        "revision": "4b1ad7e8c2a76b69c87e5876b1c78be78d1ab092",
+        "artifactChecksum": "sha256:a6be51dd880e7da398f9060202f3c1cb3ffc20188c77b3beab1d6d5317a14314"
+      },
+      "runtime": {
+        "id": "onnxruntime",
+        "version": "1.22.0"
+      },
+      "preprocessing": {
+        "id": "minilm-mean-normalized",
+        "version": "1.0.0",
+        "pooling": "mean",
+        "normalize": true,
+        "queryPrefix": "",
+        "documentPrefix": ""
+      }
     },
     {
       "key": "bge-small-en-v1.5",
@@ -22,7 +49,25 @@
       "revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
       "dimensions": 384,
       "artifactChecksum": "sha256:d44f8900f22d0a90c1f3362f34a2d6a2c43fcba8447499ea414e0c1fed653a2b",
-      "offlineCachePath": ".cache/local-embeddings/bge-small-en-v1.5-5c38ec7c"
+      "offlineCachePath": "bge-small-en-v1.5-5c38ec7c",
+      "adapter": {
+        "id": "sprig-local-embedding-adapter",
+        "version": "1.0.0",
+        "revision": "4b1ad7e8c2a76b69c87e5876b1c78be78d1ab092",
+        "artifactChecksum": "sha256:a6be51dd880e7da398f9060202f3c1cb3ffc20188c77b3beab1d6d5317a14314"
+      },
+      "runtime": {
+        "id": "onnxruntime",
+        "version": "1.22.0"
+      },
+      "preprocessing": {
+        "id": "bge-query-cls-normalized",
+        "version": "1.0.0",
+        "pooling": "cls",
+        "normalize": true,
+        "queryPrefix": "Represent this sentence for searching relevant passages: ",
+        "documentPrefix": ""
+      }
     }
   ]
 }

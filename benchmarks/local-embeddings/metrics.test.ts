@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  calculateRandomExpectedRecall,
   calculateRecallMetrics,
   rankSegments,
   recallAtDepth,
@@ -54,9 +55,10 @@ describe("embedding benchmark metrics", () => {
 
     const metrics = calculateRecallMetrics(questions, rankings);
 
-    expect(metrics.overall["5"]).toBe(1);
-    expect(metrics.byCategory.definitions["5"]).toBe(1);
-    expect(metrics.byCategory.paraphrases["20"]).toBe(1);
+    expect(metrics.overall.recall["5"]).toBe(1);
+    expect(metrics.overall.questionCount).toBe(4);
+    expect(metrics.byCategory.definitions.recall["5"]).toBe(1);
+    expect(metrics.byCategory.paraphrases.recall["20"]).toBe(1);
   });
 
   it("uses stable segment IDs to break equal-score ties", () => {
@@ -78,6 +80,14 @@ describe("embedding benchmark metrics", () => {
       medianMs: 2.5,
       p95Ms: 5,
       maxMs: 5,
+    });
+  });
+
+  it("records a discriminating analytic random baseline", () => {
+    expect(calculateRandomExpectedRecall(100)).toEqual({
+      "5": 0.05,
+      "10": 0.1,
+      "20": 0.2,
     });
   });
 });

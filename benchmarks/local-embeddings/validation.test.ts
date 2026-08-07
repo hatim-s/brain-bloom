@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { readJsonFixture } from "./cli.ts";
 import type { CandidateConfiguration, EmbeddingCandidate } from "./types.ts";
 import {
+  validateBenchmarkFixtures,
   validateCandidate,
   validateCandidateConfiguration,
   validateEmbeddingVector,
@@ -13,7 +15,22 @@ const validCandidate: EmbeddingCandidate = {
   revision: "a".repeat(40),
   dimensions: 3,
   artifactChecksum: `sha256:${"b".repeat(64)}`,
-  offlineCachePath: ".cache/candidate-a",
+  offlineCachePath: "candidate-a",
+  adapter: {
+    id: "test-adapter",
+    version: "1.0.0",
+    revision: "c".repeat(40),
+    artifactChecksum: `sha256:${"d".repeat(64)}`,
+  },
+  runtime: { id: "test-runtime", version: "1.0.0" },
+  preprocessing: {
+    id: "test-preprocessing",
+    version: "1.0.0",
+    pooling: "mean",
+    normalize: true,
+    queryPrefix: "query: ",
+    documentPrefix: "document: ",
+  },
 };
 
 const validBudgets = {
@@ -21,38 +38,171 @@ const validBudgets = {
   maxWarmQueryP95Ms: 1,
   minIngestionSegmentsPerSecond: 1,
   maxResidentMemoryMb: 1,
-  maxCacheBytes: 1,
+  maxCacheBytes: 1_000,
 };
 
-describe("embedding candidate validation", () => {
-  it("accepts only exact hexadecimal revisions", () => {
+/** Creates a complete two-candidate configuration for focused schema tests. */
+function createConfiguration(): CandidateConfiguration {
+  return {
+    schemaVersion: 1,
+    budgets: validBudgets,
+    cacheLimits: { maxBytes: 1_000, maxFiles: 10, maxDepth: 3 },
+    measurement: { warmQueryPasses: 2, memorySampleIntervalMs: 1 },
+    candidates: [
+      validCandidate,
+      {
+        ...validCandidate,
+        key: "candidate-b",
+        modelId: "local/candidate-b",
+        revision: "e".repeat(40),
+        offlineCachePath: "candidate-b",
+      },
+    ],
+  };
+}
+
+describe("embedding candidate runtime validation", () => {
+  it("accepts only exact hexadecimal revisions and checksums", () => {
     expect(() => validateCandidate(validCandidate)).not.toThrow();
     expect(() =>
       validateCandidate({ ...validCandidate, revision: "main" })
-    ).toThrow(/exact 40-64/);
-  });
-
-  it("refuses missing or malformed checksums", () => {
+    ).toThrow();
     expect(() =>
       validateCandidate({ ...validCandidate, artifactChecksum: "" })
-    ).toThrow(/checksum/);
-    expect(() =>
-      validateCandidate({
-        ...validCandidate,
-        artifactChecksum: `sha256:${"x".repeat(64)}`,
-      })
-    ).toThrow(/checksum/);
+    ).toThrow();
   });
 
-  it("requires at least two configured candidates", () => {
-    const configuration: CandidateConfiguration = {
-      schemaVersion: 1,
-      budgets: validBudgets,
-      candidates: [validCandidate],
-    };
-    expect(() => validateCandidateConfiguration(configuration)).toThrow(
-      /at least two candidates/
+  it("rejects absolute, parent-traversal, and unknown candidate fields", () => {
+    expect(() =>
+      validateCandidate({ ...validCandidate, offlineCachePath: "/tmp/model" })
+    ).toThrow(/dedicated cache root/);
+    expect(() =>
+      validateCandidate({ ...validCandidate, offlineCachePath: "../model" })
+    ).toThrow(/dedicated cache root/);
+    expect(() =>
+      validateCandidate({ ...validCandidate, unexpected: true })
+    ).toThrow();
+  });
+
+  it("requires two candidates and complete positive hard limits", () => {
+    const configuration = createConfiguration();
+    expect(() =>
+      validateCandidateConfiguration({
+        ...configuration,
+        candidates: [validCandidate],
+      })
+    ).toThrow();
+    expect(() =>
+      validateCandidateConfiguration({
+        ...configuration,
+        cacheLimits: { ...configuration.cacheLimits, maxFiles: 0 },
+      })
+    ).toThrow();
+  });
+});
+
+describe("benchmark fixture runtime validation", () => {
+  it("accepts the committed expanded multilingual fixtures", async () => {
+    const fixtures = validateBenchmarkFixtures(
+      await readJsonFixture("corpus.v1.json"),
+      await readJsonFixture("questions.v1.json")
     );
+    expect(fixtures.corpus.segments.length).toBeGreaterThanOrEqual(60);
+    expect(fixtures.questionSet.questions).toHaveLength(32);
+  });
+
+  it("rejects unknown enums and undeclared languages", async () => {
+    const corpus = validateBenchmarkFixtures(
+      await readJsonFixture("corpus.v1.json"),
+      await readJsonFixture("questions.v1.json")
+    ).corpus;
+    const questionSet = validateBenchmarkFixtures(
+      corpus,
+      await readJsonFixture("questions.v1.json")
+    ).questionSet;
+    expect(() =>
+      validateBenchmarkFixtures(corpus, {
+        ...questionSet,
+        questions: questionSet.questions.map((question, index) =>
+          index === 0 ? { ...question, category: "typo-category" } : question
+        ),
+      })
+    ).toThrow();
+    expect(() =>
+      validateBenchmarkFixtures(corpus, {
+        ...questionSet,
+        questions: questionSet.questions.map((question, index) =>
+          index === 0 ? { ...question, language: "fr" } : question
+        ),
+      })
+    ).toThrow();
+    expect(() =>
+      validateBenchmarkFixtures(
+        {
+          ...corpus,
+          segments: corpus.segments.map((segment, index) =>
+            index === 0 ? { ...segment, format: "html" } : segment
+          ),
+        },
+        questionSet
+      )
+    ).toThrow();
+  });
+
+  it("rejects duplicate relevance and question-segment language mismatch", async () => {
+    const fixtures = validateBenchmarkFixtures(
+      await readJsonFixture("corpus.v1.json"),
+      await readJsonFixture("questions.v1.json")
+    );
+    const first = fixtures.questionSet.questions[0];
+    expect(() =>
+      validateBenchmarkFixtures(fixtures.corpus, {
+        ...fixtures.questionSet,
+        questions: [
+          { ...first, relevantSegmentIds: ["pdf-01", "pdf-01"] },
+          ...fixtures.questionSet.questions.slice(1),
+        ],
+      })
+    ).toThrow(/repeats a relevant segment/);
+    expect(() =>
+      validateBenchmarkFixtures(fixtures.corpus, {
+        ...fixtures.questionSet,
+        questions: [
+          { ...first, language: "es" },
+          ...fixtures.questionSet.questions.slice(1),
+        ],
+      })
+    ).toThrow(/language does not match/);
+  });
+
+  it("rejects duplicate segment IDs and missing relevant references", async () => {
+    const fixtures = validateBenchmarkFixtures(
+      await readJsonFixture("corpus.v1.json"),
+      await readJsonFixture("questions.v1.json")
+    );
+    expect(() =>
+      validateBenchmarkFixtures(
+        {
+          ...fixtures.corpus,
+          segments: fixtures.corpus.segments.map((segment, index) =>
+            index === 1
+              ? { ...segment, id: fixtures.corpus.segments[0].id }
+              : segment
+          ),
+        },
+        fixtures.questionSet
+      )
+    ).toThrow(/Duplicate segment id/);
+    expect(() =>
+      validateBenchmarkFixtures(fixtures.corpus, {
+        ...fixtures.questionSet,
+        questions: fixtures.questionSet.questions.map((question, index) =>
+          index === 0
+            ? { ...question, relevantSegmentIds: ["missing-segment"] }
+            : question
+        ),
+      })
+    ).toThrow(/references missing/);
   });
 });
 

@@ -1,13 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { parseCliOptions, preflightExecutionCaches } from "./cli.ts";
-import type { CandidateConfiguration } from "./types.ts";
+import {
+  createDryRunSummary,
+  parseCliOptions,
+  parseJsonFixture,
+  readJsonFixture,
+} from "./cli.ts";
+import { validateCandidateConfiguration } from "./validation.ts";
 
 describe("local embedding benchmark CLI", () => {
   it("defaults to dry-run mode with downloads denied", () => {
     expect(parseCliOptions([])).toMatchObject({
       run: false,
       allowDownloads: false,
+      outputDirectoryRelative: "latest",
     });
   });
 
@@ -30,28 +36,42 @@ describe("local embedding benchmark CLI", () => {
     });
   });
 
-  it("denies missing caches before an adapter module can be imported", async () => {
-    const configuration: CandidateConfiguration = {
-      schemaVersion: 1,
-      budgets: {
-        maxColdLoadMs: 1,
-        maxWarmQueryP95Ms: 1,
-        minIngestionSegmentsPerSecond: 1,
-        maxResidentMemoryMb: 1,
-        maxCacheBytes: 1,
-      },
-      candidates: ["a", "b"].map((key) => ({
-        key,
-        modelId: `local/${key}`,
-        revision: key.repeat(40),
-        dimensions: 3,
-        artifactChecksum: `sha256:${key.repeat(64)}`,
-        offlineCachePath: `definitely-missing-${key}`,
-      })),
-    };
+  it("rejects absolute and traversal report output paths", () => {
+    expect(() => parseCliOptions(["--output-dir", "/tmp/results"])).toThrow(
+      /relative path/
+    );
+    expect(() => parseCliOptions(["--output-dir", "../results"])).toThrow(
+      /parent components/
+    );
+  });
 
-    await expect(
-      preflightExecutionCaches(configuration, "/tmp", false)
-    ).rejects.toThrow(/downloads remain denied/);
+  it("rejects malformed JSON before runtime schema validation", () => {
+    expect(() => parseJsonFixture("{not-json", "broken.json")).toThrow(
+      /broken.json is not valid JSON/
+    );
+  });
+
+  it("uses only injected lstat metadata during dry run", async () => {
+    const configuration = validateCandidateConfiguration(
+      await readJsonFixture("candidates.v1.json")
+    );
+    const metadataInspector = vi.fn(
+      async (_workspace, _root, entry: string) => ({
+        path: `/not-opened/${entry}`,
+        exists: true,
+        kind: "file" as const,
+        size: 123,
+      })
+    );
+
+    const summary = await createDryRunSummary(
+      configuration,
+      "/unused-workspace",
+      metadataInspector
+    );
+
+    expect(metadataInspector).toHaveBeenCalledTimes(2);
+    expect(summary).toContain("checksum not read");
+    expect(summary).toContain("No cache contents");
   });
 });

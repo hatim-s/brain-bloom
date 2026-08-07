@@ -1,17 +1,17 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { inspectCacheArtifact, verifyCacheArtifact } from "./cache.ts";
-import { assertExecutionPolicy, validateCliDownloadFlags } from "./policy.ts";
+import {
+  ensureConfinedDirectory,
+  inspectConfinedPath,
+  safeWriteFile,
+  validateRelativePath,
+} from "./paths.ts";
+import { validateCliDownloadFlags } from "./policy.ts";
 import { createJsonReport, createMarkdownReport } from "./report.ts";
-import { runBenchmark } from "./runner.ts";
-import type {
-  BenchmarkCorpus,
-  BenchmarkQuestionSet,
-  CandidateConfiguration,
-  EmbeddingAdapterFactory,
-} from "./types.ts";
+import { preflightCandidateCaches, runBenchmark } from "./runner.ts";
+import type { EmbeddingAdapterFactory } from "./types.ts";
 import {
   validateBenchmarkFixtures,
   validateCandidateConfiguration,
@@ -21,7 +21,7 @@ type CliOptions = {
   run: boolean;
   allowDownloads: boolean;
   adapterModule?: string;
-  outputDirectory: string;
+  outputDirectoryRelative: string;
 };
 
 type AdapterModule = {
@@ -30,14 +30,18 @@ type AdapterModule = {
     | Promise<EmbeddingAdapterFactory>;
 };
 
+type DryRunMetadataInspector = typeof inspectConfinedPath;
+
 const benchmarkDirectory = path.dirname(fileURLToPath(import.meta.url));
+const CACHE_ROOT_RELATIVE = ".cache/local-embeddings";
+const REPORT_ROOT_RELATIVE = "benchmarks/local-embeddings/results";
 
 /** Parses the intentionally small dry-run-first command line. */
 function parseCliOptions(argv: string[]): CliOptions {
   const options: CliOptions = {
     run: false,
     allowDownloads: false,
-    outputDirectory: path.join(benchmarkDirectory, "results"),
+    outputDirectoryRelative: "latest",
   };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -55,9 +59,10 @@ function parseCliOptions(argv: string[]): CliOptions {
     } else if (argument === "--output-dir") {
       const value = argv[index + 1];
       if (!value || value.startsWith("--")) {
-        throw new Error("--output-dir requires a directory path");
+        throw new Error("--output-dir requires a relative directory path");
       }
-      options.outputDirectory = path.resolve(value);
+      validateRelativePath(value, "--output-dir");
+      options.outputDirectoryRelative = value;
       index += 1;
     } else {
       throw new Error(`Unknown argument: ${argument}`);
@@ -70,35 +75,44 @@ function parseCliOptions(argv: string[]): CliOptions {
   return options;
 }
 
-/** Reads a committed JSON fixture without a runtime validation dependency. */
-async function readJsonFixture<T>(filename: string): Promise<T> {
-  return JSON.parse(
-    await readFile(path.join(benchmarkDirectory, filename), "utf8")
-  ) as T;
+/** Parses fixture text with a stable actionable error before schema validation. */
+function parseJsonFixture(contents: string, filename: string): unknown {
+  try {
+    return JSON.parse(contents);
+  } catch {
+    throw new Error(`Fixture ${filename} is not valid JSON`);
+  }
 }
 
-/** Reports cache readiness without importing or executing any model adapter. */
+/** Reads JSON as unknown so callers must perform complete runtime validation. */
+async function readJsonFixture(filename: string): Promise<unknown> {
+  return parseJsonFixture(
+    await readFile(path.join(benchmarkDirectory, filename), "utf8"),
+    filename
+  );
+}
+
+/** Reports lstat-only cache readiness without opening or hashing artifact contents. */
 async function createDryRunSummary(
-  configuration: CandidateConfiguration
+  configurationInput: unknown,
+  workspaceRoot = process.cwd(),
+  inspectMetadata: DryRunMetadataInspector = inspectConfinedPath
 ): Promise<string> {
+  const configuration = validateCandidateConfiguration(configurationInput);
   const lines = [
     "Local embedding benchmark dry run",
-    "No model code was loaded and network downloads are denied.",
+    "No cache contents or model code were opened; network downloads are denied.",
     "",
   ];
   for (const candidate of configuration.candidates) {
-    const cachePath = path.resolve(process.cwd(), candidate.offlineCachePath);
-    let status = "missing";
-    try {
-      await access(cachePath);
-      const metadata = await inspectCacheArtifact(cachePath);
-      status =
-        metadata.checksum === candidate.artifactChecksum
-          ? `verified (${metadata.bytes} bytes)`
-          : `checksum mismatch (${metadata.checksum})`;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
+    const metadata = await inspectMetadata(
+      workspaceRoot,
+      CACHE_ROOT_RELATIVE,
+      candidate.offlineCachePath
+    );
+    const status = metadata.exists
+      ? `${metadata.kind} exists (entry metadata ${metadata.size} bytes; checksum not read)`
+      : "missing";
     lines.push(
       `- ${candidate.key}: ${candidate.modelId}@${candidate.revision}, ${candidate.dimensions}d, cache ${status}`
     );
@@ -106,31 +120,10 @@ async function createDryRunSummary(
   lines.push(
     "",
     "Execution requires --run --adapter-module <path>. A cache miss additionally requires --allow-downloads.",
+    "Content checksums are verified only during approved execution preflight.",
     "The harness never selects or activates a candidate."
   );
   return `${lines.join("\n")}\n`;
-}
-
-/** Verifies every present cache and denies misses before importing adapter code. */
-async function preflightExecutionCaches(
-  configuration: CandidateConfiguration,
-  cacheRoot: string,
-  allowDownloads: boolean
-): Promise<void> {
-  for (const candidate of configuration.candidates) {
-    const cachePath = path.resolve(cacheRoot, candidate.offlineCachePath);
-    let cacheExists = true;
-    try {
-      await access(cachePath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      cacheExists = false;
-    }
-    assertExecutionPolicy({ run: true, allowDownloads, cacheExists });
-    if (cacheExists) {
-      await verifyCacheArtifact(cachePath, candidate.artifactChecksum);
-    }
-  }
 }
 
 /** Loads the explicitly supplied adapter only after execution consent is valid. */
@@ -148,51 +141,61 @@ async function loadAdapterFactory(
   return imported.createEmbeddingAdapterFactory();
 }
 
-/** Validates fixtures, defaults to a no-side-effect plan, and writes only on --run. */
+/** Validates fixtures, defaults to metadata-only status, and writes safely on --run. */
 async function main(argv = process.argv.slice(2)): Promise<void> {
   const options = parseCliOptions(argv);
-  const configuration =
-    await readJsonFixture<CandidateConfiguration>("candidates.v1.json");
-  const corpus = await readJsonFixture<BenchmarkCorpus>("corpus.v1.json");
-  const questionSet =
-    await readJsonFixture<BenchmarkQuestionSet>("questions.v1.json");
-  validateCandidateConfiguration(configuration);
-  validateBenchmarkFixtures(corpus, questionSet);
+  const configuration = validateCandidateConfiguration(
+    await readJsonFixture("candidates.v1.json")
+  );
+  const fixtures = validateBenchmarkFixtures(
+    await readJsonFixture("corpus.v1.json"),
+    await readJsonFixture("questions.v1.json")
+  );
+  const workspaceRoot = process.cwd();
 
   if (!options.run) {
-    process.stdout.write(await createDryRunSummary(configuration));
+    process.stdout.write(
+      await createDryRunSummary(configuration, workspaceRoot)
+    );
     return;
   }
 
-  await preflightExecutionCaches(
+  // Byte verification happens before arbitrary adapter-module code is imported.
+  await preflightCandidateCaches({
     configuration,
-    process.cwd(),
-    options.allowDownloads
-  );
-  const report = await runBenchmark({
-    configuration,
-    corpus,
-    questionSet,
-    adapterFactory: await loadAdapterFactory(options.adapterModule!),
-    cacheRoot: process.cwd(),
+    workspaceRoot,
+    cacheRootRelative: CACHE_ROOT_RELATIVE,
     run: true,
     allowDownloads: options.allowDownloads,
   });
-  await mkdir(options.outputDirectory, { recursive: true });
+  const adapterModule = options.adapterModule;
+  if (!adapterModule)
+    throw new Error("Adapter module is required for execution");
+  const report = await runBenchmark({
+    configuration,
+    corpus: fixtures.corpus,
+    questionSet: fixtures.questionSet,
+    adapterFactory: await loadAdapterFactory(adapterModule),
+    workspaceRoot,
+    cacheRootRelative: CACHE_ROOT_RELATIVE,
+    run: true,
+    allowDownloads: options.allowDownloads,
+  });
+  const outputDirectory = await ensureConfinedDirectory(
+    workspaceRoot,
+    REPORT_ROOT_RELATIVE,
+    options.outputDirectoryRelative
+  );
   await Promise.all([
-    writeFile(
-      path.join(options.outputDirectory, "comparison.json"),
-      createJsonReport(report),
-      "utf8"
-    ),
-    writeFile(
-      path.join(options.outputDirectory, "comparison.md"),
-      createMarkdownReport(report),
-      "utf8"
+    safeWriteFile(outputDirectory, "comparison.json", createJsonReport(report)),
+    safeWriteFile(
+      outputDirectory,
+      "comparison.md",
+      createMarkdownReport(report)
     ),
   ]);
   process.stdout.write(
-    `Wrote comparison artifacts to ${options.outputDirectory}; no candidate was selected or activated.\n`
+    `Wrote comparison artifacts beneath ${REPORT_ROOT_RELATIVE}/${options.outputDirectoryRelative}; no candidate was selected or activated.\n`
   );
 }
 
@@ -209,10 +212,12 @@ if (invokedPath === import.meta.url) {
 }
 
 export {
+  CACHE_ROOT_RELATIVE,
   createDryRunSummary,
   loadAdapterFactory,
   main,
   parseCliOptions,
-  preflightExecutionCaches,
+  parseJsonFixture,
   readJsonFixture,
+  REPORT_ROOT_RELATIVE,
 };

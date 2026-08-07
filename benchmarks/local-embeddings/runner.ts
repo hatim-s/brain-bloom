@@ -1,19 +1,20 @@
-import { access } from "node:fs/promises";
 import os from "node:os";
-import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { verifyCacheArtifact } from "./cache.ts";
 import {
+  calculateLexicalBaseline,
+  calculateRandomExpectedRecall,
   calculateRecallMetrics,
+  createRecallAggregate,
   rankSegments,
-  recallAtDepth,
   summarizeLatencies,
 } from "./metrics.ts";
+import { ensureConfinedDirectory, inspectConfinedPath } from "./paths.ts";
 import { assertExecutionPolicy } from "./policy.ts";
 import type {
   BenchmarkClock,
   BenchmarkCorpus,
-  BenchmarkEnvironment,
   BenchmarkQuestionSet,
   BenchmarkReport,
   BudgetObservation,
@@ -21,6 +22,7 @@ import type {
   CandidateConfiguration,
   EmbeddingAdapter,
   EmbeddingAdapterFactory,
+  EmbeddingCandidate,
   RuntimeProbe,
 } from "./types.ts";
 import {
@@ -34,16 +36,23 @@ type BenchmarkRunOptions = {
   corpus: BenchmarkCorpus;
   questionSet: BenchmarkQuestionSet;
   adapterFactory: EmbeddingAdapterFactory;
-  cacheRoot: string;
+  workspaceRoot: string;
+  cacheRootRelative: string;
   run: boolean;
   allowDownloads: boolean;
   clock?: BenchmarkClock;
   runtimeProbe?: RuntimeProbe;
 };
 
+type CachePreflight = {
+  candidate: EmbeddingCandidate;
+  cachePath: string;
+  cacheWasPresent: boolean;
+};
+
 const systemClock: BenchmarkClock = { nowMs: () => performance.now() };
 const systemRuntimeProbe: RuntimeProbe = {
-  environment: (): BenchmarkEnvironment => ({
+  environment: () => ({
     platform: process.platform,
     architecture: process.arch,
     nodeVersion: process.version,
@@ -51,17 +60,27 @@ const systemRuntimeProbe: RuntimeProbe = {
     cpuCount: os.cpus().length,
   }),
   residentMemoryBytes: () => process.memoryUsage().rss,
+  measurePeak: async (operation, sampleIntervalMs) => {
+    let peakResidentMemoryBytes = process.memoryUsage().rss;
+    const timer = setInterval(() => {
+      peakResidentMemoryBytes = Math.max(
+        peakResidentMemoryBytes,
+        process.memoryUsage().rss
+      );
+    }, sampleIntervalMs);
+    timer.unref();
+    try {
+      const result = await operation();
+      peakResidentMemoryBytes = Math.max(
+        peakResidentMemoryBytes,
+        process.memoryUsage().rss
+      );
+      return { result, peakResidentMemoryBytes };
+    } finally {
+      clearInterval(timer);
+    }
+  },
 };
-
-/** Returns whether the declared cache path currently exists. */
-async function pathExists(candidatePath: string): Promise<boolean> {
-  try {
-    await access(candidatePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /** Validates adapter output cardinality, dimensions, finiteness, and norm. */
 function validateEmbeddingBatch(
@@ -98,52 +117,168 @@ function lowerBudget(budget: number, observed: number): BudgetObservation {
   };
 }
 
-/** Ensures adapter cleanup runs even when a candidate is rejected. */
-async function closeAdapter(
-  adapter: EmbeddingAdapter | undefined
-): Promise<void> {
-  await adapter?.close?.();
+/** Verifies adapter, runtime, and preprocessing identity before model loading. */
+function validateAdapterIdentity(
+  adapter: EmbeddingAdapter,
+  candidate: EmbeddingCandidate
+): void {
+  const expected = {
+    adapter: candidate.adapter,
+    runtime: candidate.runtime,
+    preprocessing: candidate.preprocessing,
+  };
+  if (!isDeepStrictEqual(adapter.identity, expected)) {
+    throw new Error(`Adapter identity mismatch for ${candidate.key}`);
+  }
+}
+
+/** Checks every configured cache without importing or constructing an adapter. */
+async function preflightCandidateCaches(options: {
+  configuration: CandidateConfiguration;
+  workspaceRoot: string;
+  cacheRootRelative: string;
+  run: boolean;
+  allowDownloads: boolean;
+}): Promise<CachePreflight[]> {
+  const configuration = validateCandidateConfiguration(options.configuration);
+  const results: CachePreflight[] = [];
+  for (const candidate of configuration.candidates) {
+    const inspection = await inspectConfinedPath(
+      options.workspaceRoot,
+      options.cacheRootRelative,
+      candidate.offlineCachePath
+    );
+    assertExecutionPolicy({
+      run: options.run,
+      allowDownloads: options.allowDownloads,
+      cacheExists: inspection.exists,
+    });
+    if (inspection.exists) {
+      if (inspection.kind !== "file" && inspection.kind !== "directory") {
+        throw new Error(
+          `Cache path has an unsupported type: ${inspection.path}`
+        );
+      }
+      await verifyCacheArtifact(
+        inspection.path,
+        candidate.artifactChecksum,
+        configuration.cacheLimits
+      );
+    }
+    results.push({
+      candidate,
+      cachePath: inspection.path,
+      cacheWasPresent: inspection.exists,
+    });
+  }
+  return results;
+}
+
+/** Tracks peak RSS around one operation and preserves its return value. */
+async function measureOperation<T>(
+  runtimeProbe: RuntimeProbe,
+  operation: () => Promise<T>,
+  sampleIntervalMs: number,
+  observedPeaks: number[]
+): Promise<T> {
+  const measurement = await runtimeProbe.measurePeak(
+    operation,
+    sampleIntervalMs
+  );
+  observedPeaks.push(measurement.peakResidentMemoryBytes);
+  return measurement.result;
 }
 
 /** Benchmarks one pinned candidate without comparing or selecting it. */
 async function benchmarkCandidate(
   options: BenchmarkRunOptions,
-  candidateIndex: number,
+  preflight: CachePreflight,
   clock: BenchmarkClock,
   runtimeProbe: RuntimeProbe
 ): Promise<CandidateBenchmarkResult> {
   const { configuration, corpus, questionSet, adapterFactory } = options;
-  const candidate = configuration.candidates[candidateIndex];
-  const cachePath = path.resolve(options.cacheRoot, candidate.offlineCachePath);
-  const cacheWasPresent = await pathExists(cachePath);
-  assertExecutionPolicy({
-    run: options.run,
-    allowDownloads: options.allowDownloads,
-    cacheExists: cacheWasPresent,
-  });
-
-  if (cacheWasPresent) {
-    await verifyCacheArtifact(cachePath, candidate.artifactChecksum);
+  const { candidate, cachePath, cacheWasPresent } = preflight;
+  if (!cacheWasPresent) {
+    await ensureConfinedDirectory(
+      options.workspaceRoot,
+      options.cacheRootRelative,
+      candidate.offlineCachePath
+    );
   }
 
   const memoryBefore = runtimeProbe.residentMemoryBytes();
-  const loadStart = clock.nowMs();
+  const observedPeaks = [memoryBefore];
+  const sampleInterval = configuration.measurement.memorySampleIntervalMs;
   let adapter: EmbeddingAdapter | undefined;
   try {
-    adapter = await adapterFactory.create(candidate, {
-      allowDownloads: options.allowDownloads,
-      offlineCachePath: cachePath,
-    });
+    adapter = await measureOperation(
+      runtimeProbe,
+      () =>
+        adapterFactory.create(candidate, {
+          allowDownloads: options.allowDownloads,
+          offlineCachePath: cachePath,
+        }),
+      sampleInterval,
+      observedPeaks
+    );
+    validateAdapterIdentity(adapter, candidate);
+
+    const loadStart = clock.nowMs();
+    await measureOperation(
+      runtimeProbe,
+      () => adapter!.load(),
+      sampleInterval,
+      observedPeaks
+    );
     const coldLoadMs = clock.nowMs() - loadStart;
 
-    // A permitted adapter may populate a missing cache; verify it before use.
     const cacheMetadata = await verifyCacheArtifact(
       cachePath,
-      candidate.artifactChecksum
+      candidate.artifactChecksum,
+      configuration.cacheLimits
     );
+
+    // Query zero is measured once as the cold query and never reused in warm timing.
+    const firstQuestion = questionSet.questions[0];
+    const coldQueryStart = clock.nowMs();
+    const coldQueryVectors = await measureOperation(
+      runtimeProbe,
+      () => adapter!.embed([firstQuestion.text], "query"),
+      sampleInterval,
+      observedPeaks
+    );
+    const coldQueryMs = clock.nowMs() - coldQueryStart;
+    validateEmbeddingBatch(
+      coldQueryVectors,
+      1,
+      candidate.dimensions,
+      `${candidate.key} cold query embedding`
+    );
+
+    // Eager role-specific calls force lazy document/query initialization out of timings.
+    await measureOperation(
+      runtimeProbe,
+      () => adapter!.embed([corpus.segments[0].text], "document"),
+      sampleInterval,
+      observedPeaks
+    );
+    await measureOperation(
+      runtimeProbe,
+      () => adapter!.embed([questionSet.questions[1].text], "query"),
+      sampleInterval,
+      observedPeaks
+    );
+
     const ingestionStart = clock.nowMs();
-    const segmentVectors = await adapter.embed(
-      corpus.segments.map((segment) => segment.text)
+    const segmentVectors = await measureOperation(
+      runtimeProbe,
+      () =>
+        adapter!.embed(
+          corpus.segments.map((segment) => segment.text),
+          "document"
+        ),
+      sampleInterval,
+      observedPeaks
     );
     const ingestionElapsedMs = clock.nowMs() - ingestionStart;
     validateEmbeddingBatch(
@@ -153,76 +288,73 @@ async function benchmarkCandidate(
       `${candidate.key} corpus embedding`
     );
 
-    const firstQuestion = questionSet.questions[0];
-    const coldQueryStart = clock.nowMs();
-    const coldQueryVectors = await adapter.embed([firstQuestion.text]);
-    const coldQueryMs = clock.nowMs() - coldQueryStart;
-    validateEmbeddingBatch(
-      coldQueryVectors,
-      1,
-      candidate.dimensions,
-      `${candidate.key} cold query embedding`
-    );
-
-    const rankings = new Map<string, string[]>();
+    const vectorSegments = corpus.segments.map((segment, index) => ({
+      id: segment.id,
+      vector: segmentVectors[index],
+    }));
+    const rankings = new Map<string, string[]>([
+      [firstQuestion.id, rankSegments(coldQueryVectors[0], vectorSegments)],
+    ]);
     const warmLatencies: number[] = [];
-    for (const question of questionSet.questions) {
-      const queryStart = clock.nowMs();
-      const queryVectors = await adapter.embed([question.text]);
-      warmLatencies.push(clock.nowMs() - queryStart);
-      validateEmbeddingBatch(
-        queryVectors,
-        1,
-        candidate.dimensions,
-        `${candidate.key} query ${question.id}`
-      );
-      rankings.set(
-        question.id,
-        rankSegments(
-          queryVectors[0],
-          corpus.segments.map((segment, index) => ({
-            id: segment.id,
-            vector: segmentVectors[index],
-          }))
-        )
-      );
+    const warmQuestions = questionSet.questions.slice(1);
+    for (
+      let pass = 0;
+      pass < configuration.measurement.warmQueryPasses;
+      pass += 1
+    ) {
+      const offset = pass % warmQuestions.length;
+      const orderedQuestions = [
+        ...warmQuestions.slice(offset),
+        ...warmQuestions.slice(0, offset),
+      ];
+      for (const question of orderedQuestions) {
+        const queryStart = clock.nowMs();
+        const queryVectors = await measureOperation(
+          runtimeProbe,
+          () => adapter!.embed([question.text], "query"),
+          sampleInterval,
+          observedPeaks
+        );
+        warmLatencies.push(clock.nowMs() - queryStart);
+        validateEmbeddingBatch(
+          queryVectors,
+          1,
+          candidate.dimensions,
+          `${candidate.key} query ${question.id}`
+        );
+        if (!rankings.has(question.id)) {
+          rankings.set(
+            question.id,
+            rankSegments(queryVectors[0], vectorSegments)
+          );
+        }
+      }
     }
 
     const recall = calculateRecallMetrics(questionSet.questions, rankings);
     const warmQuery = summarizeLatencies(warmLatencies);
     const ingestionRate =
       ingestionElapsedMs === 0
-        ? Number.POSITIVE_INFINITY
+        ? 0
         : corpus.segments.length / (ingestionElapsedMs / 1_000);
     const memoryAfter = runtimeProbe.residentMemoryBytes();
-    const memoryDelta = Math.max(0, memoryAfter - memoryBefore);
-    const memoryMb = memoryDelta / (1024 * 1024);
+    const memoryPeak = Math.max(memoryAfter, ...observedPeaks);
+    const memoryMeasurement =
+      memoryAfter < memoryBefore ? "invalid-after-below-before" : "valid";
+    const memoryPeakMb = (memoryPeak - memoryBefore) / (1024 * 1024);
     const languageMetrics = Object.fromEntries(
       corpus.multilingual.languages.map((language) => {
         const languageQuestions = questionSet.questions.filter(
           (question) => question.language === language
         );
-        const recallForDepth = (depth: 5 | 10 | 20) => {
-          if (languageQuestions.length === 0) return 0;
-          return (
-            languageQuestions.reduce((sum, question) => {
-              const ranking = rankings.get(question.id) ?? [];
-              return (
-                sum + recallAtDepth(question.relevantSegmentIds, ranking, depth)
-              );
-            }, 0) / languageQuestions.length
-          );
-        };
-        return [
-          language,
-          {
-            "5": recallForDepth(5),
-            "10": recallForDepth(10),
-            "20": recallForDepth(20),
-          },
-        ];
+        return [language, createRecallAggregate(languageQuestions, rankings)];
       })
     );
+    const memoryBudget = upperBudget(
+      configuration.budgets.maxResidentMemoryMb,
+      memoryPeakMb
+    );
+    if (memoryMeasurement !== "valid") memoryBudget.status = "invalid";
 
     return {
       candidate,
@@ -240,8 +372,9 @@ async function benchmarkCandidate(
       },
       resources: {
         residentMemoryBeforeBytes: memoryBefore,
+        residentMemoryPeakBytes: memoryPeak,
         residentMemoryAfterBytes: memoryAfter,
-        residentMemoryDeltaBytes: memoryDelta,
+        residentMemoryMeasurement: memoryMeasurement,
         cacheBytes: cacheMetadata.bytes,
       },
       budgets: {
@@ -257,10 +390,7 @@ async function benchmarkCandidate(
           configuration.budgets.minIngestionSegmentsPerSecond,
           ingestionRate
         ),
-        residentMemoryMb: upperBudget(
-          configuration.budgets.maxResidentMemoryMb,
-          memoryMb
-        ),
+        residentMemoryMb: memoryBudget,
         cacheBytes: upperBudget(
           configuration.budgets.maxCacheBytes,
           cacheMetadata.bytes
@@ -272,7 +402,7 @@ async function benchmarkCandidate(
       },
     };
   } finally {
-    await closeAdapter(adapter);
+    await adapter?.close?.();
   }
 }
 
@@ -280,27 +410,56 @@ async function benchmarkCandidate(
 async function runBenchmark(
   options: BenchmarkRunOptions
 ): Promise<BenchmarkReport> {
-  validateCandidateConfiguration(options.configuration);
-  validateBenchmarkFixtures(options.corpus, options.questionSet);
+  const configuration = validateCandidateConfiguration(options.configuration);
+  const fixtures = validateBenchmarkFixtures(
+    options.corpus,
+    options.questionSet
+  );
+  const normalizedOptions = {
+    ...options,
+    configuration,
+    corpus: fixtures.corpus,
+    questionSet: fixtures.questionSet,
+  };
   const clock = options.clock ?? systemClock;
   const runtimeProbe = options.runtimeProbe ?? systemRuntimeProbe;
+  const preflights = await preflightCandidateCaches(normalizedOptions);
   const results: CandidateBenchmarkResult[] = [];
-  for (
-    let index = 0;
-    index < options.configuration.candidates.length;
-    index += 1
-  ) {
-    results.push(await benchmarkCandidate(options, index, clock, runtimeProbe));
+  for (const preflight of preflights) {
+    results.push(
+      await benchmarkCandidate(
+        normalizedOptions,
+        preflight,
+        clock,
+        runtimeProbe
+      )
+    );
   }
-
   return {
     schemaVersion: 1,
     decision: "not-selected",
     environment: runtimeProbe.environment(),
     fixtureVersions: { candidates: 1, corpus: 1, questions: 1 },
-    budgets: options.configuration.budgets,
+    budgets: configuration.budgets,
+    cacheLimits: configuration.cacheLimits,
+    measurement: configuration.measurement,
+    baselines: {
+      randomExpected: calculateRandomExpectedRecall(
+        fixtures.corpus.segments.length
+      ),
+      lexical: calculateLexicalBaseline(
+        fixtures.questionSet.questions,
+        fixtures.corpus.segments
+      ),
+    },
     results,
   };
 }
 
-export { type BenchmarkRunOptions, runBenchmark, validateEmbeddingBatch };
+export {
+  type BenchmarkRunOptions,
+  preflightCandidateCaches,
+  runBenchmark,
+  validateAdapterIdentity,
+  validateEmbeddingBatch,
+};
