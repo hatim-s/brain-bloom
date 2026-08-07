@@ -27,7 +27,9 @@ reported origin is the harness's session flag. Only then does it call
 `{"type":"chatgptDeviceCode"}`. It displays the verification URL and one-time
 user code, waits for `account/login/completed`, observes `account/updated`, and
 captures an allowlisted account summary. Email values, tokens, raw provider
-errors, stderr, and protocol messages are never included in output.
+errors, stderr, and protocol messages are never included in output. Account
+strings are reduced to known account-type discriminants and boolean presence
+flags; plan, auth-mode, email, and credential-source values are never emitted.
 
 To prove logout survives an app-server restart in that same isolated home:
 
@@ -62,4 +64,5 @@ Ambient OpenAI, Anthropic, and cloud-provider API-key variables are therefore
 not inherited as fallback authentication. Output and pending protocol frames
 are bounded, provider errors are replaced with stable summaries, and
 cancellation terminates the complete provider process tree (POSIX process group
-or Windows `taskkill /T`).
+or Windows `taskkill /T`). A deadline remains authoritative even when a child
+handles termination, emits successful JSON, or exits with status zero.

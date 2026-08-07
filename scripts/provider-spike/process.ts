@@ -24,6 +24,7 @@ type ProcessSpec = {
 type ProcessResult = ProcessExit & {
   stdout: string;
   stderr: string;
+  timedOut: boolean;
 };
 
 type KillProcess = (pid: number, signal: NodeJS.Signals) => void;
@@ -109,29 +110,56 @@ class NodeCommandRunner implements CommandRunner {
   async run(spec: ProcessSpec): Promise<ProcessResult> {
     assertSignalNotAborted(spec.signal);
 
-    const child = this.spawnProcess(spec.command, spec.args, {
-      cwd: spec.cwd,
-      env: spec.env as NodeJS.ProcessEnv,
-      detached: process.platform !== "win32",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    // No credential is ever written to child stdin; close it immediately so a
-    // CLI cannot wait for interactive input or inherit the caller's stream.
-    child.stdin.end();
+    let abortedDuringSpawn = false;
+    const observeSpawnAbort = () => {
+      abortedDuringSpawn = true;
+    };
+    // Install a sentinel before spawn and keep it until collection installs
+    // its own handler, closing both sides of the check-to-listener race.
+    spec.signal?.addEventListener("abort", observeSpawnAbort, { once: true });
+    if (spec.signal?.aborted) {
+      spec.signal.removeEventListener("abort", observeSpawnAbort);
+      throw new Error("Provider probe cancelled");
+    }
 
-    return collectProcessResult(child, spec);
+    try {
+      const child = this.spawnProcess(spec.command, spec.args, {
+        cwd: spec.cwd,
+        env: spec.env as NodeJS.ProcessEnv,
+        detached: process.platform !== "win32",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      // No credential is ever written to child stdin; close it immediately so
+      // a CLI cannot wait for interactive input or inherit the caller's stream.
+      child.stdin.end();
+
+      // collectProcessResult attaches its abort listener synchronously before
+      // its first await. Its immediate recheck settles a child born during the
+      // spawn callback even though AbortSignal does not replay past events.
+      const collected = collectProcessResult(child, spec, abortedDuringSpawn);
+      spec.signal?.removeEventListener("abort", observeSpawnAbort);
+      const result = await collected;
+      if (result.timedOut) {
+        throw new Error("Provider probe timed out");
+      }
+      return result;
+    } finally {
+      spec.signal?.removeEventListener("abort", observeSpawnAbort);
+    }
   }
 }
 
 /** Collects only a bounded amount of output and owns all cleanup paths. */
 async function collectProcessResult(
   child: ChildProcessWithoutNullStreams,
-  spec: ProcessSpec
+  spec: ProcessSpec,
+  abortedBeforeCollection = false
 ): Promise<ProcessResult> {
   let stdout = "";
   let stderr = "";
   let outputBytes = 0;
   let terminated = false;
+  let timedOut = false;
   let forceKillTimeout: NodeJS.Timeout | undefined;
 
   /** Starts idempotent graceful termination for this process group. */
@@ -166,10 +194,13 @@ async function collectProcessResult(
   child.stdout.on("data", (chunk: Buffer) => append("stdout", chunk));
   child.stderr.on("data", (chunk: Buffer) => append("stderr", chunk));
 
-  const timeout = setTimeout(terminate, spec.timeoutMs);
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    terminate();
+  }, spec.timeoutMs);
   const abort = () => terminate();
   spec.signal?.addEventListener("abort", abort, { once: true });
-  if (spec.signal?.aborted) {
+  if (abortedBeforeCollection || spec.signal?.aborted) {
     // Close the small race between the pre-spawn check and listener install.
     terminate();
   }
@@ -194,6 +225,7 @@ async function collectProcessResult(
       ...exit,
       stdout: stdout.slice(0, MAX_SAFE_TEXT_LENGTH * 8),
       stderr: stderr.slice(0, MAX_SAFE_TEXT_LENGTH * 8),
+      timedOut,
     };
   } finally {
     clearTimeout(timeout);

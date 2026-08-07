@@ -1,3 +1,7 @@
+import {
+  type ChildProcessWithoutNullStreams,
+  spawn as nodeSpawn,
+} from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,6 +30,7 @@ import {
   runCodexLogoutRestartProbe,
   StdioCodexProbeSession,
   summarizeAccount,
+  summarizeAccountUpdate,
 } from "./codex-app-server.ts";
 import {
   type CommandRunner,
@@ -84,7 +89,7 @@ class FakeCodexSession implements CodexProbeSession {
 
   async waitForAccountUpdated() {
     this.calls.push("waitForAccountUpdated");
-    return { authMode: "chatgpt", planType: "plus" };
+    return { authModePresent: true, planTypePresent: true };
   }
 
   async logout(): Promise<void> {
@@ -240,6 +245,61 @@ describe("provider spike security", () => {
 
     await expect(run).rejects.toThrow("cancelled");
   });
+
+  it("terminates a child when abort fires inside the spawn callback", async () => {
+    const controller = new AbortController();
+    const spawnDuringAbort = (
+      command: string,
+      args: string[],
+      options: Parameters<typeof nodeSpawn>[2]
+    ): ChildProcessWithoutNullStreams => {
+      const child = nodeSpawn(
+        command,
+        args,
+        options
+      ) as ChildProcessWithoutNullStreams;
+      controller.abort();
+      return child;
+    };
+
+    const run = new NodeCommandRunner(spawnDuringAbort).run({
+      command: process.execPath,
+      args: ["-e", "setInterval(() => {}, 1000)"],
+      cwd: process.cwd(),
+      env: createIsolatedEnvironment(process.env, {}),
+      signal: controller.signal,
+      timeoutMs: 5_000,
+      maxOutputBytes: 1_024,
+    });
+
+    await expect(run).rejects.toThrow("Provider probe cancelled");
+  });
+
+  it("fails closed when a timed-out child handles SIGTERM and exits zero", async () => {
+    const success = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+    });
+    const script = `
+      process.on("SIGTERM", () => {
+        process.stdout.write(${JSON.stringify(success)});
+        process.exit(0);
+      });
+      setInterval(() => {}, 1000);
+    `;
+
+    const run = new NodeCommandRunner().run({
+      command: process.execPath,
+      args: ["-e", script],
+      cwd: process.cwd(),
+      env: createIsolatedEnvironment(process.env, {}),
+      timeoutMs: 100,
+      maxOutputBytes: 4_096,
+    });
+
+    await expect(run).rejects.toThrow("Provider probe timed out");
+  });
 });
 
 describe("Codex app-server probes", () => {
@@ -299,6 +359,27 @@ describe("Codex app-server probes", () => {
     expect(spawnProcess).not.toHaveBeenCalled();
   });
 
+  it("settles a child when abort fires inside the app-server spawn callback", async () => {
+    const controller = new AbortController();
+    const child = createFakeCodexChild();
+    const spawnProcess = vi.fn(() => {
+      controller.abort();
+      return child;
+    });
+
+    const session = new StdioCodexProbeSession(
+      "/private/tmp/codex-spawn-abort",
+      controller.signal,
+      {},
+      "codex",
+      spawnProcess as never
+    );
+
+    await session.close();
+    expect(controller.signal.aborted).toBe(true);
+    expect(child.stdin.writableEnded).toBe(true);
+  });
+
   it("uses a stable error when spawning the app server fails", () => {
     const spawnProcess = vi.fn(() => {
       throw new Error(
@@ -350,10 +431,9 @@ describe("Codex app-server probes", () => {
     ]);
     expect(result.finalAccount).toEqual({
       type: "chatgpt",
-      planType: "plus",
+      planTypePresent: true,
       emailPresent: true,
       requiresOpenaiAuth: true,
-      credentialSource: null,
     });
     expect(JSON.stringify(result)).not.toContain("operator@example.com");
     expect(session.calls.at(-1)).toBe("close");
@@ -419,6 +499,47 @@ describe("Codex app-server probes", () => {
     expect(JSON.stringify(summarizeAccount(CHATGPT_ACCOUNT))).not.toContain(
       "operator@example.com"
     );
+  });
+
+  it("omits arbitrary strings from account and update metadata", () => {
+    const canary = "operator@example.com opaque-account-token-5f8d0c61";
+    const chatgptSummary = summarizeAccount({
+      account: { type: "chatgpt", email: canary, planType: canary },
+      requiresOpenaiAuth: true,
+    });
+    const malformedSummary = summarizeAccount({
+      account: { type: canary, credentialSource: canary },
+      requiresOpenaiAuth: canary,
+    });
+    const updateSummary = summarizeAccountUpdate({
+      authMode: canary,
+      planType: canary,
+      error: canary,
+    });
+    const serialized = JSON.stringify({
+      chatgptSummary,
+      malformedSummary,
+      updateSummary,
+    });
+
+    expect(chatgptSummary).toEqual({
+      type: "chatgpt",
+      planTypePresent: true,
+      emailPresent: true,
+      requiresOpenaiAuth: true,
+    });
+    expect(malformedSummary).toEqual({
+      type: null,
+      planTypePresent: false,
+      emailPresent: false,
+      requiresOpenaiAuth: false,
+    });
+    expect(updateSummary).toEqual({
+      authModePresent: true,
+      planTypePresent: true,
+    });
+    expect(serialized).not.toContain(canary);
+    expect(serialized).not.toContain("operator@example.com");
   });
 
   it("never reflects raw RPC messages containing emails or opaque credentials", () => {
@@ -489,6 +610,7 @@ describe("Claude setup-token probe", () => {
     const runner = new FakeCommandRunner({
       code: 0,
       signal: null,
+      timedOut: false,
       stdout: JSON.stringify({
         type: "result",
         subtype: "success",
@@ -535,6 +657,7 @@ describe("Claude setup-token probe", () => {
     const runner = new FakeCommandRunner({
       code: 1,
       signal: null,
+      timedOut: false,
       stdout: "",
       stderr: `authentication failed for ${token}`,
     });
@@ -566,6 +689,25 @@ describe("Claude setup-token probe", () => {
     expect((failure as Error).message).not.toContain("operator@example.com");
     expect((failure as Error).message).not.toContain(
       "process-token-canary-3abf0245480a"
+    );
+  });
+
+  it("rejects successful JSON when a runner marks the process timed out", async () => {
+    const runner = new FakeCommandRunner({
+      code: 0,
+      signal: null,
+      timedOut: true,
+      stdout: JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+      }),
+      stderr: "",
+    });
+    const adapter = new ClaudeCliValidationAdapter(runner);
+
+    await expect(adapter.validate("valid-in-memory-token")).rejects.toThrow(
+      "Claude setup-token validation timed out"
     );
   });
 

@@ -50,11 +50,10 @@ type AccountReadResult = {
 };
 
 type SafeAccountMetadata = {
-  type: string | null;
-  planType: string | null;
+  type: "apiKey" | "chatgpt" | "amazonBedrock" | null;
+  planTypePresent: boolean;
   emailPresent: boolean;
   requiresOpenaiAuth: boolean;
-  credentialSource: string | null;
 };
 
 type DeviceCodeCeremony = {
@@ -68,8 +67,8 @@ type LoginCompleted = {
 };
 
 type AccountUpdated = {
-  authMode: string | null;
-  planType: string | null;
+  authModePresent: boolean;
+  planTypePresent: boolean;
 };
 
 type CodexDeviceProbeResult = {
@@ -208,24 +207,34 @@ function createBoundedLineReader(
   return createInterface({ input: limiter });
 }
 
-/** Reduces an account response to non-identifying provider metadata. */
-function summarizeAccount(account: AccountReadResult): SafeAccountMetadata {
-  const details = account.account;
+/** Reduces an untrusted account response to non-identifying metadata. */
+function summarizeAccount(account: unknown): SafeAccountMetadata {
+  const envelope = isRecord(account) ? account : {};
+  const details = isRecord(envelope.account) ? envelope.account : null;
+  const type =
+    details?.type === "apiKey" ||
+    details?.type === "chatgpt" ||
+    details?.type === "amazonBedrock"
+      ? details.type
+      : null;
 
   return {
-    type: details?.type ?? null,
-    planType: details?.type === "chatgpt" ? details.planType : null,
-    emailPresent: details?.type === "chatgpt" && details.email !== null,
-    requiresOpenaiAuth: account.requiresOpenaiAuth,
-    credentialSource:
-      details?.type === "amazonBedrock"
-        ? (details.credentialSource ??
-          (details.usesCodexManagedCredentials === undefined
-            ? null
-            : details.usesCodexManagedCredentials
-              ? "codexManaged"
-              : "awsManaged"))
-        : null,
+    type,
+    // Presence booleans preserve useful proof metadata without reflecting
+    // provider-controlled plan, email, or credential-source strings.
+    planTypePresent:
+      type === "chatgpt" && typeof details?.planType === "string",
+    emailPresent: type === "chatgpt" && typeof details?.email === "string",
+    requiresOpenaiAuth: envelope.requiresOpenaiAuth === true,
+  };
+}
+
+/** Reduces an untrusted account notification to string-presence booleans. */
+function summarizeAccountUpdate(value: unknown): AccountUpdated {
+  const params = isRecord(value) ? value : {};
+  return {
+    authModePresent: typeof params.authMode === "string",
+    planTypePresent: typeof params.planType === "string",
   };
 }
 
@@ -263,6 +272,20 @@ class StdioCodexProbeSession implements CodexProbeSession {
     spawnProcess: SpawnCodexProcess = spawn as SpawnCodexProcess
   ) {
     assertSignalNotAborted(signal);
+    this.abortSignal = signal;
+    this.abortHandler = () =>
+      void this.shutdown(new Error("Provider probe cancelled"));
+    let abortedDuringSetup = false;
+    const observeSetupAbort = () => {
+      abortedDuringSetup = true;
+    };
+    // Observe cancellation before spawn, then hand off to the session handler
+    // only after every transport field needed by shutdown has been initialized.
+    signal?.addEventListener("abort", observeSetupAbort, { once: true });
+    if (signal?.aborted) {
+      signal.removeEventListener("abort", observeSetupAbort);
+      throw new Error("Provider probe cancelled");
+    }
     try {
       this.child = spawnProcess(command, [...CODEX_APP_SERVER_ARGS], {
         cwd: codexHome,
@@ -273,11 +296,9 @@ class StdioCodexProbeSession implements CodexProbeSession {
         stdio: ["pipe", "pipe", "pipe"],
       });
     } catch {
+      signal?.removeEventListener("abort", observeSetupAbort);
       throw new Error("Codex app-server could not start");
     }
-    this.abortSignal = signal;
-    this.abortHandler = () =>
-      void this.shutdown(new Error("Provider probe cancelled"));
     this.exited = new Promise((resolve) => this.child.once("close", resolve));
     this.lines = createBoundedLineReader(
       this.child.stdout,
@@ -306,6 +327,10 @@ class StdioCodexProbeSession implements CodexProbeSession {
       }
     });
     signal?.addEventListener("abort", this.abortHandler, { once: true });
+    signal?.removeEventListener("abort", observeSetupAbort);
+    if (abortedDuringSetup || signal?.aborted) {
+      this.abortHandler();
+    }
   }
 
   /** Performs the required initialize request then initialized notification. */
@@ -382,10 +407,7 @@ class StdioCodexProbeSession implements CodexProbeSession {
         timeoutMs
       )) as Record<string, unknown>;
 
-      return {
-        authMode: typeof params.authMode === "string" ? params.authMode : null,
-        planType: typeof params.planType === "string" ? params.planType : null,
-      };
+      return summarizeAccountUpdate(params);
     } catch (error) {
       if (error instanceof Error && error.message.includes("Timed out")) {
         return null;
@@ -698,4 +720,5 @@ export {
   StdioCodexProbeSession,
   StdioCodexProbeSessionFactory,
   summarizeAccount,
+  summarizeAccountUpdate,
 };

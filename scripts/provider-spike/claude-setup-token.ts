@@ -206,6 +206,10 @@ function validateToken(input: string): string {
 
 /** Extracts an allowlisted result summary and discards all model content. */
 function parseClaudeResult(result: ProcessResult): ClaudeProbeMetadata {
+  if (result.timedOut) {
+    throw new Error("Claude setup-token validation timed out");
+  }
+
   if (result.code !== 0) {
     throw new Error("Claude setup-token validation failed");
   }
