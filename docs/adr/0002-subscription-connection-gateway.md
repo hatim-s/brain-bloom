@@ -66,6 +66,23 @@ the asserted owner and provider and that the requested operation is allowed.
 It must not accept caller-supplied commands, provider home paths, base URLs,
 arbitrary environment variables, or arbitrary model endpoints.
 
+Personal-beta access is default-deny. Next.js and every server-side connection
+entry point must check the authenticated Clerk subject against a
+server-controlled allowlist before creating connection metadata, issuing an
+internal assertion, contacting the gateway, or allowing any connection begin,
+poll, validate, select, revoke, delete, or execute operation. An absent,
+unavailable, empty, or non-matching allowlist denies the request; browser input
+and Convex client data cannot add or override allowed subjects.
+
+Connection endpoints also enforce endpoint-specific request-rate limits that
+are separate from execution concurrency and queue limits. Begin, poll,
+validate, select, revoke, delete, and execute requests consume bounded
+per-owner and global budgets, including rejected attempts where an owner is
+known. Limits are defined in server-owned policy, return stable secret-free
+errors, and fail closed when the rate-limit state is unavailable. Polling may
+have a different finite budget from credential submission or execution, but no
+connection endpoint is unlimited.
+
 ### Internal request authentication
 
 Next.js will authenticate each gateway request with a versioned signed internal
@@ -99,6 +116,14 @@ blocked until maintainers recheck the then-current Anthropic terms and official
 Agent SDK authentication documentation and explicitly accept the personal,
 allowlisted v1 ceremony. The gateway must not automate browser credentials,
 cookies, private OAuth clients, or CLI screen scraping.
+
+If the Claude ceremony is approved, its Next.js credential-intake endpoint
+must reject an absent, malformed, cross-site, or oversized request before the
+token is forwarded. It enforces a finite server-owned body-size limit plus both
+CSRF-token and same-origin `Origin` validation, then forwards the setup token
+once, in memory, directly to the gateway. The token is never reflected in a
+response, sent to analytics, or persisted by Next.js or Convex, including when
+validation fails.
 
 There is no API-key fallback and no fallback to the app server operator's
 Claude token or Codex login. A missing, expired, revoked, deleted, or invalid
@@ -165,6 +190,18 @@ timestamps, last validation time, and a stable last error code. Owner-only
 queries return display metadata, never secret material. Mutations derive the
 owner from Clerk authorization rather than accepting a client-supplied owner.
 
+Owner-facing mutations may create a server-derived `pending` record, choose a
+default connection, request validation, or request revocation/deletion. They
+cannot supply or directly write provider-validated lifecycle status,
+`gatewayCredentialId`, provider account or plan hints, validation timestamps,
+or provider-derived error fields. Transitions from `pending` to `connected`,
+`error`, or `expired`, later provider-driven status changes, and final
+revocation/deletion outcomes occur only through a server-only reconciliation
+path after gateway-authenticated evidence. That evidence must bind the owner,
+connection, provider, request, and allowed transition; stale, duplicated, or
+mismatched evidence is rejected. A client request may start a lifecycle action,
+but it is never evidence that provider validation or cleanup succeeded.
+
 Convex must never store plaintext provider tokens, serialized provider homes,
 wrapped or unwrapped data keys, gateway encryption keys, internal assertion
 signing keys, or raw provider error output. The opaque credential identifier is
@@ -195,6 +232,19 @@ these invariants:
    complete process tree can be cancelled deterministically.
 10. Neither missing connection state nor gateway failure triggers an API-key or
     operator-login fallback.
+11. Personal-beta connection creation and every lifecycle or execution path
+    require a server-controlled Clerk-subject allowlist match and otherwise
+    deny before metadata, assertion, or gateway side effects.
+12. Every connection endpoint has finite per-owner and global request-rate
+    budgets, enforced independently of provider concurrency and queue bounds;
+    unavailable enforcement state fails closed.
+13. Provider-validated connection status, credential handles, account hints,
+    validation times, and provider errors change only through server-only
+    reconciliation backed by gateway-authenticated evidence, never client
+    mutation fields or claimed success.
+14. Credential-intake requests are size-bounded and pass both CSRF and
+    same-origin `Origin` validation before plaintext is forwarded in memory;
+    plaintext is never reflected, analyzed, or persisted.
 
 ## Consequences
 
@@ -243,6 +293,24 @@ disposable harness must prove:
 9. The selected persistent host can spawn both provider runtimes, stream for at
    least five minutes, cancel process trees, retain encrypted state across a
    restart, and meet the measured resource budget.
+10. A Clerk subject absent from the personal-beta allowlist cannot begin,
+    create, poll, validate, select, revoke, delete, or execute a connection;
+    rejection occurs before Convex writes, internal assertions, or gateway
+    contact.
+11. Endpoint-specific rate tests exhaust per-owner and global budgets for
+    begin, poll, validate, select, revoke, delete, and execute paths, prove one
+    owner's budget cannot bypass the global bound, and prove unavailable
+    limiter state fails closed. Separate load tests prove per-owner execution,
+    global concurrency, and queue bounds still hold.
+12. Owner-facing mutations cannot set provider-validated status,
+    `gatewayCredentialId`, provider account or plan hints, validation time, or
+    provider-derived errors; invalid, stale, replayed, or mismatched gateway
+    evidence cannot advance lifecycle state, while valid evidence can perform
+    only its allowed transition.
+13. Oversized Claude setup-token requests and requests with missing or invalid
+    CSRF tokens or `Origin` fail before gateway forwarding. Accepted and
+    rejected tokens remain absent from responses, analytics, persistence,
+    logs, and traces.
 
 Reviews must reject implementation that introduces plaintext connection data,
 client-selected provider runtime configuration, shared provider homes,
