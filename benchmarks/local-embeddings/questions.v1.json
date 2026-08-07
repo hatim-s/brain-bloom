@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 1,
+  "questions": [
+    {
+      "id": "q01",
+      "text": "What topic is introduced under the Photosynthesis heading?",
+      "category": "headings",
+      "language": "en",
+      "relevantSegmentIds": ["pdf-01"]
+    },
+    {
+      "id": "q02",
+      "text": "Which section explains cellular respiration?",
+      "category": "headings",
+      "language": "en",
+      "relevantSegmentIds": ["pdf-02"]
+    },
+    {
+      "id": "q03",
+      "text": "Where do the notes discuss causes of industrialization?",
+      "category": "headings",
+      "language": "en",
+      "relevantSegmentIds": ["docx-01"]
+    },
+    {
+      "id": "q04",
+      "text": "Which heading distinguishes primary evidence?",
+      "category": "headings",
+      "language": "en",
+      "relevantSegmentIds": ["docx-04"]
+    },
+    {
+      "id": "q05",
+      "text": "What is the title of the slide about inertia?",
+      "category": "headings",
+      "language": "en",
+      "relevantSegmentIds": ["pptx-01"]
+    },
+    {
+      "id": "q06",
+      "text": "Which section covers maintaining internal stability?",
+      "category": "headings",
+      "language": "en",
+      "relevantSegmentIds": ["pdf-09"]
+    },
+    {
+      "id": "q07",
+      "text": "¿Qué encabezado explica evidencia creada durante el periodo estudiado?",
+      "category": "headings",
+      "language": "es",
+      "relevantSegmentIds": ["docx-09"]
+    },
+    {
+      "id": "q08",
+      "text": "Which notes heading explains placing events in time order?",
+      "category": "headings",
+      "language": "en",
+      "relevantSegmentIds": ["docx-06"]
+    },
+
+    {
+      "id": "q09",
+      "text": "Define diffusion.",
+      "category": "definitions",
+      "language": "en",
+      "relevantSegmentIds": ["pdf-05"]
+    },
+    {
+      "id": "q10",
+      "text": "What is osmosis?",
+      "category": "definitions",
+      "language": "en",
+      "relevantSegmentIds": ["pdf-06"]
+    },
+    {
+      "id": "q11",
+      "text": "What does independent variable mean?",
+      "category": "definitions",
+      "language": "en",
+      "relevantSegmentIds": ["pdf-07"]
+    },
+    {
+      "id": "q12",
+      "text": "Define a dependent variable.",
+      "category": "definitions",
+      "language": "en",
+      "relevantSegmentIds": ["pdf-08"]
+    },
+    {
+      "id": "q13",
+      "text": "What is a secondary source?",
+      "category": "definitions",
+      "language": "en",
+      "relevantSegmentIds": ["docx-05"]
+    },
+    {
+      "id": "q14",
+      "text": "How do the notes define historical context?",
+      "category": "definitions",
+      "language": "en",
+      "relevantSegmentIds": ["docx-08"]
+    },
+    {
+      "id": "q15",
+      "text": "What does momentum equal?",
+      "category": "definitions",
+      "language": "en",
+      "relevantSegmentIds": ["pptx-04"]
+    },
+    {
+      "id": "q16",
+      "text": "¿Qué significa corroboración?",
+      "category": "definitions",
+      "language": "es",
+      "relevantSegmentIds": ["docx-10"]
+    },
+
+    {
+      "id": "q17",
+      "text": "What equation appears in the first bullet on slide 2?",
+      "category": "slide-bullets",
+      "language": "en",
+      "relevantSegmentIds": ["pptx-02"]
+    },
+    {
+      "id": "q18",
+      "text": "What relationship between interaction forces is on slide 3?",
+      "category": "slide-bullets",
+      "language": "en",
+      "relevantSegmentIds": ["pptx-03"]
+    },
+    {
+      "id": "q19",
+      "text": "Which velocity term is squared in the kinetic energy bullet?",
+      "category": "slide-bullets",
+      "language": "en",
+      "relevantSegmentIds": ["pptx-05"]
+    },
+    {
+      "id": "q20",
+      "text": "Which factors make gravitational potential energy near Earth?",
+      "category": "slide-bullets",
+      "language": "en",
+      "relevantSegmentIds": ["pptx-06"]
+    },
+    {
+      "id": "q21",
+      "text": "How does a transverse wave oscillate according to slide 7?",
+      "category": "slide-bullets",
+      "language": "en",
+      "relevantSegmentIds": ["pptx-07"]
+    },
+    {
+      "id": "q22",
+      "text": "What does the frequency bullet count?",
+      "category": "slide-bullets",
+      "language": "en",
+      "relevantSegmentIds": ["pptx-08"]
+    },
+    {
+      "id": "q23",
+      "text": "¿Qué fórmula de fuerza aparece en la diapositiva nueve?",
+      "category": "slide-bullets",
+      "language": "es",
+      "relevantSegmentIds": ["pptx-09"]
+    },
+    {
+      "id": "q24",
+      "text": "¿Qué cuenta la frecuencia según la viñeta?",
+      "category": "slide-bullets",
+      "language": "es",
+      "relevantSegmentIds": ["pptx-10"]
+    },
+
+    {
+      "id": "q25",
+      "text": "Which cell structure acts as the cell's ATP-generating power station?",
+      "category": "paraphrases",
+      "language": "en",
+      "relevantSegmentIds": ["pdf-03"]
+    },
+    {
+      "id": "q26",
+      "text": "Where are proteins assembled from an RNA message?",
+      "category": "paraphrases",
+      "language": "en",
+      "relevantSegmentIds": ["pdf-04"]
+    },
+    {
+      "id": "q27",
+      "text": "What helps a reaction proceed with a smaller energy barrier?",
+      "category": "paraphrases",
+      "language": "en",
+      "relevantSegmentIds": ["pdf-10"]
+    },
+    {
+      "id": "q28",
+      "text": "Why did populations move toward factory cities?",
+      "category": "paraphrases",
+      "language": "en",
+      "relevantSegmentIds": ["docx-02"]
+    },
+    {
+      "id": "q29",
+      "text": "What workplace improvements did reformers demand?",
+      "category": "paraphrases",
+      "language": "en",
+      "relevantSegmentIds": ["docx-03"]
+    },
+    {
+      "id": "q30",
+      "text": "How can historians check whether two accounts support each other?",
+      "category": "paraphrases",
+      "language": "en",
+      "relevantSegmentIds": ["docx-07"]
+    },
+    {
+      "id": "q31",
+      "text": "Which process captures sunlight in sugar, rather than releasing energy from sugar?",
+      "category": "paraphrases",
+      "language": "en",
+      "relevantSegmentIds": ["pdf-01", "pdf-02"]
+    },
+    {
+      "id": "q32",
+      "text": "What stays unchanged until an outside unbalanced force intervenes?",
+      "category": "paraphrases",
+      "language": "en",
+      "relevantSegmentIds": ["pptx-01"]
+    }
+  ]
+}

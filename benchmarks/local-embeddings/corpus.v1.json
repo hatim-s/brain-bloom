@@ -1,0 +1,251 @@
+{
+  "schemaVersion": 1,
+  "multilingual": {
+    "required": true,
+    "languages": ["en", "es"]
+  },
+  "segments": [
+    {
+      "id": "pdf-01",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 1 > heading: Photosynthesis",
+      "language": "en",
+      "text": "Photosynthesis converts light energy into chemical energy stored in glucose."
+    },
+    {
+      "id": "pdf-02",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > heading: Cellular respiration",
+      "language": "en",
+      "text": "Cellular respiration releases energy from glucose and commonly produces ATP, carbon dioxide, and water."
+    },
+    {
+      "id": "pdf-03",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > table 1 > row: Mitochondria",
+      "language": "en",
+      "text": "Organelle | Main role\nMitochondria | ATP production through aerobic respiration"
+    },
+    {
+      "id": "pdf-04",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > table 1 > row: Ribosome",
+      "language": "en",
+      "text": "Organelle | Main role\nRibosome | Protein synthesis from messenger RNA"
+    },
+    {
+      "id": "pdf-05",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 4 > heading: Diffusion",
+      "language": "en",
+      "text": "Diffusion is the net movement of particles from higher concentration to lower concentration."
+    },
+    {
+      "id": "pdf-06",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 5 > heading: Osmosis",
+      "language": "en",
+      "text": "Osmosis is water movement across a selectively permeable membrane toward higher solute concentration."
+    },
+    {
+      "id": "pdf-07",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 6 > table 2 > row: Independent variable",
+      "language": "en",
+      "text": "Experiment term | Meaning\nIndependent variable | The factor deliberately changed by the investigator"
+    },
+    {
+      "id": "pdf-08",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 6 > table 2 > row: Dependent variable",
+      "language": "en",
+      "text": "Experiment term | Meaning\nDependent variable | The outcome measured in response to a change"
+    },
+    {
+      "id": "pdf-09",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 7 > heading: Homeostasis",
+      "language": "en",
+      "text": "Homeostasis maintains a relatively stable internal environment despite external changes."
+    },
+    {
+      "id": "pdf-10",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 8 > heading: Enzymes",
+      "language": "en",
+      "text": "Enzymes are biological catalysts that lower activation energy without being consumed."
+    },
+
+    {
+      "id": "docx-01",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Causes of industrialization",
+      "language": "en",
+      "text": "Causes of industrialization included accessible capital, labor, natural resources, and expanding markets."
+    },
+    {
+      "id": "docx-02",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Urbanization > list item 1",
+      "language": "en",
+      "text": "Urbanization accelerated as factory employment drew workers toward rapidly growing cities."
+    },
+    {
+      "id": "docx-03",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Labor reform > list item 2",
+      "language": "en",
+      "text": "Labor reform campaigns sought shorter working hours, safer factories, and limits on child labor."
+    },
+    {
+      "id": "docx-04",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Primary sources",
+      "language": "en",
+      "text": "A primary source is direct evidence created during the period being studied."
+    },
+    {
+      "id": "docx-05",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Secondary sources",
+      "language": "en",
+      "text": "A secondary source interprets or analyzes evidence from primary sources."
+    },
+    {
+      "id": "docx-06",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Chronology > list item 1",
+      "language": "en",
+      "text": "Chronology orders events by when they occurred so changes and causes can be traced."
+    },
+    {
+      "id": "docx-07",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Corroboration > list item 1",
+      "language": "en",
+      "text": "Corroboration compares independent sources to identify agreement, conflict, and missing context."
+    },
+    {
+      "id": "docx-08",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Historical context > list item 1",
+      "language": "en",
+      "text": "Historical context connects an event to the social, political, and economic conditions around it."
+    },
+    {
+      "id": "docx-09",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: La fuente primaria",
+      "language": "es",
+      "text": "Una fuente primaria es evidencia directa creada durante el periodo que se estudia."
+    },
+    {
+      "id": "docx-10",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: La corroboración",
+      "language": "es",
+      "text": "La corroboración compara fuentes independientes para encontrar acuerdos y contradicciones."
+    },
+
+    {
+      "id": "pptx-01",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 1 > title: Newton's first law",
+      "language": "en",
+      "text": "Newton's first law: an object maintains its state of motion unless acted on by a net external force."
+    },
+    {
+      "id": "pptx-02",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 2 > bullet 1",
+      "language": "en",
+      "text": "Newton's second law: net force equals mass multiplied by acceleration."
+    },
+    {
+      "id": "pptx-03",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 3 > bullet 1",
+      "language": "en",
+      "text": "Newton's third law: interacting objects exert equal-magnitude forces in opposite directions."
+    },
+    {
+      "id": "pptx-04",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 4 > bullet 2",
+      "language": "en",
+      "text": "Momentum equals mass times velocity and is a vector quantity."
+    },
+    {
+      "id": "pptx-05",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 5 > bullet 1",
+      "language": "en",
+      "text": "Kinetic energy depends on one half of mass multiplied by velocity squared."
+    },
+    {
+      "id": "pptx-06",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 6 > bullet 3",
+      "language": "en",
+      "text": "Gravitational potential energy near Earth equals mass times gravitational field strength times height."
+    },
+    {
+      "id": "pptx-07",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 7 > bullet 1",
+      "language": "en",
+      "text": "A transverse wave oscillates perpendicular to its direction of travel."
+    },
+    {
+      "id": "pptx-08",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 8 > bullet 2",
+      "language": "en",
+      "text": "Frequency is the number of complete wave cycles passing a point each second."
+    },
+    {
+      "id": "pptx-09",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 9 > bullet 1",
+      "language": "es",
+      "text": "La fuerza neta es igual a la masa multiplicada por la aceleración."
+    },
+    {
+      "id": "pptx-10",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 10 > bullet 2",
+      "language": "es",
+      "text": "La frecuencia indica cuántos ciclos completos pasan por un punto cada segundo."
+    }
+  ]
+}
