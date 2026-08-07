@@ -21,7 +21,8 @@
     "convex:dev": "convex dev",
     "convex:codegen": "convex codegen",
     "test:convex": "vitest run convex",
-    "migrate:supabase": "node --experimental-strip-types scripts/migrate-supabase-to-convex.ts"
+    "migrate:supabase": "node --experimental-strip-types scripts/migrate-supabase-to-convex.ts",
+    "provider:spike": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/provider-spike/cli.ts"
   },
   "dependencies": {
     "@ai-sdk/react": "^4.0.43",
