@@ -25,6 +25,14 @@ The AI Elements registry install is the sole source path for files under
 `components/ai-elements`. These files are vendor-owned generated code. Do not
 manually edit, copy, fork, or partially reimplement them.
 
+This vendor-owned boundary takes precedence over the repository's docstring
+and single named-export statement rules only for registry-generated files under
+`components/ai-elements/**`. Those files remain untouched when upstream output
+does not satisfy either rule. Both rules continue to apply to every
+product-authored file. Any desired change to the upstream source must arrive
+through a pinned registry update; do not hand-edit generated files to apply the
+repository conventions.
+
 An AI Elements update must be performed through the registry with a pinned
 source and tool version. The change must record the registry location, exact
 tool version, requested item names, and upstream release, commit, or immutable
