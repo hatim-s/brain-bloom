@@ -48,24 +48,31 @@ Office formats such as DOC, PPT, XLS, and password-protected documents.
 Spreadsheet ingestion is also outside this ADR.
 
 File type detection must use validated content signatures and parser results,
-not a filename or client-provided MIME type alone. A crawl may fetch only HTTP
-or HTTPS HTML documents, follow only same-origin links and redirects, and must
-stop at configured page, depth, byte, and duration limits. Unsupported inputs
-fail with an actionable error; they must not silently take a lower-fidelity
-path.
+not a filename or client-provided MIME type alone. Production crawls may fetch
+only HTTPS HTML documents. HTTP is permitted solely in a non-production
+environment behind an explicit development flag that defaults off and cannot
+be enabled in production. Crawls follow only same-origin links and redirects
+and must stop at the safety budgets below. Unsupported inputs fail with an
+actionable error; they must not silently take a lower-fidelity path.
 
 ### Immutable ingestion and atomic activation
 
 Every upload or crawl creates a new immutable source version. Re-ingestion
 never mutates the files, normalized segments, embeddings, or provenance of an
 existing version. The pipeline stages a version through validation, parsing,
-normalization, chunking, embedding, and index readiness before it can serve
-queries.
+normalization, chunking, and the artifacts required by its retrieval mode
+before it can serve queries. Embedding and vector-index readiness are mandatory
+for hybrid mode and omitted for explicit lexical-only mode.
 
 Activation is one atomic metadata transition from the prior active version to
-the fully ready version. A failed or cancelled ingestion leaves the prior
-version active and queryable. Exactly one version of a logical source is active
-within an owner and scope at a time. Superseded versions remain addressable for
+a version with every artifact required by its selected retrieval mode. Hybrid
+activation requires normalized segments, lexical indexing, embeddings, and a
+ready compatible vector index. An explicitly lexical-only activation requires
+normalized segments and a ready lexical index and is recorded as lexical-only
+in state, APIs, telemetry, and product language; it must never be represented
+as semantic RAG. A failed or cancelled ingestion leaves the prior version
+active and queryable. Exactly one version of a logical source is active within
+an owner and scope at a time. Superseded versions remain addressable for
 persisted citations until the applicable retention policy safely removes them.
 
 ### Normalized segments and provenance
@@ -87,13 +94,23 @@ order or the locator needed for a human to verify a quotation. Chunk identifiers
 must be stable within an immutable source version and must not depend on a
 query, ranking run, or response.
 
-### Authorized hybrid retrieval
+### Authorized scoped retrieval
 
 Every retrieval request carries the authenticated owner and workspace or
 resource scope. Candidate generation, hydration, ranking, and citation lookup
 must all enforce that scope on the server. Post-filtering an unauthorized
 global candidate set is not an acceptable authorization boundary, and a client
 must never be able to supply an owner identifier that broadens access.
+
+The source set is resolved from explicit user selection in this order: sources
+selected on the current message, then the thread, then the current map, then an
+explicit library selection. The first applicable selection establishes the
+retrieval set; the system never expands it by implicitly searching the entire
+library. The server verifies every selected identifier against the authenticated
+owner and scope and rejects inaccessible or unknown identifiers without a
+broader fallback. The resolved immutable source identifiers are persisted with
+the user message before retrieval so later answer generation, retries, and
+audits use the same selection.
 
 Retrieval combines vector similarity with Convex lexical text search. Sprig
 owns the deterministic fusion and any later reranking policy. The implementation
@@ -134,12 +151,17 @@ content.
 These controls are release requirements, not follow-up hardening:
 
 1. Crawl targets and every redirect are parsed and canonicalized before fetch.
-   The fetcher permits only the original origin, rejects embedded credentials
-   and non-HTTP schemes, and blocks loopback, link-local, private, metadata, and
-   otherwise non-public destinations after DNS resolution and re-resolution.
-2. Upload and response size, crawl page/depth/time, parser CPU/memory/time, and
-   normalized character limits are enforced server-side. Partial limit failures
-   do not activate a source version.
+   The fetcher permits only the original HTTPS origin in production. An
+   explicitly flagged development environment may use the original HTTP origin.
+   It rejects embedded credentials and every other scheme and blocks loopback,
+   link-local, private, metadata, and otherwise non-public destinations after
+   DNS resolution and re-resolution.
+2. Each uploaded file is limited to 25 MiB, each PDF to 300 pages, and each
+   source version to 500,000 extracted characters. Crawls permit at most five
+   redirects, depth two, 50 pages, 2 MiB per page, 20 MiB total transfer, and a
+   five-minute deadline. Per-crawl concurrency is configured to two or three,
+   with at least 500 milliseconds between requests to the host. All limits are
+   enforced server-side, and a partial or limit-exceeded result cannot activate.
 3. ZIP-based Office containers are checked for entry count, nesting, encrypted
    entries, expansion ratio, and total expanded bytes before parsing. Macros,
    embedded executables, external relationships, and active content are never
@@ -153,6 +175,13 @@ These controls are release requirements, not follow-up hardening:
 6. Prompt-injection fixtures are part of evaluation, and tool execution remains
    independently authorized even when retrieved text attempts to override the
    application policy.
+
+All safety budgets, including the ceilings above and numeric ZIP expansion,
+entry-count, nesting, parser CPU, memory, and time limits that the roadmap does
+not prescribe, live in one versioned configuration artifact. That artifact is
+human-reviewed alongside parser or crawler changes. Every limit is mandatory,
+finite, and positive; a missing, unknown, malformed, or unreviewed configuration
+version denies ingestion rather than falling back to an unbounded default.
 
 ## Enforceable cut lines
 
@@ -176,24 +205,33 @@ amendment to this Proposed decision before implementation.
 
 ## Evaluation gate
 
-Before selecting an embedding model or dimension, Phase 0 must run a
-reproducible benchmark over representative PDF, DOCX, PPTX, and static HTML
-corpora. The corpus must include multi-tenant authorization cases, duplicate
-and revised sources, adversarial prompt instructions, malformed files, and
-content near each ingestion limit.
+Before selecting an embedding model or dimension, Phase 0 must compare at least
+two local embedding candidates on at least 30 representative questions over a
+corpus that includes PDF, DOCX, and PPTX inputs. Static HTML must also be
+covered before HTML ingestion is enabled. The corpus must include multi-tenant
+authorization cases, duplicate and revised sources, adversarial prompt
+instructions, malformed files, and content near each ingestion limit.
 
 The benchmark compares lexical, vector, and fused retrieval using agreed
-thresholds for retrieval recall and rank quality, answer citation coverage,
-citation locator correctness, cross-scope leakage (which must be zero), ingest
-success/failure accuracy, query latency, index/storage size, and embedding
-resource cost. It must also demonstrate deterministic citation persistence
-across source activation and rollback.
+thresholds for recall@5, recall@10, recall@20, rank quality, answer citation
+coverage, citation locator correctness, and cross-scope leakage, which must be
+zero. It records cold model-load and warm-query latency, ingestion and embedding
+throughput, memory use, cache footprint and behavior, index/storage size, and
+embedding resource cost. The question set must exercise heading lookup, exact
+definitions, slide-specific facts, and paraphrases. The results must record
+whether multilingual retrieval is required and include representative questions
+for every required language. The benchmark must also demonstrate deterministic
+citation persistence across source activation and rollback.
 
-Results, fixtures, model identity and version, dimension, chunking policy,
-fusion method, hardware/runtime assumptions, and acceptance thresholds must be
-recorded in the implementation pull request or a linked decision artifact.
-Until maintainers accept those results, model and dimension remain unset and
-vector retrieval cannot become the production default.
+Results, fixtures, model identity and immutable revision, artifact checksum,
+dimension, chunking policy, fusion method, hardware/runtime assumptions, and
+acceptance thresholds must be recorded in the implementation pull request or a
+linked decision artifact. The selected artifact must be revision-pinned,
+checksum-verified, and usable from a pre-populated local cache with network
+access disabled. A cache miss or checksum mismatch fails closed; production
+must not fetch an unpinned replacement. Until maintainers accept those results,
+model and dimension remain unset and vector retrieval cannot become the
+production default.
 
 ## Rollout and rollback
 
@@ -233,12 +271,13 @@ An implementation proposal may move this ADR to Accepted only after reviewers
 confirm all of the following:
 
 1. The Phase 0 benchmark gate selected and recorded the embedding model and
-   vector dimension, or the accepted rollout remains lexical-only.
+   vector dimension from at least two candidates and 30 representative
+   questions, or the accepted rollout is explicitly labeled lexical-only.
 2. Authorization tests prove isolation for ingestion, candidate retrieval,
    hydration, citation resolution, source activation, and public sharing.
-3. Parser and crawler tests cover the supported matrix, every stated limit,
-   SSRF and redirect defenses, ZIP bombs, malformed content, and prompt
-   injection.
+3. Parser and crawler tests cover the supported matrix, every stated numeric
+   limit, the versioned safety configuration's deny-by-default behavior, SSRF
+   and redirect defenses, ZIP bombs, malformed content, and prompt injection.
 4. Failure-injection tests show that incomplete versions cannot activate and
    that activation and rollback preserve prior readable versions.
 5. Retrieval evaluation meets the recorded quality, citation, latency, and
