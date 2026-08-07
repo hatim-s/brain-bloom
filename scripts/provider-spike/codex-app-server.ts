@@ -5,7 +5,11 @@ import { sep } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 import { type Readable, Transform } from "node:stream";
 
-import { assertSignalNotAborted, terminateProcessTree } from "./process.ts";
+import {
+  assertSignalNotAborted,
+  type ProcessTreeTerminator,
+  terminateProcessTree,
+} from "./process.ts";
 import { createIsolatedEnvironment, redactText } from "./security.ts";
 
 const CODEX_CLIENT_INFO = {
@@ -269,7 +273,8 @@ class StdioCodexProbeSession implements CodexProbeSession {
       Record<string, string | undefined>
     > = process.env,
     command = "codex",
-    spawnProcess: SpawnCodexProcess = spawn as SpawnCodexProcess
+    spawnProcess: SpawnCodexProcess = spawn as SpawnCodexProcess,
+    private readonly terminateTree: ProcessTreeTerminator = terminateProcessTree
   ) {
     assertSignalNotAborted(signal);
     this.abortSignal = signal;
@@ -299,6 +304,21 @@ class StdioCodexProbeSession implements CodexProbeSession {
       signal?.removeEventListener("abort", observeSetupAbort);
       throw new Error("Codex app-server could not start");
     }
+
+    let setupFailure: "child" | "stdio" | undefined;
+    const observeChildFailure = () => {
+      setupFailure ??= "child";
+    };
+    const observeStdioFailure = () => {
+      setupFailure ??= "stdio";
+    };
+    // EventEmitter treats an unhandled `error` as fatal. Install setup guards
+    // on the process and every stream before piping, reading, or writing.
+    this.child.on("error", observeChildFailure);
+    this.child.stdin.on("error", observeStdioFailure);
+    this.child.stdout.on("error", observeStdioFailure);
+    this.child.stderr.on("error", observeStdioFailure);
+
     this.exited = new Promise((resolve) => this.child.once("close", resolve));
     this.lines = createBoundedLineReader(
       this.child.stdout,
@@ -318,17 +338,32 @@ class StdioCodexProbeSession implements CodexProbeSession {
         );
       }
     });
-    this.child.once("error", () => {
+    const failChild = () => {
       void this.shutdown(new Error("Codex app-server could not start"));
-    });
+    };
+    const failStdio = () => {
+      void this.shutdown(new Error("Codex app-server I/O failed"));
+    };
+    this.child.on("error", failChild);
+    this.child.stdin.on("error", failStdio);
+    this.child.stdout.on("error", failStdio);
+    this.child.stderr.on("error", failStdio);
     this.child.once("close", () => {
       if (!this.closed) {
         void this.shutdown(new Error("Codex app-server exited unexpectedly"));
       }
     });
+    this.child.removeListener("error", observeChildFailure);
+    this.child.stdin.removeListener("error", observeStdioFailure);
+    this.child.stdout.removeListener("error", observeStdioFailure);
+    this.child.stderr.removeListener("error", observeStdioFailure);
     signal?.addEventListener("abort", this.abortHandler, { once: true });
     signal?.removeEventListener("abort", observeSetupAbort);
-    if (abortedDuringSetup || signal?.aborted) {
+    if (setupFailure === "child") {
+      failChild();
+    } else if (setupFailure === "stdio") {
+      failStdio();
+    } else if (abortedDuringSetup || signal?.aborted) {
       this.abortHandler();
     }
   }
@@ -441,11 +476,16 @@ class StdioCodexProbeSession implements CodexProbeSession {
   private async finishShutdown(error: Error): Promise<void> {
     this.abortSignal?.removeEventListener("abort", this.abortHandler);
     this.lines.close();
-    this.child.stdin.end();
+    try {
+      this.child.stdin.end();
+    } catch {
+      // Stream errors already have stable handlers; a synchronous end failure
+      // must not replace the original shutdown cause or skip tree cleanup.
+    }
     this.failAll(error);
 
     try {
-      terminateProcessTree(this.child.pid, "SIGTERM");
+      this.terminateTree(this.child.pid, "SIGTERM");
     } catch {
       // A cleanup failure must remain stable and secret-free. The force-kill
       // attempt below still gets a chance to terminate the process tree.
@@ -457,7 +497,7 @@ class StdioCodexProbeSession implements CodexProbeSession {
     ]);
     if (!exitedGracefully) {
       try {
-        terminateProcessTree(this.child.pid, "SIGKILL");
+        this.terminateTree(this.child.pid, "SIGKILL");
       } catch {
         // Do not reflect taskkill/process errors, which can contain host data.
       }
@@ -466,7 +506,7 @@ class StdioCodexProbeSession implements CodexProbeSession {
   }
 
   /** Sends one JSON-RPC request and resolves its matching response. */
-  private async request(method: string, params?: unknown): Promise<unknown> {
+  private request(method: string, params?: unknown): Promise<unknown> {
     const id = this.nextId;
     this.nextId += 1;
 
@@ -477,7 +517,18 @@ class StdioCodexProbeSession implements CodexProbeSession {
       }, 30_000);
       this.pending.set(id, { resolve, reject, timeout, operation: method });
     });
-    this.write({ method, id, ...(params === undefined ? {} : { params }) });
+    try {
+      this.write({ method, id, ...(params === undefined ? {} : { params }) });
+    } catch {
+      const pending = this.pending.get(id);
+      if (pending !== undefined) {
+        this.pending.delete(id);
+        clearTimeout(pending.timeout);
+        // Return this exact rejected promise so the calling await observes it;
+        // never create an orphan rejection behind an async wrapper.
+        pending.reject(new Error("Codex app-server transport is closed"));
+      }
+    }
     return response;
   }
 
@@ -491,7 +542,12 @@ class StdioCodexProbeSession implements CodexProbeSession {
     if (this.closed || !this.child.stdin.writable) {
       throw new Error("Codex app-server transport is closed");
     }
-    this.child.stdin.write(`${JSON.stringify(message)}\n`);
+    try {
+      this.child.stdin.write(`${JSON.stringify(message)}\n`);
+    } catch {
+      void this.shutdown(new Error("Codex app-server I/O failed"));
+      throw new Error("Codex app-server transport is closed");
+    }
   }
 
   /** Routes one response or notification without ever logging raw protocol. */

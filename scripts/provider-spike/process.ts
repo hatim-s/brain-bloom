@@ -34,6 +34,10 @@ type SpawnProcess = (
   options: Parameters<typeof spawn>[2]
 ) => ChildProcessWithoutNullStreams;
 type WindowsTreeKiller = (pid: number, force: boolean) => void;
+type ProcessTreeTerminator = (
+  pid: number | undefined,
+  signal: NodeJS.Signals
+) => void;
 
 interface CommandRunner {
   run(spec: ProcessSpec): Promise<ProcessResult>;
@@ -102,9 +106,14 @@ function terminateProcessTree(
 /** Runs a bounded provider CLI process with timeout, abort, and tree cleanup. */
 class NodeCommandRunner implements CommandRunner {
   private readonly spawnProcess: SpawnProcess;
+  private readonly terminateTree: ProcessTreeTerminator;
 
-  constructor(spawnProcess: SpawnProcess = spawn as SpawnProcess) {
+  constructor(
+    spawnProcess: SpawnProcess = spawn as SpawnProcess,
+    terminateTree: ProcessTreeTerminator = terminateProcessTree
+  ) {
     this.spawnProcess = spawnProcess;
+    this.terminateTree = terminateTree;
   }
 
   async run(spec: ProcessSpec): Promise<ProcessResult> {
@@ -129,14 +138,15 @@ class NodeCommandRunner implements CommandRunner {
         detached: process.platform !== "win32",
         stdio: ["pipe", "pipe", "pipe"],
       });
-      // No credential is ever written to child stdin; close it immediately so
-      // a CLI cannot wait for interactive input or inherit the caller's stream.
-      child.stdin.end();
-
       // collectProcessResult attaches its abort listener synchronously before
       // its first await. Its immediate recheck settles a child born during the
       // spawn callback even though AbortSignal does not replay past events.
-      const collected = collectProcessResult(child, spec, abortedDuringSpawn);
+      const collected = collectProcessResult(
+        child,
+        spec,
+        abortedDuringSpawn,
+        this.terminateTree
+      );
       spec.signal?.removeEventListener("abort", observeSpawnAbort);
       const result = await collected;
       if (result.timedOut) {
@@ -153,13 +163,15 @@ class NodeCommandRunner implements CommandRunner {
 async function collectProcessResult(
   child: ChildProcessWithoutNullStreams,
   spec: ProcessSpec,
-  abortedBeforeCollection = false
+  abortedBeforeCollection = false,
+  terminateTree: ProcessTreeTerminator = terminateProcessTree
 ): Promise<ProcessResult> {
   let stdout = "";
   let stderr = "";
   let outputBytes = 0;
   let terminated = false;
   let timedOut = false;
+  let processFailure: Error | undefined;
   let forceKillTimeout: NodeJS.Timeout | undefined;
 
   /** Starts idempotent graceful termination for this process group. */
@@ -168,14 +180,40 @@ async function collectProcessResult(
       return;
     }
     terminated = true;
-    terminateProcessTree(child.pid, "SIGTERM");
+    try {
+      terminateTree(child.pid, "SIGTERM");
+    } catch {
+      processFailure ??= new Error("Provider process cleanup failed");
+    }
     forceKillTimeout = setTimeout(() => {
       if (child.exitCode === null && child.signalCode === null) {
-        terminateProcessTree(child.pid, "SIGKILL");
+        try {
+          terminateTree(child.pid, "SIGKILL");
+        } catch {
+          processFailure ??= new Error("Provider process cleanup failed");
+        }
       }
     }, 1_000);
     forceKillTimeout.unref();
   };
+
+  /** Records a stable failure and keeps cleanup active until child close. */
+  const failProcess = (message: string) => {
+    processFailure ??= new Error(message);
+    terminate();
+  };
+  const failStdio = () => failProcess("Provider process I/O failed");
+  const failChild = () => failProcess("Provider process could not start");
+
+  // Stream errors are not forwarded through ChildProcess. Attach every error
+  // handler before ending stdin or consuming output so none can crash the CLI.
+  child.once("error", failChild);
+  child.stdin.on("error", failStdio);
+  child.stdout.on("error", failStdio);
+  child.stderr.on("error", failStdio);
+  const exited = new Promise<ProcessExit>((resolve) => {
+    child.once("close", (code, signal) => resolve({ code, signal }));
+  });
 
   const append = (target: "stdout" | "stderr", chunk: Buffer) => {
     outputBytes += chunk.byteLength;
@@ -193,6 +231,13 @@ async function collectProcessResult(
 
   child.stdout.on("data", (chunk: Buffer) => append("stdout", chunk));
   child.stderr.on("data", (chunk: Buffer) => append("stderr", chunk));
+  // No credential is ever written to child stdin; close it only after its
+  // error handler exists so a synchronous I/O failure is safely contained.
+  try {
+    child.stdin.end();
+  } catch {
+    failStdio();
+  }
 
   const timeout = setTimeout(() => {
     timedOut = true;
@@ -206,10 +251,11 @@ async function collectProcessResult(
   }
 
   try {
-    const exit = await new Promise<ProcessExit>((resolve, reject) => {
-      child.once("error", reject);
-      child.once("close", (code, signal) => resolve({ code, signal }));
-    });
+    const exit = await exited;
+
+    if (processFailure !== undefined) {
+      throw processFailure;
+    }
 
     if (outputBytes > spec.maxOutputBytes) {
       throw new Error(
@@ -233,6 +279,10 @@ async function collectProcessResult(
       clearTimeout(forceKillTimeout);
     }
     spec.signal?.removeEventListener("abort", abort);
+    child.removeListener("error", failChild);
+    child.stdin.removeListener("error", failStdio);
+    child.stdout.removeListener("error", failStdio);
+    child.stderr.removeListener("error", failStdio);
 
     if (child.exitCode === null && child.signalCode === null) {
       terminate();
@@ -246,6 +296,7 @@ export {
   NodeCommandRunner,
   type ProcessResult,
   type ProcessSpec,
+  type ProcessTreeTerminator,
   runWindowsTaskkill,
   terminateProcessTree,
   type WindowsTreeKiller,

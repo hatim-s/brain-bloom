@@ -133,26 +133,31 @@ type FakeCodexChild = EventEmitter & {
   stdin: PassThrough;
   stdout: PassThrough;
   stderr: PassThrough;
-  pid: undefined;
+  pid: number | undefined;
   exitCode: number | null;
   signalCode: NodeJS.Signals | null;
 };
 
 /** Creates a no-process stdio transport that closes when the client ends stdin. */
-function createFakeCodexChild(): FakeCodexChild {
+function createFakeCodexChild(
+  pid?: number,
+  closeOnStdinEnd = true
+): FakeCodexChild {
   const child = new EventEmitter() as FakeCodexChild;
   child.stdin = new PassThrough();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
-  child.pid = undefined;
+  child.pid = pid;
   child.exitCode = null;
   child.signalCode = null;
-  child.stdin.once("finish", () => {
-    if (child.exitCode === null && child.signalCode === null) {
-      child.exitCode = 0;
-      child.emit("close", 0, null);
-    }
-  });
+  if (closeOnStdinEnd) {
+    child.stdin.once("finish", () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.exitCode = 0;
+        child.emit("close", 0, null);
+      }
+    });
+  }
   return child;
 }
 
@@ -300,6 +305,37 @@ describe("provider spike security", () => {
 
     await expect(run).rejects.toThrow("Provider probe timed out");
   });
+
+  it.each(["stdin", "stdout", "stderr"] as const)(
+    "handles a child %s error with stable failure and tree cleanup",
+    async (streamName) => {
+      const canary = `operator@example.com ${streamName}-io-token-canary`;
+      const child = createFakeCodexChild(4242, false);
+      const terminateTree = vi.fn();
+      const runner = new NodeCommandRunner(
+        (() => child) as never,
+        terminateTree
+      );
+      const run = runner.run({
+        command: "provider",
+        args: [],
+        cwd: process.cwd(),
+        env: {},
+        timeoutMs: 5_000,
+        maxOutputBytes: 1_024,
+      });
+
+      child[streamName].emit("error", new Error(canary));
+      child.exitCode = 1;
+      child.emit("close", 1, null);
+
+      const failure = await run.catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toBe("Provider process I/O failed");
+      expect((failure as Error).message).not.toContain(canary);
+      expect(terminateTree).toHaveBeenCalledWith(4242, "SIGTERM");
+    }
+  );
 });
 
 describe("Codex app-server probes", () => {
@@ -379,6 +415,73 @@ describe("Codex app-server probes", () => {
     expect(controller.signal.aborted).toBe(true);
     expect(child.stdin.writableEnded).toBe(true);
   });
+
+  it("clears a cancelled setup request timer without an unhandled rejection", async () => {
+    vi.useFakeTimers();
+    const unhandled: unknown[] = [];
+    const captureUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", captureUnhandled);
+
+    try {
+      const controller = new AbortController();
+      const child = createFakeCodexChild();
+      const spawnProcess = vi.fn(() => {
+        controller.abort();
+        return child;
+      });
+      const session = new StdioCodexProbeSession(
+        "/private/tmp/codex-cancelled-request",
+        controller.signal,
+        {},
+        "codex",
+        spawnProcess as never
+      );
+
+      const initialization = session.initialize();
+      await expect(initialization).rejects.toThrow(
+        "Codex app-server transport is closed"
+      );
+      await session.close();
+      expect(
+        (session as unknown as { pending: Map<number, unknown> }).pending.size
+      ).toBe(0);
+
+      await vi.runAllTimersAsync();
+      await Promise.resolve();
+      expect(unhandled).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      process.removeListener("unhandledRejection", captureUnhandled);
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["stdin", "stdout", "stderr"] as const)(
+    "handles an app-server %s error with stable failure and tree cleanup",
+    async (streamName) => {
+      const canary = `operator@example.com codex-${streamName}-io-token`;
+      const child = createFakeCodexChild(4343);
+      const terminateTree = vi.fn();
+      const session = new StdioCodexProbeSession(
+        `/private/tmp/codex-${streamName}-error`,
+        undefined,
+        {},
+        "codex",
+        (() => child) as never,
+        terminateTree
+      );
+      const initialization = session.initialize();
+
+      child[streamName].emit("error", new Error(canary));
+
+      const failure = await initialization.catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toBe("Codex app-server I/O failed");
+      expect((failure as Error).message).not.toContain(canary);
+      await session.close();
+      expect(terminateTree).toHaveBeenCalledWith(4343, "SIGTERM");
+    }
+  );
 
   it("uses a stable error when spawning the app server fails", () => {
     const spawnProcess = vi.fn(() => {
