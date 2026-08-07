@@ -1,6 +1,8 @@
+import { EventEmitter } from "node:events";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -8,15 +10,21 @@ import {
   ClaudeCliValidationAdapter,
   InMemoryTokenSource,
   runClaudeSetupTokenProbe,
+  StdinTokenSource,
 } from "./claude-setup-token.ts";
 import { main, parseCliOptions } from "./cli.ts";
 import {
   type AccountReadResult,
+  assertFileBackedCredentialStore,
   assertTemporaryCodexHome,
+  CODEX_APP_SERVER_ARGS,
+  CODEX_ISOLATION_ERROR,
   type CodexProbeSession,
   type CodexProbeSessionFactory,
+  createCodexRequestError,
   runCodexDeviceCodeProbe,
   runCodexLogoutRestartProbe,
+  StdioCodexProbeSession,
   summarizeAccount,
 } from "./codex-app-server.ts";
 import {
@@ -116,6 +124,33 @@ class FakeCommandRunner implements CommandRunner {
   }
 }
 
+type FakeCodexChild = EventEmitter & {
+  stdin: PassThrough;
+  stdout: PassThrough;
+  stderr: PassThrough;
+  pid: undefined;
+  exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
+};
+
+/** Creates a no-process stdio transport that closes when the client ends stdin. */
+function createFakeCodexChild(): FakeCodexChild {
+  const child = new EventEmitter() as FakeCodexChild;
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.pid = undefined;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.stdin.once("finish", () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.exitCode = 0;
+      child.emit("close", 0, null);
+    }
+  });
+  return child;
+}
+
 describe("provider spike security", () => {
   it("does not inherit API-key or cloud-provider fallbacks", () => {
     const environment = createIsolatedEnvironment(
@@ -160,6 +195,35 @@ describe("provider spike security", () => {
     expect(kill).toHaveBeenCalledWith(-4242, "SIGTERM");
   });
 
+  it("uses taskkill tree semantics rather than direct child kill on Windows", () => {
+    const kill = vi.fn();
+    const windowsTreeKiller = vi.fn();
+
+    terminateProcessTree(4242, "SIGKILL", kill, "win32", windowsTreeKiller);
+
+    expect(windowsTreeKiller).toHaveBeenCalledWith(4242, true);
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it("rejects a pre-aborted command before spawning any child", async () => {
+    const controller = new AbortController();
+    const spawnProcess = vi.fn();
+    controller.abort();
+
+    await expect(
+      new NodeCommandRunner(spawnProcess as never).run({
+        command: "provider",
+        args: [],
+        cwd: process.cwd(),
+        env: {},
+        signal: controller.signal,
+        timeoutMs: 1_000,
+        maxOutputBytes: 1_024,
+      })
+    ).rejects.toThrow("Provider probe cancelled");
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
   it("cancels a running child instead of leaving its process tree alive", async () => {
     const controller = new AbortController();
     const run = new NodeCommandRunner().run({
@@ -179,6 +243,90 @@ describe("provider spike security", () => {
 });
 
 describe("Codex app-server probes", () => {
+  it("pins and verifies the official file-backed credential store", () => {
+    expect(CODEX_APP_SERVER_ARGS).toContain(
+      'cli_auth_credentials_store="file"'
+    );
+    expect(() =>
+      assertFileBackedCredentialStore({
+        config: { cli_auth_credentials_store: "file" },
+        origins: {
+          cli_auth_credentials_store: {
+            name: { type: "sessionFlags" },
+          },
+        },
+      })
+    ).not.toThrow();
+
+    for (const unsafe of [
+      {
+        config: { cli_auth_credentials_store: "keyring" },
+        origins: {
+          cli_auth_credentials_store: {
+            name: { type: "sessionFlags" },
+          },
+        },
+      },
+      {
+        config: { cli_auth_credentials_store: "file" },
+        origins: {
+          cli_auth_credentials_store: { name: { type: "user" } },
+        },
+      },
+      { config: {}, origins: {} },
+    ]) {
+      expect(() => assertFileBackedCredentialStore(unsafe)).toThrow(
+        CODEX_ISOLATION_ERROR
+      );
+    }
+  });
+
+  it("rejects a pre-aborted app server before spawning", () => {
+    const controller = new AbortController();
+    const spawnProcess = vi.fn();
+    controller.abort();
+
+    expect(
+      () =>
+        new StdioCodexProbeSession(
+          "/private/tmp/codex-aborted",
+          controller.signal,
+          {},
+          "codex",
+          spawnProcess as never
+        )
+    ).toThrow("Provider probe cancelled");
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
+  it("uses a stable error when spawning the app server fails", () => {
+    const spawnProcess = vi.fn(() => {
+      throw new Error(
+        "operator@example.com spawn-credential-canary-4bd8c85325bf"
+      );
+    });
+
+    let failure: unknown;
+    try {
+      new StdioCodexProbeSession(
+        "/private/tmp/codex-spawn",
+        undefined,
+        {},
+        "codex",
+        spawnProcess as never
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe("Codex app-server could not start");
+    expect((failure as Error).message).not.toContain("operator@example.com");
+    expect((failure as Error).message).not.toContain(
+      "spawn-credential-canary-4bd8c85325bf"
+    );
+  });
+
   it("uses one supplied home and captures non-identifying completion metadata", async () => {
     const session = new FakeCodexSession([
       { account: null, requiresOpenaiAuth: true },
@@ -259,6 +407,9 @@ describe("Codex app-server probes", () => {
       await expect(assertTemporaryCodexHome(tmpdir())).rejects.toThrow(
         "child directory"
       );
+      await expect(
+        assertTemporaryCodexHome(directory, "win32")
+      ).rejects.toThrow("POSIX credential-home permission checks");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -268,6 +419,67 @@ describe("Codex app-server probes", () => {
     expect(JSON.stringify(summarizeAccount(CHATGPT_ACCOUNT))).not.toContain(
       "operator@example.com"
     );
+  });
+
+  it("never reflects raw RPC messages containing emails or opaque credentials", () => {
+    const failure = createCodexRequestError("account/read", {
+      code: 401,
+      message: "operator@example.com opaque-credential-canary-7f943c3f551d",
+    });
+
+    expect(failure.message).toBe(
+      "Codex account/read request failed (code 401)"
+    );
+    expect(failure.message).not.toContain("operator@example.com");
+    expect(failure.message).not.toContain(
+      "opaque-credential-canary-7f943c3f551d"
+    );
+  });
+
+  it("never surfaces raw stderr when the app server exits", async () => {
+    const child = createFakeCodexChild();
+    const session = new StdioCodexProbeSession(
+      "/private/tmp/codex-stderr",
+      undefined,
+      {},
+      "codex",
+      (() => child) as never
+    );
+    const initialization = session.initialize();
+    child.stderr.write("operator@example.com stderr-token-canary-bb704e2da2ef");
+    child.exitCode = 1;
+    child.emit("close", 1, null);
+
+    const failure = await initialization.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(
+      "Codex app-server exited unexpectedly"
+    );
+    expect((failure as Error).message).not.toContain("operator@example.com");
+    expect((failure as Error).message).not.toContain(
+      "stderr-token-canary-bb704e2da2ef"
+    );
+    await session.close();
+  });
+
+  it("terminates cleanly when newline-free protocol output exceeds its cap", async () => {
+    const child = createFakeCodexChild();
+    const session = new StdioCodexProbeSession(
+      "/private/tmp/codex-overflow",
+      undefined,
+      {},
+      "codex",
+      (() => child) as never
+    );
+    const initialization = session.initialize();
+
+    child.stdout.write(Buffer.alloc(256 * 1024 + 1, "x"));
+
+    await expect(initialization).rejects.toThrow(
+      "Codex app-server protocol output exceeded limit"
+    );
+    await session.close();
+    expect(child.stdin.writableEnded).toBe(true);
   });
 });
 
@@ -284,7 +496,7 @@ describe("Claude setup-token probe", () => {
         result: token,
         duration_ms: 23,
         num_turns: 1,
-        modelUsage: { "claude-test": {} },
+        modelUsage: { [token]: { input_tokens: token } },
       }),
       stderr: "",
     });
@@ -308,7 +520,6 @@ describe("Claude setup-token probe", () => {
       authenticated: true,
       durationMs: 23,
       numTurns: 1,
-      modelNames: ["claude-test"],
     });
     expect(JSON.stringify(result)).not.toContain(token);
     expect(runner.spec?.args).not.toContain(token);
@@ -319,7 +530,7 @@ describe("Claude setup-token probe", () => {
     expect(runner.spec?.env.HOME).toContain("sprig-claude-probe-");
   });
 
-  it("redacts the token if a provider error repeats it", async () => {
+  it("uses a stable error if a provider error repeats the token", async () => {
     const token = "claude-secret-in-error";
     const runner = new FakeCommandRunner({
       code: 1,
@@ -330,8 +541,46 @@ describe("Claude setup-token probe", () => {
     const adapter = new ClaudeCliValidationAdapter(runner);
 
     await expect(adapter.validate(token)).rejects.toThrow(
-      "authentication failed for [REDACTED]"
+      "Claude setup-token validation failed"
     );
+    await expect(adapter.validate(token)).rejects.not.toThrow(token);
+  });
+
+  it("does not surface raw Claude process errors", async () => {
+    const runner: CommandRunner = {
+      run: vi.fn(async () => {
+        throw new Error(
+          "operator@example.com process-token-canary-3abf0245480a"
+        );
+      }),
+    };
+    const adapter = new ClaudeCliValidationAdapter(runner);
+
+    const failure = await adapter
+      .validate("valid-in-memory-token")
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(
+      "Claude setup-token validation failed"
+    );
+    expect((failure as Error).message).not.toContain("operator@example.com");
+    expect((failure as Error).message).not.toContain(
+      "process-token-canary-3abf0245480a"
+    );
+  });
+
+  it("settles and detaches stdin listeners when cancelled mid-token", async () => {
+    const input = new PassThrough();
+    const controller = new AbortController();
+    const read = new StdinTokenSource(input).read(controller.signal);
+    input.write("partial-token-canary");
+
+    controller.abort();
+
+    await expect(read).rejects.toThrow("Provider probe cancelled");
+    expect(input.listenerCount("data")).toBe(0);
+    expect(input.listenerCount("end")).toBe(0);
+    expect(input.listenerCount("error")).toBe(0);
   });
 });
 

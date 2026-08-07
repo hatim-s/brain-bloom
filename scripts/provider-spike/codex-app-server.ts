@@ -3,8 +3,9 @@ import { realpath, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { sep } from "node:path";
 import { createInterface, type Interface } from "node:readline";
+import { type Readable, Transform } from "node:stream";
 
-import { terminateProcessTree } from "./process.ts";
+import { assertSignalNotAborted, terminateProcessTree } from "./process.ts";
 import { createIsolatedEnvironment, redactText } from "./security.ts";
 
 const CODEX_CLIENT_INFO = {
@@ -13,6 +14,27 @@ const CODEX_CLIENT_INFO = {
   version: "0.1.0",
 };
 const MAX_PROTOCOL_BYTES = 256 * 1024;
+const CODEX_APP_SERVER_ARGS = [
+  "app-server",
+  "--listen",
+  "stdio://",
+  "--strict-config",
+  "--config",
+  'cli_auth_credentials_store="file"',
+] as const;
+const CODEX_ISOLATION_ERROR =
+  "Codex file-backed credential isolation could not be verified";
+
+type SpawnCodexProcess = (
+  command: string,
+  args: string[],
+  options: Parameters<typeof spawn>[2]
+) => ChildProcessWithoutNullStreams;
+
+type ConfigReadResult = {
+  config?: unknown;
+  origins?: unknown;
+};
 
 type AccountReadResult = {
   account:
@@ -97,7 +119,18 @@ type NotificationWaiter = {
 };
 
 /** Verifies a caller-supplied CODEX_HOME is a private child of the OS temp root. */
-async function assertTemporaryCodexHome(codexHome: string): Promise<string> {
+async function assertTemporaryCodexHome(
+  codexHome: string,
+  platform = process.platform
+): Promise<string> {
+  if (platform === "win32") {
+    // Node's mode bits do not represent Windows ACLs. Until the harness has a
+    // native ACL verifier, refusing Codex auth is the only fail-closed choice.
+    throw new Error(
+      "Codex provider probes require POSIX credential-home permission checks"
+    );
+  }
+
   const [resolvedHome, resolvedTemp] = await Promise.all([
     realpath(codexHome),
     realpath(tmpdir()),
@@ -121,6 +154,58 @@ async function assertTemporaryCodexHome(codexHome: string): Promise<string> {
   }
 
   return resolvedHome;
+}
+
+/** Requires the effective file store to originate from our session CLI flag. */
+function assertFileBackedCredentialStore(result: ConfigReadResult): void {
+  if (!isRecord(result.config) || !isRecord(result.origins)) {
+    throw new Error(CODEX_ISOLATION_ERROR);
+  }
+
+  const origin = result.origins.cli_auth_credentials_store;
+  if (
+    result.config.cli_auth_credentials_store !== "file" ||
+    !isRecord(origin) ||
+    !isRecord(origin.name) ||
+    origin.name.type !== "sessionFlags"
+  ) {
+    throw new Error(CODEX_ISOLATION_ERROR);
+  }
+}
+
+/** Bounds bytes before readline can accumulate an unterminated JSON line. */
+function createBoundedLineReader(
+  input: Readable,
+  maximumBytes: number,
+  onOverflow: () => void
+): Interface {
+  let pendingLineBytes = 0;
+  let overflowed = false;
+  const limiter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      // Scan the raw bytes before readline sees them. A newline releases its
+      // pending buffer, while a provider that never emits one is terminated.
+      for (let index = 0; index < chunk.length; index += 1) {
+        const byte = chunk[index];
+        pendingLineBytes = byte === 0x0a ? 0 : pendingLineBytes + 1;
+        if (pendingLineBytes > maximumBytes) {
+          break;
+        }
+      }
+      if (pendingLineBytes > maximumBytes) {
+        if (!overflowed) {
+          overflowed = true;
+          onOverflow();
+        }
+        callback();
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+
+  input.pipe(limiter);
+  return createInterface({ input: limiter });
 }
 
 /** Reduces an account response to non-identifying provider metadata. */
@@ -154,6 +239,7 @@ class StdioCodexProbeSession implements CodexProbeSession {
       resolve: (value: unknown) => void;
       reject: (error: Error) => void;
       timeout: NodeJS.Timeout;
+      operation: string;
     }
   >();
   private readonly notifications: RpcMessage[] = [];
@@ -162,9 +248,9 @@ class StdioCodexProbeSession implements CodexProbeSession {
   private readonly abortSignal?: AbortSignal;
   private readonly exited: Promise<void>;
   private nextId = 0;
-  private protocolBytes = 0;
-  private stderr = "";
+  private stderrBytes = 0;
   private closed = false;
+  private shutdownPromise?: Promise<void>;
 
   /** Starts one app-server whose credential storage is the supplied temp home. */
   constructor(
@@ -173,37 +259,50 @@ class StdioCodexProbeSession implements CodexProbeSession {
     inheritedEnvironment: Readonly<
       Record<string, string | undefined>
     > = process.env,
-    command = "codex"
+    command = "codex",
+    spawnProcess: SpawnCodexProcess = spawn as SpawnCodexProcess
   ) {
-    this.child = spawn(command, ["app-server", "--listen", "stdio://"], {
-      cwd: codexHome,
-      env: createIsolatedEnvironment(inheritedEnvironment, {
-        CODEX_HOME: codexHome,
-      }) as NodeJS.ProcessEnv,
-      detached: process.platform !== "win32",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    this.lines = createInterface({ input: this.child.stdout });
+    assertSignalNotAborted(signal);
+    try {
+      this.child = spawnProcess(command, [...CODEX_APP_SERVER_ARGS], {
+        cwd: codexHome,
+        env: createIsolatedEnvironment(inheritedEnvironment, {
+          CODEX_HOME: codexHome,
+        }) as NodeJS.ProcessEnv,
+        detached: process.platform !== "win32",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch {
+      throw new Error("Codex app-server could not start");
+    }
     this.abortSignal = signal;
-    this.abortHandler = () => void this.close();
+    this.abortHandler = () =>
+      void this.shutdown(new Error("Provider probe cancelled"));
     this.exited = new Promise((resolve) => this.child.once("close", resolve));
+    this.lines = createBoundedLineReader(
+      this.child.stdout,
+      MAX_PROTOCOL_BYTES,
+      () =>
+        void this.shutdown(
+          new Error("Codex app-server protocol output exceeded limit")
+        )
+    );
 
     this.lines.on("line", (line) => this.handleLine(line));
     this.child.stderr.on("data", (chunk: Buffer) => {
-      this.protocolBytes += chunk.byteLength;
-      this.stderr += chunk.toString();
-      if (this.protocolBytes > MAX_PROTOCOL_BYTES) {
-        void this.close();
+      this.stderrBytes += chunk.byteLength;
+      if (this.stderrBytes > MAX_PROTOCOL_BYTES) {
+        void this.shutdown(
+          new Error("Codex app-server diagnostic output exceeded limit")
+        );
       }
     });
-    this.child.once("error", (error) => this.failAll(error));
-    this.child.once("close", (code) => {
+    this.child.once("error", () => {
+      void this.shutdown(new Error("Codex app-server could not start"));
+    });
+    this.child.once("close", () => {
       if (!this.closed) {
-        this.failAll(
-          new Error(
-            `Codex app-server exited with ${code}: ${redactText(this.stderr)}`
-          )
-        );
+        void this.shutdown(new Error("Codex app-server exited unexpectedly"));
       }
     });
     signal?.addEventListener("abort", this.abortHandler, { once: true });
@@ -213,6 +312,11 @@ class StdioCodexProbeSession implements CodexProbeSession {
   async initialize(): Promise<void> {
     await this.request("initialize", { clientInfo: CODEX_CLIENT_INFO });
     this.notify("initialized", {});
+    const effectiveConfig = (await this.request("config/read", {
+      includeLayers: true,
+      cwd: null,
+    })) as ConfigReadResult;
+    assertFileBackedCredentialStore(effectiveConfig);
   }
 
   /** Reads current account state without forcing a token refresh. */
@@ -260,7 +364,10 @@ class StdioCodexProbeSession implements CodexProbeSession {
 
     return {
       success: params.success,
-      error: typeof params.error === "string" ? redactText(params.error) : null,
+      error:
+        !params.success || typeof params.error === "string"
+          ? "Codex login failed"
+          : null,
     };
   }
 
@@ -294,22 +401,44 @@ class StdioCodexProbeSession implements CodexProbeSession {
 
   /** Closes the transport and terminates the complete app-server process tree. */
   async close(): Promise<void> {
-    if (this.closed) {
-      return;
+    return this.shutdown(new Error("Codex app-server session closed"));
+  }
+
+  /** Owns idempotent transport teardown for close, abort, and protocol faults. */
+  private shutdown(error: Error): Promise<void> {
+    if (this.shutdownPromise !== undefined) {
+      return this.shutdownPromise;
     }
+
     this.closed = true;
+    this.shutdownPromise = this.finishShutdown(error);
+    return this.shutdownPromise;
+  }
+
+  /** Rejects pending work and escalates from graceful to forced tree cleanup. */
+  private async finishShutdown(error: Error): Promise<void> {
     this.abortSignal?.removeEventListener("abort", this.abortHandler);
     this.lines.close();
     this.child.stdin.end();
-    terminateProcessTree(this.child.pid, "SIGTERM");
-    this.failAll(new Error("Codex app-server session closed"));
+    this.failAll(error);
+
+    try {
+      terminateProcessTree(this.child.pid, "SIGTERM");
+    } catch {
+      // A cleanup failure must remain stable and secret-free. The force-kill
+      // attempt below still gets a chance to terminate the process tree.
+    }
 
     const exitedGracefully = await Promise.race([
       this.exited.then(() => true),
       delay(1_000).then(() => false),
     ]);
     if (!exitedGracefully) {
-      terminateProcessTree(this.child.pid, "SIGKILL");
+      try {
+        terminateProcessTree(this.child.pid, "SIGKILL");
+      } catch {
+        // Do not reflect taskkill/process errors, which can contain host data.
+      }
       await Promise.race([this.exited, delay(1_000)]);
     }
   }
@@ -324,7 +453,7 @@ class StdioCodexProbeSession implements CodexProbeSession {
         this.pending.delete(id);
         reject(new Error(`Timed out waiting for Codex ${method}`));
       }, 30_000);
-      this.pending.set(id, { resolve, reject, timeout });
+      this.pending.set(id, { resolve, reject, timeout, operation: method });
     });
     this.write({ method, id, ...(params === undefined ? {} : { params }) });
     return response;
@@ -345,15 +474,6 @@ class StdioCodexProbeSession implements CodexProbeSession {
 
   /** Routes one response or notification without ever logging raw protocol. */
   private handleLine(line: string): void {
-    this.protocolBytes += Buffer.byteLength(line);
-    if (this.protocolBytes > MAX_PROTOCOL_BYTES) {
-      this.failAll(
-        new Error("Codex app-server protocol output exceeded limit")
-      );
-      void this.close();
-      return;
-    }
-
     let message: RpcMessage;
     try {
       message = JSON.parse(line) as RpcMessage;
@@ -372,9 +492,7 @@ class StdioCodexProbeSession implements CodexProbeSession {
       clearTimeout(pending.timeout);
       if (message.error) {
         pending.reject(
-          new Error(
-            `Codex app-server request failed (${message.error.code ?? "unknown"}): ${redactText(message.error.message ?? "unknown error")}`
-          )
+          createCodexRequestError(pending.operation, message.error)
         );
       } else {
         pending.resolve(message.result);
@@ -462,6 +580,7 @@ async function runCodexDeviceCodeProbe(options: {
   signal?: AbortSignal;
   loginTimeoutMs?: number;
 }): Promise<CodexDeviceProbeResult> {
+  assertSignalNotAborted(options.signal);
   const session = options.factory.create(options.codexHome, options.signal);
 
   try {
@@ -491,6 +610,7 @@ async function runCodexLogoutRestartProbe(options: {
   factory: CodexProbeSessionFactory;
   signal?: AbortSignal;
 }): Promise<CodexLogoutRestartResult> {
+  assertSignalNotAborted(options.signal);
   const firstSession = options.factory.create(
     options.codexHome,
     options.signal
@@ -508,6 +628,7 @@ async function runCodexLogoutRestartProbe(options: {
     await firstSession.close();
   }
 
+  assertSignalNotAborted(options.signal);
   const restartedSession = options.factory.create(
     options.codexHome,
     options.signal
@@ -528,7 +649,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Restricts device ceremony output to the documented secure OpenAI endpoint. */
 function sanitizeVerificationUrl(value: string): string {
-  const url = new URL(value);
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("Codex returned an unexpected device verification URL");
+  }
   if (url.protocol !== "https:" || url.hostname !== "auth.openai.com") {
     throw new Error("Codex returned an unexpected device verification URL");
   }
@@ -538,6 +664,15 @@ function sanitizeVerificationUrl(value: string): string {
   return `${url.origin}${url.pathname}`;
 }
 
+/** Produces a bounded RPC failure without trusting provider-controlled text. */
+function createCodexRequestError(
+  operation: string,
+  error: RpcMessage["error"]
+): Error {
+  const code = typeof error?.code === "number" ? ` (code ${error.code})` : "";
+  return new Error(`Codex ${operation} request failed${code}`);
+}
+
 /** Creates a short cleanup grace period without blocking the event loop. */
 async function delay(milliseconds: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -545,11 +680,16 @@ async function delay(milliseconds: number): Promise<void> {
 
 export {
   type AccountReadResult,
+  assertFileBackedCredentialStore,
   assertTemporaryCodexHome,
+  CODEX_APP_SERVER_ARGS,
+  CODEX_ISOLATION_ERROR,
   type CodexDeviceProbeResult,
   type CodexLogoutRestartResult,
   type CodexProbeSession,
   type CodexProbeSessionFactory,
+  createBoundedLineReader,
+  createCodexRequestError,
   type DeviceCodeCeremony,
   runCodexDeviceCodeProbe,
   runCodexLogoutRestartProbe,

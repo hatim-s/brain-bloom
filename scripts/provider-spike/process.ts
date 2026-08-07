@@ -1,4 +1,8 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import {
+  type ChildProcessWithoutNullStreams,
+  spawn,
+  spawnSync,
+} from "node:child_process";
 
 import { MAX_SAFE_TEXT_LENGTH } from "./security.ts";
 
@@ -23,9 +27,46 @@ type ProcessResult = ProcessExit & {
 };
 
 type KillProcess = (pid: number, signal: NodeJS.Signals) => void;
+type SpawnProcess = (
+  command: string,
+  args: string[],
+  options: Parameters<typeof spawn>[2]
+) => ChildProcessWithoutNullStreams;
+type WindowsTreeKiller = (pid: number, force: boolean) => void;
 
 interface CommandRunner {
   run(spec: ProcessSpec): Promise<ProcessResult>;
+}
+
+/** Rejects cancelled work before it can allocate files or spawn a child. */
+function assertSignalNotAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error("Provider probe cancelled");
+  }
+}
+
+/** Uses Windows' built-in taskkill tree mode without invoking a shell. */
+function runWindowsTaskkill(pid: number, force: boolean): void {
+  const result = spawnSync(
+    "taskkill",
+    ["/pid", String(pid), "/T", ...(force ? ["/F"] : [])],
+    { stdio: "ignore", windowsHide: true }
+  );
+
+  if (result.error) {
+    throw new Error("Unable to terminate provider process tree on Windows");
+  }
+
+  if (result.status !== 0) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+        return;
+      }
+    }
+    throw new Error("Unable to terminate provider process tree on Windows");
+  }
 }
 
 /** Terminates a spawned process group so descendants do not survive a probe. */
@@ -33,16 +74,22 @@ function terminateProcessTree(
   pid: number | undefined,
   signal: NodeJS.Signals,
   killProcess: KillProcess = process.kill,
-  platform = process.platform
+  platform = process.platform,
+  windowsTreeKiller: WindowsTreeKiller = runWindowsTaskkill
 ): void {
   if (pid === undefined) {
+    return;
+  }
+
+  if (platform === "win32") {
+    windowsTreeKiller(pid, signal === "SIGKILL");
     return;
   }
 
   try {
     // POSIX children are detached into their own group at spawn time. Killing
     // the negative pid reaches the provider CLI and every descendant it made.
-    killProcess(platform === "win32" ? pid : -pid, signal);
+    killProcess(-pid, signal);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code !== "ESRCH") {
@@ -53,8 +100,16 @@ function terminateProcessTree(
 
 /** Runs a bounded provider CLI process with timeout, abort, and tree cleanup. */
 class NodeCommandRunner implements CommandRunner {
+  private readonly spawnProcess: SpawnProcess;
+
+  constructor(spawnProcess: SpawnProcess = spawn as SpawnProcess) {
+    this.spawnProcess = spawnProcess;
+  }
+
   async run(spec: ProcessSpec): Promise<ProcessResult> {
-    const child = spawn(spec.command, spec.args, {
+    assertSignalNotAborted(spec.signal);
+
+    const child = this.spawnProcess(spec.command, spec.args, {
       cwd: spec.cwd,
       env: spec.env as NodeJS.ProcessEnv,
       detached: process.platform !== "win32",
@@ -114,6 +169,10 @@ async function collectProcessResult(
   const timeout = setTimeout(terminate, spec.timeoutMs);
   const abort = () => terminate();
   spec.signal?.addEventListener("abort", abort, { once: true });
+  if (spec.signal?.aborted) {
+    // Close the small race between the pre-spawn check and listener install.
+    terminate();
+  }
 
   try {
     const exit = await new Promise<ProcessExit>((resolve, reject) => {
@@ -150,9 +209,12 @@ async function collectProcessResult(
 }
 
 export {
+  assertSignalNotAborted,
   type CommandRunner,
   NodeCommandRunner,
   type ProcessResult,
   type ProcessSpec,
+  runWindowsTaskkill,
   terminateProcessTree,
+  type WindowsTreeKiller,
 };

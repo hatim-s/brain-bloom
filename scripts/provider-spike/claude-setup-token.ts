@@ -3,11 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  assertSignalNotAborted,
   type CommandRunner,
   NodeCommandRunner,
   type ProcessResult,
 } from "./process.ts";
-import { createIsolatedEnvironment, redactText } from "./security.ts";
+import { createIsolatedEnvironment } from "./security.ts";
 
 const MAX_TOKEN_BYTES = 4_096;
 const CLAUDE_PROBE_PROMPT =
@@ -17,11 +18,10 @@ type ClaudeProbeMetadata = {
   authenticated: boolean;
   durationMs: number | null;
   numTurns: number | null;
-  modelNames: string[];
 };
 
 interface TokenSource {
-  read(): Promise<string>;
+  read(signal?: AbortSignal): Promise<string>;
 }
 
 interface ClaudeValidationAdapter {
@@ -36,17 +36,57 @@ class StdinTokenSource implements TokenSource {
     this.input = input;
   }
 
-  async read(): Promise<string> {
-    let token = "";
+  async read(signal?: AbortSignal): Promise<string> {
+    assertSignalNotAborted(signal);
 
-    for await (const chunk of this.input) {
-      token += Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk);
-      if (Buffer.byteLength(token) > MAX_TOKEN_BYTES) {
-        throw new Error("Claude setup token input exceeded 4096 bytes");
+    return new Promise((resolve, reject) => {
+      let token = "";
+
+      /** Removes every listener so cancellation settles without retaining stdin. */
+      const cleanup = () => {
+        this.input.removeListener("data", onData);
+        this.input.removeListener("end", onEnd);
+        this.input.removeListener("error", onError);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const fail = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+      const onData = (chunk: string | Buffer) => {
+        token += Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk);
+        if (Buffer.byteLength(token) > MAX_TOKEN_BYTES) {
+          fail(new Error("Claude setup token input exceeded 4096 bytes"));
+        }
+      };
+      const onEnd = () => {
+        cleanup();
+        try {
+          resolve(validateToken(token));
+        } catch (error) {
+          reject(error);
+        }
+      };
+      const onError = () =>
+        fail(new Error("Could not read Claude setup token"));
+      const onAbort = () => {
+        cleanup();
+        if ("pause" in this.input && typeof this.input.pause === "function") {
+          this.input.pause();
+        }
+        reject(new Error("Provider probe cancelled"));
+      };
+
+      this.input.on("data", onData);
+      this.input.once("end", onEnd);
+      this.input.once("error", onError);
+      signal?.addEventListener("abort", onAbort, { once: true });
+
+      // Close the race where cancellation happens while listeners are attached.
+      if (signal?.aborted) {
+        onAbort();
       }
-    }
-
-    return validateToken(token);
+    });
   }
 }
 
@@ -58,7 +98,8 @@ class InMemoryTokenSource implements TokenSource {
     this.token = token;
   }
 
-  async read(): Promise<string> {
+  async read(signal?: AbortSignal): Promise<string> {
+    assertSignalNotAborted(signal);
     return validateToken(this.token);
   }
 }
@@ -90,38 +131,47 @@ class ClaudeCliValidationAdapter implements ClaudeValidationAdapter {
     token: string,
     signal?: AbortSignal
   ): Promise<ClaudeProbeMetadata> {
+    assertSignalNotAborted(signal);
     const isolatedHome = await mkdtemp(join(tmpdir(), "sprig-claude-probe-"));
 
     try {
-      const result = await this.runner.run({
-        command: this.command,
-        args: [
-          "--print",
-          "--output-format",
-          "json",
-          "--tools",
-          "",
-          "--permission-mode",
-          "dontAsk",
-          "--no-session-persistence",
-          "--setting-sources",
-          "",
-          CLAUDE_PROBE_PROMPT,
-        ],
-        cwd: this.cwd,
-        env: createIsolatedEnvironment(this.inheritedEnvironment, {
-          HOME: isolatedHome,
-          CLAUDE_CONFIG_DIR: isolatedHome,
-          CLAUDE_CODE_OAUTH_TOKEN: token,
-          CLAUDE_AGENT_SDK_CLIENT_APP: "sprig-provider-spike/0.1.0",
-          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-        }),
-        signal,
-        timeoutMs: 60_000,
-        maxOutputBytes: 64 * 1024,
-      });
+      let result: ProcessResult;
+      try {
+        result = await this.runner.run({
+          command: this.command,
+          args: [
+            "--print",
+            "--output-format",
+            "json",
+            "--tools",
+            "",
+            "--permission-mode",
+            "dontAsk",
+            "--no-session-persistence",
+            "--setting-sources",
+            "",
+            CLAUDE_PROBE_PROMPT,
+          ],
+          cwd: this.cwd,
+          env: createIsolatedEnvironment(this.inheritedEnvironment, {
+            HOME: isolatedHome,
+            CLAUDE_CONFIG_DIR: isolatedHome,
+            CLAUDE_CODE_OAUTH_TOKEN: token,
+            CLAUDE_AGENT_SDK_CLIENT_APP: "sprig-provider-spike/0.1.0",
+            CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+          }),
+          signal,
+          timeoutMs: 60_000,
+          maxOutputBytes: 64 * 1024,
+        });
+      } catch {
+        if (signal?.aborted) {
+          throw new Error("Provider probe cancelled");
+        }
+        throw new Error("Claude setup-token validation failed");
+      }
 
-      return parseClaudeResult(result, token);
+      return parseClaudeResult(result);
     } finally {
       // The exact directory was created by this invocation and contains only
       // disposable probe state. Removing it blocks credential persistence.
@@ -136,7 +186,9 @@ async function runClaudeSetupTokenProbe(options: {
   adapter: ClaudeValidationAdapter;
   signal?: AbortSignal;
 }): Promise<ClaudeProbeMetadata> {
-  const token = await options.tokenSource.read();
+  assertSignalNotAborted(options.signal);
+  const token = await options.tokenSource.read(options.signal);
+  assertSignalNotAborted(options.signal);
   return options.adapter.validate(token, options.signal);
 }
 
@@ -153,14 +205,9 @@ function validateToken(input: string): string {
 }
 
 /** Extracts an allowlisted result summary and discards all model content. */
-function parseClaudeResult(
-  result: ProcessResult,
-  token: string
-): ClaudeProbeMetadata {
+function parseClaudeResult(result: ProcessResult): ClaudeProbeMetadata {
   if (result.code !== 0) {
-    throw new Error(
-      `Claude setup-token validation failed: ${redactText(result.stderr, [token])}`
-    );
+    throw new Error("Claude setup-token validation failed");
   }
 
   let output: unknown;
@@ -182,16 +229,11 @@ function parseClaudeResult(
     throw new Error("Claude setup-token validation did not authenticate");
   }
 
-  const modelUsage = isRecord(output.modelUsage) ? output.modelUsage : {};
-
   return {
     authenticated: true,
     durationMs:
       typeof output.duration_ms === "number" ? output.duration_ms : null,
     numTurns: typeof output.num_turns === "number" ? output.num_turns : null,
-    modelNames: Object.keys(modelUsage)
-      .slice(0, 8)
-      .map((name) => redactText(name)),
   };
 }
 

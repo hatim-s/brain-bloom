@@ -19,12 +19,15 @@ pnpm provider:spike -- codex-device --codex-home "$CODEX_SPIKE_HOME"
 pnpm provider:spike -- codex-device --codex-home "$CODEX_SPIKE_HOME" --execute
 ```
 
-The executing form starts `codex app-server`, performs `initialize`, calls
-`account/read`, and starts `account/login/start` with exactly
+The executing form starts `codex app-server` with the official
+`cli_auth_credentials_store="file"` session flag. After `initialize`, it calls
+`config/read` and fails closed unless the effective value is `file` and its
+reported origin is the harness's session flag. Only then does it call
+`account/read` and start `account/login/start` with exactly
 `{"type":"chatgptDeviceCode"}`. It displays the verification URL and one-time
 user code, waits for `account/login/completed`, observes `account/updated`, and
-captures an allowlisted account summary. Email values, tokens, and raw protocol
-messages are never included in output.
+captures an allowlisted account summary. Email values, tokens, raw provider
+errors, stderr, and protocol messages are never included in output.
 
 To prove logout survives an app-server restart in that same isolated home:
 
@@ -33,8 +36,9 @@ pnpm provider:spike -- codex-logout-restart --codex-home "$CODEX_SPIKE_HOME"
 pnpm provider:spike -- codex-logout-restart --codex-home "$CODEX_SPIKE_HOME" --execute
 ```
 
-This intentionally logs out the temporary home. It never targets the default
-Codex home.
+This intentionally logs out the temporary file store. It never targets the
+default Codex home or an OS keyring. Codex probes currently fail closed on
+Windows because POSIX mode bits cannot validate Windows ACL privacy.
 
 ## Claude setup-token validation
 
@@ -49,10 +53,13 @@ pnpm provider:spike -- claude-token --execute < /path/to/private-token-file
 
 The executing form creates a throwaway home, passes the token only to the
 isolated Claude child environment, disables tools and session persistence, and
-asks for one minimal response. It returns only authentication, timing, turn,
-and model-name metadata. The throwaway home is removed afterward.
+asks for one minimal response. It returns only authentication, timing, and turn
+metadata; model output and the complete `modelUsage` object are discarded. The
+throwaway home is removed afterward.
 
 Both provider environments are built from a small non-credential allowlist.
 Ambient OpenAI, Anthropic, and cloud-provider API-key variables are therefore
-not inherited as fallback authentication. Output is bounded, error text is
-redacted, and cancellation terminates the provider process group.
+not inherited as fallback authentication. Output and pending protocol frames
+are bounded, provider errors are replaced with stable summaries, and
+cancellation terminates the complete provider process tree (POSIX process group
+or Windows `taskkill /T`).
