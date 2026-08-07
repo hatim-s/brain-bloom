@@ -69,10 +69,24 @@ arbitrary environment variables, or arbitrary model endpoints.
 Personal-beta access is default-deny. Next.js and every server-side connection
 entry point must check the authenticated Clerk subject against a
 server-controlled allowlist before creating connection metadata, issuing an
-internal assertion, contacting the gateway, or allowing any connection begin,
-poll, validate, select, revoke, delete, or execute operation. An absent,
-unavailable, empty, or non-matching allowlist denies the request; browser input
-and Convex client data cannot add or override allowed subjects.
+internal execution assertion, or allowing any connection begin/create,
+validate, select, or provider-execute operation. Removing a subject from the
+allowlist takes effect immediately for those operations. An absent,
+unavailable, empty, or non-matching allowlist denies new connection creation
+and credential use; browser input and Convex client data cannot add or override
+allowed subjects.
+
+The allowlist is not a prerequisite for safe teardown of already-owned state.
+After de-allowlisting, an authenticated owner who passes the normal ownership
+check may still request revocation or deletion of an existing connection and
+read only the safe status needed to finish that teardown. Tightly scoped
+server-only cleanup and reconciliation may likewise continue solely to revoke
+and delete already-stored gateway credentials. These paths retain request-rate
+limits, ownership enforcement, gateway evidence requirements, and
+secret-redacted audit events. They are idempotent and cannot create or select a
+connection, validate or reactivate credentials, mint an execution assertion,
+transition a connection back to usable state, or otherwise restore provider
+execution access.
 
 Connection endpoints also enforce endpoint-specific request-rate limits that
 are separate from execution concurrency and queue limits. Begin, poll,
@@ -232,9 +246,9 @@ these invariants:
    complete process tree can be cancelled deterministically.
 10. Neither missing connection state nor gateway failure triggers an API-key or
     operator-login fallback.
-11. Personal-beta connection creation and every lifecycle or execution path
-    require a server-controlled Clerk-subject allowlist match and otherwise
-    deny before metadata, assertion, or gateway side effects.
+11. Personal-beta connection creation, selection, validation, and provider
+    execution require a current server-controlled Clerk-subject allowlist match
+    and fail closed immediately when that match is removed.
 12. Every connection endpoint has finite per-owner and global request-rate
     budgets, enforced independently of provider concurrency and queue bounds;
     unavailable enforcement state fails closed.
@@ -245,6 +259,11 @@ these invariants:
 14. Credential-intake requests are size-bounded and pass both CSRF and
     same-origin `Origin` validation before plaintext is forwarded in memory;
     plaintext is never reflected, analyzed, or persisted.
+15. De-allowlisting never blocks an authenticated owner from safely revoking or
+    deleting an already-owned connection or blocks server-only cleanup and
+    reconciliation needed to destroy its stored credential. Teardown remains
+    ownership-checked, rate-limited, idempotent, and audited and cannot restore
+    validation, selection, or execution access.
 
 ## Consequences
 
@@ -293,21 +312,27 @@ disposable harness must prove:
 9. The selected persistent host can spawn both provider runtimes, stream for at
    least five minutes, cancel process trees, retain encrypted state across a
    restart, and meet the measured resource budget.
-10. A Clerk subject absent from the personal-beta allowlist cannot begin,
-    create, poll, validate, select, revoke, delete, or execute a connection;
-    rejection occurs before Convex writes, internal assertions, or gateway
-    contact.
-11. Endpoint-specific rate tests exhaust per-owner and global budgets for
+10. Removing a Clerk subject from the personal-beta allowlist immediately
+    prevents begin/create, selection, validation, and provider execution. The
+    rejected paths cannot write new connection metadata, mint execution
+    assertions, contact a provider runtime, or reactivate existing credentials.
+11. The same de-allowlisted but authenticated owner can still request
+    revocation/deletion of an already-owned connection and observe only its
+    teardown-safe status; server-only cleanup and reconciliation can finish
+    removing the stored credential. Repeated owner and cleanup requests are
+    idempotent and audited, ownership violations fail, and no teardown sequence
+    can return the connection to validated, selected, or executable state.
+12. Endpoint-specific rate tests exhaust per-owner and global budgets for
     begin, poll, validate, select, revoke, delete, and execute paths, prove one
     owner's budget cannot bypass the global bound, and prove unavailable
     limiter state fails closed. Separate load tests prove per-owner execution,
     global concurrency, and queue bounds still hold.
-12. Owner-facing mutations cannot set provider-validated status,
+13. Owner-facing mutations cannot set provider-validated status,
     `gatewayCredentialId`, provider account or plan hints, validation time, or
     provider-derived errors; invalid, stale, replayed, or mismatched gateway
     evidence cannot advance lifecycle state, while valid evidence can perform
     only its allowed transition.
-13. Oversized Claude setup-token requests and requests with missing or invalid
+14. Oversized Claude setup-token requests and requests with missing or invalid
     CSRF tokens or `Origin` fail before gateway forwarding. Accepted and
     rejected tokens remain absent from responses, analytics, persistence,
     logs, and traces.
