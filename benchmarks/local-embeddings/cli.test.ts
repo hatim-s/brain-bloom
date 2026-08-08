@@ -27,12 +27,12 @@ describe("local embedding benchmark CLI", () => {
         "--run",
         "--allow-downloads",
         "--adapter-module",
-        "./adapter.mjs",
+        "bundle/adapter.mjs",
       ])
     ).toMatchObject({
       run: true,
       allowDownloads: true,
-      adapterModule: "./adapter.mjs",
+      adapterModule: "bundle/adapter.mjs",
     });
   });
 

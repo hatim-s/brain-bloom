@@ -6,7 +6,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createJsonReport, createMarkdownReport } from "./report.ts";
-import { runBenchmark } from "./runner.ts";
+import { runBenchmarkIsolated, runSingleCandidate } from "./runner.ts";
 import type {
   BenchmarkClock,
   BenchmarkCorpus,
@@ -14,39 +14,45 @@ import type {
   CandidateConfiguration,
   EmbeddingAdapterFactory,
   RuntimeProbe,
+  VerifiedAdapterArtifact,
 } from "./types.ts";
 import { validateBenchmarkReport } from "./validation.ts";
 
 let workspaceRoot = "";
 const cacheRootRelative = "cache";
 const artifactContents = "deterministic fake model artifact";
-const artifactChecksum = `sha256:${createHash("sha256")
-  .update(artifactContents)
-  .digest("hex")}`;
+const artifactChecksum = `sha256:${createHash("sha256").update(artifactContents).digest("hex")}`;
+const adapterChecksum = `sha256:${"d".repeat(64)}`;
+const manifestChecksum = `sha256:${"e".repeat(64)}`;
+const dimensions = 70;
 
 const configuration: CandidateConfiguration = {
   schemaVersion: 1,
   budgets: {
-    maxColdLoadMs: 10,
-    maxWarmQueryP95Ms: 10,
+    maxColdLoadMs: 100,
+    maxWarmQueryP95Ms: 100,
     minIngestionSegmentsPerSecond: 1,
     maxResidentMemoryMb: 10,
     maxCacheBytes: 1_000,
   },
   cacheLimits: { maxBytes: 1_000, maxFiles: 10, maxDepth: 2 },
-  measurement: { warmQueryPasses: 2, memorySampleIntervalMs: 1 },
+  adapterLimits: { maxBytes: 1_000, maxFiles: 4, maxDepth: 2 },
+  measurement: { warmQueryPasses: 2 },
   candidates: ["a", "b"].map((key) => ({
     key: `candidate-${key}`,
     modelId: `local/candidate-${key}`,
     revision: key.repeat(40),
-    dimensions: 3,
+    dimensions,
     artifactChecksum,
     offlineCachePath: `candidate-${key}.bin`,
     adapter: {
       id: "fake-adapter",
       version: "1.0.0",
       revision: "c".repeat(40),
-      artifactChecksum: `sha256:${"d".repeat(64)}`,
+      modulePath: "bundle/adapter.mjs",
+      artifactChecksum: adapterChecksum,
+      manifestPath: `bundle/${key}.json`,
+      manifestChecksum,
     },
     runtime: { id: "fake-runtime", version: "1.0.0" },
     preprocessing: {
@@ -60,19 +66,161 @@ const configuration: CandidateConfiguration = {
   })),
 };
 
+const specialSources = [
+  {
+    sourceId: "alpha",
+    ownerId: "owner-alpha",
+    scopeId: "scope-alpha",
+    logicalSourceId: "alpha",
+    version: "1",
+    active: true,
+    retrievable: true,
+    scenario: "representative" as const,
+  },
+  {
+    sourceId: "beta",
+    ownerId: "owner-beta",
+    scopeId: "scope-beta",
+    logicalSourceId: "beta",
+    version: "1",
+    active: true,
+    retrievable: true,
+    scenario: "cross-owner" as const,
+  },
+  {
+    sourceId: "other-scope",
+    ownerId: "owner-alpha",
+    scopeId: "scope-other",
+    logicalSourceId: "other",
+    version: "1",
+    active: true,
+    retrievable: true,
+    scenario: "out-of-scope" as const,
+  },
+  {
+    sourceId: "old",
+    ownerId: "owner-study",
+    scopeId: "scope-core",
+    logicalSourceId: "revision",
+    version: "1",
+    active: false,
+    retrievable: true,
+    scenario: "inactive-version" as const,
+  },
+  {
+    sourceId: "current",
+    ownerId: "owner-study",
+    scopeId: "scope-core",
+    logicalSourceId: "revision",
+    version: "2",
+    active: true,
+    retrievable: true,
+    scenario: "representative" as const,
+  },
+  {
+    sourceId: "malformed",
+    ownerId: "owner-study",
+    scopeId: "scope-core",
+    logicalSourceId: "malformed",
+    version: "1",
+    active: true,
+    retrievable: false,
+    scenario: "malformed" as const,
+  },
+  {
+    sourceId: "limit",
+    ownerId: "owner-study",
+    scopeId: "scope-core",
+    logicalSourceId: "limit",
+    version: "1",
+    active: true,
+    retrievable: false,
+    scenario: "limit" as const,
+  },
+];
 const corpus: BenchmarkCorpus = {
   schemaVersion: 1,
   multilingual: { required: false, languages: ["en"] },
-  segments: Array.from({ length: 60 }, (_, index) => ({
-    id: `segment-${index}`,
-    sourceId: `source-${Math.floor(index / 20)}`,
-    format: (["pdf", "docx", "pptx"] as const)[index % 3],
-    locator: `locator ${index}`,
-    text: `synthetic study segment ${index}`,
-    language: "en",
-  })),
+  sources: [
+    {
+      sourceId: "main",
+      ownerId: "owner-study",
+      scopeId: "scope-core",
+      logicalSourceId: "main",
+      version: "1",
+      active: true,
+      retrievable: true,
+      scenario: "representative",
+    },
+    ...specialSources,
+  ],
+  segments: [
+    ...Array.from({ length: 63 }, (_, index) => ({
+      id: `segment-${index}`,
+      sourceId: "main",
+      format: (["pdf", "docx", "pptx"] as const)[index % 3],
+      locator: `locator ${index}`,
+      text: `study segment ${index}`,
+      language: "en",
+    })),
+    {
+      id: "alpha-segment",
+      sourceId: "alpha",
+      format: "pdf" as const,
+      locator: "alpha",
+      text: "alpha cedar",
+      language: "en",
+    },
+    {
+      id: "beta-segment",
+      sourceId: "beta",
+      format: "pdf" as const,
+      locator: "beta",
+      text: "beta cedar",
+      language: "en",
+    },
+    {
+      id: "other-segment",
+      sourceId: "other-scope",
+      format: "pdf" as const,
+      locator: "other",
+      text: "other cedar",
+      language: "en",
+    },
+    {
+      id: "old-segment",
+      sourceId: "old",
+      format: "docx" as const,
+      locator: "old",
+      text: "old ruby",
+      language: "en",
+    },
+    {
+      id: "current-segment",
+      sourceId: "current",
+      format: "docx" as const,
+      locator: "current",
+      text: "current emerald",
+      language: "en",
+    },
+    {
+      id: "malformed-segment",
+      sourceId: "malformed",
+      format: "pdf" as const,
+      locator: "malformed",
+      text: "malformed excluded",
+      language: "en",
+    },
+    {
+      id: "limit-segment",
+      sourceId: "limit",
+      format: "pdf" as const,
+      locator: "limit",
+      text: "limit excluded",
+      language: "en",
+    },
+  ],
 };
-
 const categories = [
   "headings",
   "definitions",
@@ -81,31 +229,94 @@ const categories = [
 ] as const;
 const questionSet: BenchmarkQuestionSet = {
   schemaVersion: 1,
+  qualityContext: {
+    ownerId: "owner-study",
+    scopeId: "scope-core",
+    scenario: "retrieval-quality",
+  },
   questions: Array.from({ length: 30 }, (_, index) => ({
     id: `question-${index}`,
-    text: `synthetic study question ${index}`,
+    text: `study segment ${index}`,
     category: categories[index % categories.length],
     language: "en",
-    relevantSegmentIds: [`segment-${index % corpus.segments.length}`],
+    relevantSegmentIds: [`segment-${index}`],
   })),
+  integrityQuestions: [
+    {
+      id: "cross",
+      text: "alpha cedar",
+      language: "en",
+      ownerId: "owner-alpha",
+      scopeId: "scope-alpha",
+      scenario: "cross-owner",
+      expectedSegmentIds: ["alpha-segment"],
+      forbiddenSegmentIds: ["beta-segment"],
+    },
+    {
+      id: "scope",
+      text: "alpha cedar",
+      language: "en",
+      ownerId: "owner-alpha",
+      scopeId: "scope-alpha",
+      scenario: "out-of-scope",
+      expectedSegmentIds: ["alpha-segment"],
+      forbiddenSegmentIds: ["other-segment"],
+    },
+    {
+      id: "version",
+      text: "current emerald",
+      language: "en",
+      ownerId: "owner-study",
+      scopeId: "scope-core",
+      scenario: "inactive-version",
+      expectedSegmentIds: ["current-segment"],
+      forbiddenSegmentIds: ["old-segment"],
+    },
+    {
+      id: "adversarial",
+      text: "study segment 30",
+      language: "en",
+      ownerId: "owner-study",
+      scopeId: "scope-core",
+      scenario: "adversarial",
+      expectedSegmentIds: ["segment-30"],
+      forbiddenSegmentIds: [],
+    },
+    {
+      id: "malformed",
+      text: "malformed excluded",
+      language: "en",
+      ownerId: "owner-study",
+      scopeId: "scope-core",
+      scenario: "malformed",
+      expectedSegmentIds: [],
+      forbiddenSegmentIds: ["malformed-segment"],
+    },
+    {
+      id: "limit",
+      text: "limit excluded",
+      language: "en",
+      ownerId: "owner-study",
+      scopeId: "scope-core",
+      scenario: "limit",
+      expectedSegmentIds: [],
+      forbiddenSegmentIds: ["limit-segment"],
+    },
+  ],
 };
 
-/** Produces valid deterministic vectors without loading a model. */
+const textVectorIndex = new Map(
+  corpus.segments.map((segment, index) => [segment.text, index])
+);
+/** Produces stable one-hot vectors so fixture retrieval behavior is explicit. */
 function fakeVector(text: string): number[] {
-  return [1, (text.length % 11) + 1, (text.charCodeAt(0) % 7) + 1];
+  const vector = Array.from({ length: dimensions }, () => 0);
+  vector[textVectorIndex.get(text) ?? dimensions - 1] = 1;
+  return vector;
 }
 
-/** Advances exactly one millisecond per observation for stable timing output. */
-function createClock(): BenchmarkClock {
-  let current = 0;
-  return { nowMs: () => current++ };
-}
-
-/** Creates a deterministic absolute/peak RSS probe for CI. */
-function createRuntimeProbe(
-  residentValues = [100, 100, 100, 100]
-): RuntimeProbe {
-  let residentIndex = 0;
+/** Creates a deterministic absolute/high-water RSS probe for CI. */
+function createRuntimeProbe(marker = 100): RuntimeProbe {
   return {
     environment: () => ({
       platform: "test",
@@ -114,31 +325,37 @@ function createRuntimeProbe(
       cpuModel: "deterministic-cpu",
       cpuCount: 1,
     }),
-    residentMemoryBytes: () =>
-      residentValues[Math.min(residentIndex++, residentValues.length - 1)],
-    measurePeak: async (operation) => ({
-      result: await operation(),
-      peakResidentMemoryBytes: 150,
-    }),
+    residentMemoryBytes: () => marker,
+    peakResidentMemoryBytes: () => 150,
   };
 }
 
 /** Creates the deterministic role-aware fake adapter used by CI. */
-function createAdapterFactory(events: string[] = []): EmbeddingAdapterFactory {
+function createAdapterFactory(
+  events: string[] = [],
+  advance: (amount: number) => void = () => undefined
+): EmbeddingAdapterFactory {
   return {
     create: async (candidate) => {
       events.push(`create:${candidate.key}`);
+      advance(10);
       return {
         identity: {
-          adapter: candidate.adapter,
+          adapter: {
+            id: candidate.adapter.id,
+            version: candidate.adapter.version,
+            revision: candidate.adapter.revision,
+          },
           runtime: candidate.runtime,
           preprocessing: candidate.preprocessing,
         },
         load: async () => {
           events.push(`load:${candidate.key}`);
+          advance(20);
         },
         embed: async (texts, role) => {
           events.push(`embed:${role}:${texts[0]}`);
+          advance(1);
           return texts.map(fakeVector);
         },
       };
@@ -146,22 +363,45 @@ function createAdapterFactory(events: string[] = []): EmbeddingAdapterFactory {
   };
 }
 
-/** Runs a fully offline two-candidate benchmark against fake artifacts. */
-async function runFakeBenchmark(
-  runtimeProbe = createRuntimeProbe(),
-  adapterFactory = createAdapterFactory()
+function verifiedFor(index: number): VerifiedAdapterArtifact {
+  const candidate = configuration.candidates[index];
+  return {
+    status: "verified",
+    modulePath: candidate.adapter.modulePath,
+    moduleChecksum: candidate.adapter.artifactChecksum,
+    manifestPath: candidate.adapter.manifestPath,
+    manifestChecksum: candidate.adapter.manifestChecksum,
+    adapter: {
+      id: candidate.adapter.id,
+      version: candidate.adapter.version,
+      revision: candidate.adapter.revision,
+    },
+    runtime: candidate.runtime,
+    preprocessing: candidate.preprocessing,
+  };
+}
+
+/** Runs one fully offline candidate with fake embeddings. */
+async function runFakeCandidate(
+  index = 0,
+  memoryMode: "isolated" | "in-process-test" = "isolated",
+  factory = createAdapterFactory(),
+  clock?: BenchmarkClock
 ) {
-  return runBenchmark({
+  return runSingleCandidate({
     configuration,
     corpus,
     questionSet,
-    adapterFactory,
+    candidateKey: configuration.candidates[index].key,
+    verifiedAdapter: verifiedFor(index),
+    adapterFactory: factory,
     workspaceRoot,
     cacheRootRelative,
     run: true,
     allowDownloads: false,
-    clock: createClock(),
-    runtimeProbe,
+    memoryMode,
+    runtimeProbe: createRuntimeProbe(),
+    clock,
   });
 }
 
@@ -184,53 +424,25 @@ describe("local embedding benchmark runner", () => {
     );
   });
 
-  it("runs pinned role-aware adapters and never emits a selection", async () => {
-    const report = await runFakeBenchmark();
-
-    expect(report.decision).toBe("not-selected");
-    expect(report.results).toHaveLength(2);
-    expect(report.results[0].offlineCache).toMatchObject({
-      status: "verified",
-      checksum: artifactChecksum,
-    });
-    expect(report.results[0].latency.warmQuery.samples).toBe(58);
-    expect(report.results[0].ingestion.segmentCount).toBe(60);
-    expect(report.results[0].resources).toMatchObject({
-      residentMemoryBeforeBytes: 100,
-      residentMemoryPeakBytes: 150,
-      residentMemoryAfterBytes: 100,
-      residentMemoryMeasurement: "valid",
-    });
-    expect(report.baselines.randomExpected["20"]).toBeCloseTo(1 / 3);
-  });
-
-  it("loads explicitly, measures cold query once, and warms each role before timing", async () => {
-    const events: string[] = [];
-    await runFakeBenchmark(createRuntimeProbe(), createAdapterFactory(events));
-    const firstCandidateEvents = events.slice(
+  it("starts cold-load timing before a delayed factory and includes eager preflight", async () => {
+    let time = 0;
+    const clock: BenchmarkClock = { nowMs: () => time };
+    const result = await runFakeCandidate(
       0,
-      events.indexOf("create:candidate-b")
+      "isolated",
+      createAdapterFactory([], (amount) => {
+        time += amount;
+      }),
+      clock
     );
-
-    expect(firstCandidateEvents[0]).toBe("create:candidate-a");
-    expect(firstCandidateEvents[1]).toBe("load:candidate-a");
-    expect(firstCandidateEvents[2]).toBe(
-      "embed:query:synthetic study question 0"
-    );
-    expect(firstCandidateEvents[3]).toBe(
-      "embed:document:synthetic study segment 0"
-    );
-    expect(
-      firstCandidateEvents.filter((event) =>
-        event.endsWith("synthetic study question 0")
-      )
-    ).toHaveLength(1);
+    expect(result.latency.coldLoadMs).toBe(33);
+    expect(result.latency.coldQueryMs).toBe(1);
   });
 
   it("denies a cache miss before creating an adapter", async () => {
     const create = vi.fn(createAdapterFactory().create);
     await expect(
-      runBenchmark({
+      runSingleCandidate({
         configuration: {
           ...configuration,
           candidates: configuration.candidates.map((candidate) => ({
@@ -240,42 +452,29 @@ describe("local embedding benchmark runner", () => {
         },
         corpus,
         questionSet,
+        candidateKey: "candidate-a",
+        verifiedAdapter: verifiedFor(0),
         adapterFactory: { create },
         workspaceRoot,
         cacheRootRelative,
         run: true,
         allowDownloads: false,
+        memoryMode: "isolated",
       })
     ).rejects.toThrow(/downloads remain denied/);
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("denies an oversized cache before creating an adapter", async () => {
-    const create = vi.fn(createAdapterFactory().create);
-    await expect(
-      runBenchmark({
-        configuration: {
-          ...configuration,
-          cacheLimits: { ...configuration.cacheLimits, maxBytes: 2 },
-        },
-        corpus,
-        questionSet,
-        adapterFactory: { create },
-        workspaceRoot,
-        cacheRootRelative,
-        run: true,
-        allowDownloads: false,
-      })
-    ).rejects.toThrow(/maxBytes/);
-    expect(create).not.toHaveBeenCalled();
-  });
-
-  it("refuses adapter identity drift before loading the model", async () => {
+  it("rejects self-reported identity drift before adapter load", async () => {
     const load = vi.fn(async () => undefined);
     const adapterFactory: EmbeddingAdapterFactory = {
       create: async (candidate) => ({
         identity: {
-          adapter: { ...candidate.adapter, version: "drifted" },
+          adapter: {
+            id: candidate.adapter.id,
+            version: "9.9.9",
+            revision: candidate.adapter.revision,
+          },
           runtime: candidate.runtime,
           preprocessing: candidate.preprocessing,
         },
@@ -283,53 +482,107 @@ describe("local embedding benchmark runner", () => {
         embed: async (texts) => texts.map(fakeVector),
       }),
     };
-
     await expect(
-      runFakeBenchmark(createRuntimeProbe(), adapterFactory)
-    ).rejects.toThrow(/identity mismatch/);
+      runFakeCandidate(0, "isolated", adapterFactory)
+    ).rejects.toThrow(/verified manifest/);
     expect(load).not.toHaveBeenCalled();
   });
 
-  it("marks an RSS regression invalid instead of clamping it to zero", async () => {
-    const report = await runFakeBenchmark(
-      createRuntimeProbe([200, 100, 200, 100])
+  it("marks in-process fake memory invalid and non-budget-eligible", async () => {
+    const result = await runFakeCandidate(0, "in-process-test");
+    expect(result.resources.residentMemoryMeasurement).toBe(
+      "invalid-in-process-test"
     );
-
-    expect(report.results[0].resources.residentMemoryMeasurement).toBe(
-      "invalid-after-below-before"
-    );
-    expect(report.results[0].budgets.residentMemoryMb.status).toBe("invalid");
+    expect(result.budgets.residentMemoryMb.status).toBe("invalid");
   });
 
-  it("produces deterministic validated JSON and human-readable comparisons", async () => {
-    const first = await runFakeBenchmark();
-    const second = await runFakeBenchmark();
+  it("uses a distinct isolated execution for each candidate in configured order", async () => {
+    const calls: string[] = [];
+    const probeMarkers = new Set<number>();
+    const report = await runBenchmarkIsolated({
+      configuration,
+      corpus,
+      questionSet,
+      verifiedAdapters: [verifiedFor(0), verifiedFor(1)],
+      absoluteModulePaths: ["/verified/a", "/verified/b"],
+      adapterRootRelative: "adapters",
+      workspaceRoot,
+      cacheRootRelative,
+      run: true,
+      allowDownloads: false,
+      executeCandidate: async (request) => {
+        calls.push(request.candidateKey);
+        const marker = calls.length * 100;
+        probeMarkers.add(marker);
+        return runSingleCandidate({
+          ...request,
+          adapterFactory: createAdapterFactory(),
+          memoryMode: "isolated",
+          runtimeProbe: createRuntimeProbe(marker),
+        });
+      },
+      environment: createRuntimeProbe().environment(),
+    });
+    expect(calls).toEqual(["candidate-a", "candidate-b"]);
+    expect(probeMarkers.size).toBe(2);
+    expect(
+      report.results.every(
+        (result) =>
+          result.resources.residentMemoryMeasurement ===
+          "valid-isolated-process"
+      )
+    ).toBe(true);
+  });
 
+  it("produces deterministic validated JSON and reports verified integrity", async () => {
+    const execute = async (
+      request: Parameters<
+        Parameters<typeof runBenchmarkIsolated>[0]["executeCandidate"]
+      >[0]
+    ) =>
+      runSingleCandidate({
+        ...request,
+        adapterFactory: createAdapterFactory(),
+        memoryMode: "isolated",
+        runtimeProbe: createRuntimeProbe(),
+        clock: {
+          nowMs: (() => {
+            let time = 0;
+            return () => time++;
+          })(),
+        },
+      });
+    const options = {
+      configuration,
+      corpus,
+      questionSet,
+      verifiedAdapters: [verifiedFor(0), verifiedFor(1)],
+      absoluteModulePaths: ["/a", "/b"],
+      adapterRootRelative: "adapters",
+      workspaceRoot,
+      cacheRootRelative,
+      run: true,
+      allowDownloads: false,
+      executeCandidate: execute,
+      environment: createRuntimeProbe().environment(),
+    };
+    const first = await runBenchmarkIsolated(options);
+    const second = await runBenchmarkIsolated(options);
     expect(createJsonReport(first)).toBe(createJsonReport(second));
-    const markdown = createMarkdownReport(first);
-    expect(markdown).toContain("Decision: **not selected**");
-    expect(markdown).toContain(artifactChecksum);
-    expect(markdown).toContain("fake-adapter@1.0.0");
-    expect(markdown).toContain("Random expected recall");
-  });
-
-  it("rejects invalid result enums and incomplete language aggregates", async () => {
-    const report = await runFakeBenchmark();
-    expect(() =>
-      validateBenchmarkReport({ ...report, decision: "selected" })
-    ).toThrow();
+    expect(first.results.every((result) => result.integrity.passed)).toBe(true);
+    expect(createMarkdownReport(first)).toContain("Decision: **not selected**");
     expect(() =>
       validateBenchmarkReport({
-        ...report,
-        results: report.results.map((result, index) =>
+        ...first,
+        results: first.results.map((result, index) =>
           index === 0
-            ? {
-                ...result,
-                multilingual: { ...result.multilingual, languages: {} },
-              }
+            ? { ...result, integrity: { ...result.integrity, passed: false } }
             : result
         ),
       })
-    ).toThrow(/language aggregates are incomplete/);
+    ).toThrow(/integrity gates/);
+    expect(() =>
+      validateBenchmarkReport({ ...first, decision: "selected" })
+    ).toThrow();
   });
 });

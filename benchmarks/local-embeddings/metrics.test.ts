@@ -73,6 +73,18 @@ describe("embedding benchmark metrics", () => {
     ).toEqual(["a", "z"]);
   });
 
+  it("ranks 1e308-class finite vectors by similarity instead of NaN ID order", () => {
+    expect(
+      rankSegments(
+        [1e308, 1e308],
+        [
+          { id: "a-wrong", vector: [1e308, -1e308] },
+          { id: "z-correct", vector: [1e308, 1e308] },
+        ]
+      )
+    ).toEqual(["z-correct", "a-wrong"]);
+  });
+
   it("summarizes median and nearest-rank p95 deterministically", () => {
     expect(summarizeLatencies([5, 1, 3, 2])).toEqual({
       samples: 4,

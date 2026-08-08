@@ -1,18 +1,21 @@
-/** Pinned adapter implementation that owns tokenizer and embedding behavior. */
+/** Pinned adapter artifact and manifest that bind executable behavior. */
 type AdapterIdentity = {
   id: string;
   version: string;
   revision: string;
+  modulePath: string;
   artifactChecksum: string;
+  manifestPath: string;
+  manifestChecksum: string;
 };
 
-/** Runtime identity makes native/backend differences visible in comparisons. */
+/** Runtime identity is verified from the adapter's bounded manifest. */
 type RuntimeIdentity = {
   id: string;
   version: string;
 };
 
-/** Explicit preprocessing contract prevents hidden pooling or prefix changes. */
+/** Preprocessing identity is verified from the adapter's bounded manifest. */
 type PreprocessingIdentity = {
   id: string;
   version: string;
@@ -20,6 +23,18 @@ type PreprocessingIdentity = {
   normalize: boolean;
   queryPrefix: string;
   documentPrefix: string;
+};
+
+/** Cryptographic provenance derived from confined artifact bytes, not adapter claims. */
+type VerifiedAdapterArtifact = {
+  status: "verified";
+  modulePath: string;
+  moduleChecksum: string;
+  manifestPath: string;
+  manifestChecksum: string;
+  adapter: Pick<AdapterIdentity, "id" | "version" | "revision">;
+  runtime: RuntimeIdentity;
+  preprocessing: PreprocessingIdentity;
 };
 
 /** Versioned, immutable identity and resource limits for one model candidate. */
@@ -44,7 +59,7 @@ type BenchmarkBudgets = {
   maxCacheBytes: number;
 };
 
-/** Hard traversal bounds applied before and while cache bytes are streamed. */
+/** Hard traversal bounds applied before and while bytes are streamed. */
 type CacheLimits = {
   maxBytes: number;
   maxFiles: number;
@@ -57,9 +72,9 @@ type CandidateConfiguration = {
   candidates: EmbeddingCandidate[];
   budgets: BenchmarkBudgets;
   cacheLimits: CacheLimits;
+  adapterLimits: CacheLimits;
   measurement: {
     warmQueryPasses: number;
-    memorySampleIntervalMs: number;
   };
 };
 
@@ -69,6 +84,25 @@ type QuestionCategory =
   | "definitions"
   | "slide-bullets"
   | "paraphrases";
+type IntegrityScenario =
+  | "cross-owner"
+  | "out-of-scope"
+  | "inactive-version"
+  | "adversarial"
+  | "malformed"
+  | "limit";
+
+/** Authorization and lifecycle metadata shared by normalized source segments. */
+type BenchmarkSource = {
+  sourceId: string;
+  ownerId: string;
+  scopeId: string;
+  logicalSourceId: string;
+  version: string;
+  active: boolean;
+  retrievable: boolean;
+  scenario: "representative" | IntegrityScenario;
+};
 
 /** Normalized, non-sensitive segment with document-style provenance. */
 type BenchmarkSegment = {
@@ -80,17 +114,18 @@ type BenchmarkSegment = {
   language: string;
 };
 
-/** Versioned corpus declares multilingual expectations explicitly. */
+/** Versioned corpus declares multilingual and source-integrity expectations. */
 type BenchmarkCorpus = {
   schemaVersion: 1;
   multilingual: {
     required: boolean;
     languages: string[];
   };
+  sources: BenchmarkSource[];
   segments: BenchmarkSegment[];
 };
 
-/** A question may have multiple relevant segments for recall evaluation. */
+/** A quality question may have multiple relevant segments for recall evaluation. */
 type BenchmarkQuestion = {
   id: string;
   text: string;
@@ -99,9 +134,27 @@ type BenchmarkQuestion = {
   relevantSegmentIds: string[];
 };
 
+/** Explicit integrity query contains positive and forbidden retrieval evidence. */
+type IntegrityQuestion = {
+  id: string;
+  text: string;
+  language: string;
+  ownerId: string;
+  scopeId: string;
+  scenario: IntegrityScenario;
+  expectedSegmentIds: string[];
+  forbiddenSegmentIds: string[];
+};
+
 type BenchmarkQuestionSet = {
   schemaVersion: 1;
+  qualityContext: {
+    ownerId: string;
+    scopeId: string;
+    scenario: "retrieval-quality";
+  };
   questions: BenchmarkQuestion[];
+  integrityQuestions: IntegrityQuestion[];
 };
 
 type EmbeddingRole = "document" | "query";
@@ -109,7 +162,7 @@ type EmbeddingRole = "document" | "query";
 /** Adapter boundary keeps model runtimes and downloads out of the harness and CI. */
 type EmbeddingAdapter = {
   identity: {
-    adapter: AdapterIdentity;
+    adapter: Pick<AdapterIdentity, "id" | "version" | "revision">;
     runtime: RuntimeIdentity;
     preprocessing: PreprocessingIdentity;
   };
@@ -155,15 +208,41 @@ type BudgetObservation = {
   status: "within" | "outside" | "invalid";
 };
 
+type IntegrityScenarioResult = {
+  questionCount: number;
+  expectedSegments: number;
+  expectedHitsAt20: number;
+  forbiddenSegments: number;
+  forbiddenHitsAt20: number;
+  passed: boolean;
+};
+
+type IntegrityEvaluation = {
+  required: true;
+  passed: boolean;
+  questionCount: number;
+  crossOwnerLeakageCount: number;
+  outOfScopeLeakageCount: number;
+  inactiveVersionLeakageCount: number;
+  excludedSourceLeakageCount: number;
+  forbiddenSegments: number;
+  forbiddenHitsAt20: number;
+  forbiddenHitRate: number;
+  expectedHitRateAt20: number;
+  scenarios: Record<IntegrityScenario, IntegrityScenarioResult>;
+};
+
 /** Measurements for one candidate; no field represents selection or activation. */
 type CandidateBenchmarkResult = {
   candidate: EmbeddingCandidate;
+  verifiedAdapter: VerifiedAdapterArtifact;
   offlineCache: {
     status: "verified";
     bytes: number;
     checksum: string;
   };
   recall: RecallMetrics;
+  integrity: IntegrityEvaluation;
   latency: {
     coldLoadMs: number;
     coldQueryMs: number;
@@ -178,7 +257,9 @@ type CandidateBenchmarkResult = {
     residentMemoryBeforeBytes: number;
     residentMemoryPeakBytes: number;
     residentMemoryAfterBytes: number;
-    residentMemoryMeasurement: "valid" | "invalid-after-below-before";
+    residentMemoryMeasurement:
+      | "valid-isolated-process"
+      | "invalid-in-process-test";
     cacheBytes: number;
   };
   budgets: {
@@ -214,9 +295,11 @@ type BenchmarkReport = {
   };
   budgets: BenchmarkBudgets;
   cacheLimits: CacheLimits;
+  adapterLimits: CacheLimits;
   measurement: {
     warmQueryPasses: number;
-    memorySampleIntervalMs: number;
+    isolation: "fresh-child-process-per-candidate";
+    memoryMetric: "process-high-water-rss";
   };
   baselines: {
     randomExpected: Record<"5" | "10" | "20", number>;
@@ -232,10 +315,7 @@ type BenchmarkClock = {
 type RuntimeProbe = {
   environment(): BenchmarkEnvironment;
   residentMemoryBytes(): number;
-  measurePeak<T>(
-    operation: () => Promise<T>,
-    sampleIntervalMs: number
-  ): Promise<{ result: T; peakResidentMemoryBytes: number }>;
+  peakResidentMemoryBytes(): number;
 };
 
 export type {
@@ -249,6 +329,7 @@ export type {
   BenchmarkQuestionSet,
   BenchmarkReport,
   BenchmarkSegment,
+  BenchmarkSource,
   BudgetObservation,
   CacheLimits,
   CandidateBenchmarkResult,
@@ -257,6 +338,10 @@ export type {
   EmbeddingAdapterFactory,
   EmbeddingCandidate,
   EmbeddingRole,
+  IntegrityEvaluation,
+  IntegrityQuestion,
+  IntegrityScenario,
+  IntegrityScenarioResult,
   LatencySummary,
   PreprocessingIdentity,
   QuestionCategory,
@@ -265,4 +350,5 @@ export type {
   RuntimeIdentity,
   RuntimeProbe,
   SegmentFormat,
+  VerifiedAdapterArtifact,
 };

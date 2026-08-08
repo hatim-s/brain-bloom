@@ -20,7 +20,10 @@ const validCandidate: EmbeddingCandidate = {
     id: "test-adapter",
     version: "1.0.0",
     revision: "c".repeat(40),
+    modulePath: "adapter/adapter.mjs",
     artifactChecksum: `sha256:${"d".repeat(64)}`,
+    manifestPath: "adapter/manifest.json",
+    manifestChecksum: `sha256:${"f".repeat(64)}`,
   },
   runtime: { id: "test-runtime", version: "1.0.0" },
   preprocessing: {
@@ -47,7 +50,8 @@ function createConfiguration(): CandidateConfiguration {
     schemaVersion: 1,
     budgets: validBudgets,
     cacheLimits: { maxBytes: 1_000, maxFiles: 10, maxDepth: 3 },
-    measurement: { warmQueryPasses: 2, memorySampleIntervalMs: 1 },
+    adapterLimits: { maxBytes: 1_000, maxFiles: 4, maxDepth: 2 },
+    measurement: { warmQueryPasses: 2 },
     candidates: [
       validCandidate,
       {
@@ -203,6 +207,39 @@ describe("benchmark fixture runtime validation", () => {
         ),
       })
     ).toThrow(/references missing/);
+  });
+
+  it("requires complete measurable integrity scenarios and valid exclusion metadata", async () => {
+    const fixtures = validateBenchmarkFixtures(
+      await readJsonFixture("corpus.v1.json"),
+      await readJsonFixture("questions.v1.json")
+    );
+    expect(() =>
+      validateBenchmarkFixtures(fixtures.corpus, {
+        ...fixtures.questionSet,
+        integrityQuestions: fixtures.questionSet.integrityQuestions.map(
+          (question) =>
+            question.scenario === "limit"
+              ? {
+                  ...question,
+                  scenario: "malformed" as const,
+                  forbiddenSegmentIds: ["pdf-25"],
+                }
+              : question
+        ),
+      })
+    ).toThrow(/cover scenario limit/);
+    expect(() =>
+      validateBenchmarkFixtures(fixtures.corpus, {
+        ...fixtures.questionSet,
+        integrityQuestions: fixtures.questionSet.integrityQuestions.map(
+          (question) =>
+            question.scenario === "cross-owner"
+              ? { ...question, forbiddenSegmentIds: ["pdf-26"] }
+              : question
+        ),
+      })
+    ).toThrow(/does not exercise cross-owner/);
   });
 });
 

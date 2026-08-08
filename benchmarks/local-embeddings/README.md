@@ -15,7 +15,7 @@ report.
 An actual evaluation requires a human to provide an adapter and opt in:
 
 ```sh
-pnpm benchmark:embeddings -- --run --adapter-module ./local-adapter.mjs
+pnpm benchmark:embeddings -- --run --adapter-module sprig-local-embedding-adapter-1.0.0/adapter.mjs
 ```
 
 If a declared offline cache is absent, execution fails before adapter creation.
@@ -26,13 +26,21 @@ symlink components, and verifies every present artifact checksum. An approved
 cache miss is created one directory at a time beneath that same root before its
 path is handed to the adapter.
 
-The injected module must named-export `createEmbeddingAdapterFactory()`. Its
-adapter must expose the configured adapter/runtime/preprocessing identity,
-implement an explicit `load()` phase, and accept `"query"` or `"document"` on
-every `embed()` call. Identity drift fails before load. Adapter implementations
-must also respect the passed `allowDownloads` and `offlineCachePath` options.
-Adapter modules remain local and are not committed because model runtime
-selection is still under evaluation.
+The adapter module and a per-candidate JSON manifest must exist beneath the
+dedicated `.cache/local-embedding-adapters` root at the relative paths pinned in
+configuration. Both files have reviewed SHA-256 pins and hard byte/file/depth
+limits. The harness rejects symlink roots, ancestors and entries, verifies the
+module bytes and manifest bytes before execution, derives adapter/runtime/
+preprocessing identity from the verified manifest, then repeats verification
+inside the candidate child immediately before import. A mismatch prevents both
+module import and factory creation.
+
+The verified module must named-export `createEmbeddingAdapterFactory()`. Its
+adapter implements an explicit `load()` phase and accepts `"query"` or
+`"document"` on every `embed()` call. Runtime identity claims must match the
+verified manifest. Adapter implementations must also respect the passed
+`allowDownloads` and confined `offlineCachePath` options. Adapter bytes remain
+local and are not committed because model runtime selection is under review.
 
 Candidate configuration is versioned in `candidates.v1.json`. Each expected
 cache digest identifies the complete file or directory at `offlineCachePath`.
@@ -47,11 +55,13 @@ a cache pass.
 
 ## Fixtures and outputs
 
-The committed synthetic corpus contains 70 normalized segments, including
+The committed synthetic corpus contains 73 normalized segments, including
 relevant passages and distractors resembling PDF headings, tables and
 two-column layouts; DOCX headings and lists; and PPTX titles and bullets. It
-also contains synthetic duplicate/revised, scope, prompt-injection, malformed
-and boundary markers. The 32 study questions cover headings, definitions,
+also contains versioned owner/scope metadata plus synthetic cross-owner,
+out-of-scope, inactive-revision, prompt-injection, malformed and boundary
+scenarios. Six required integrity questions assert zero forbidden retrieval and
+complete expected top-20 hits. The 32 study questions cover headings, definitions,
 slide bullets, paraphrases, and declared English/Spanish behavior. No fixture
 contains customer or private data. Reports record analytic random-expected and
 deterministic lexical baselines so recall@20 is interpreted against the full
@@ -63,10 +73,14 @@ subdirectory beneath that dedicated results root; absolute and escaping paths
 are rejected. Output directories and destinations may not be symlinks, and
 reports are written through exclusive temporary files plus atomic rename.
 
-Reports include exact model, adapter, runtime and preprocessing identity; cache
+Reports include exact model plus verified adapter/module/manifest digests,
+runtime and preprocessing identity; cache
 verification; environment; recall@5/10/20 with complete category/language
 sample counts; cold load and cold query timing; repeated, rotated warm-query
-passes; ingestion throughput; and absolute before/observed-peak/after RSS. A
-below-baseline final RSS marks the memory measurement invalid instead of
-clamping it. Reports always say `not-selected`; human review owns the model
-decision.
+passes; ingestion throughput; integrity leakage/hit rates; and absolute
+before/process-high-water/after RSS. Every real candidate runs in a fresh child
+process, so earlier candidates cannot contaminate memory results. In-process
+fake runs are explicitly invalid and not budget-eligible. Cold-load timing
+starts before `adapterFactory.create()` and includes explicit load plus eager
+query/document preflight. Reports always say `not-selected`; human review owns
+the model decision.

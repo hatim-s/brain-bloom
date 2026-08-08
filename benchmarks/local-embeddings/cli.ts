@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { executeWithVerifiedAdapterArtifacts } from "./adapter-artifact.ts";
+import { executeCandidateInFreshProcess } from "./candidate-process.ts";
 import {
   ensureConfinedDirectory,
   inspectConfinedPath,
@@ -10,8 +12,7 @@ import {
 } from "./paths.ts";
 import { validateCliDownloadFlags } from "./policy.ts";
 import { createJsonReport, createMarkdownReport } from "./report.ts";
-import { preflightCandidateCaches, runBenchmark } from "./runner.ts";
-import type { EmbeddingAdapterFactory } from "./types.ts";
+import { preflightCandidateCaches, runBenchmarkIsolated } from "./runner.ts";
 import {
   validateBenchmarkFixtures,
   validateCandidateConfiguration,
@@ -24,16 +25,11 @@ type CliOptions = {
   outputDirectoryRelative: string;
 };
 
-type AdapterModule = {
-  createEmbeddingAdapterFactory?: () =>
-    | EmbeddingAdapterFactory
-    | Promise<EmbeddingAdapterFactory>;
-};
-
 type DryRunMetadataInspector = typeof inspectConfinedPath;
 
 const benchmarkDirectory = path.dirname(fileURLToPath(import.meta.url));
 const CACHE_ROOT_RELATIVE = ".cache/local-embeddings";
+const ADAPTER_ROOT_RELATIVE = ".cache/local-embedding-adapters";
 const REPORT_ROOT_RELATIVE = "benchmarks/local-embeddings/results";
 
 /** Parses the intentionally small dry-run-first command line. */
@@ -54,6 +50,7 @@ function parseCliOptions(argv: string[]): CliOptions {
       if (!value || value.startsWith("--")) {
         throw new Error("--adapter-module requires a local module path");
       }
+      validateRelativePath(value, "--adapter-module");
       options.adapterModule = value;
       index += 1;
     } else if (argument === "--output-dir") {
@@ -126,21 +123,6 @@ async function createDryRunSummary(
   return `${lines.join("\n")}\n`;
 }
 
-/** Loads the explicitly supplied adapter only after execution consent is valid. */
-async function loadAdapterFactory(
-  modulePath: string
-): Promise<EmbeddingAdapterFactory> {
-  const imported = (await import(
-    pathToFileURL(path.resolve(modulePath)).href
-  )) as AdapterModule;
-  if (!imported.createEmbeddingAdapterFactory) {
-    throw new Error(
-      "Adapter module must export createEmbeddingAdapterFactory as a named function"
-    );
-  }
-  return imported.createEmbeddingAdapterFactory();
-}
-
 /** Validates fixtures, defaults to metadata-only status, and writes safely on --run. */
 async function main(argv = process.argv.slice(2)): Promise<void> {
   const options = parseCliOptions(argv);
@@ -171,16 +153,30 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   const adapterModule = options.adapterModule;
   if (!adapterModule)
     throw new Error("Adapter module is required for execution");
-  const report = await runBenchmark({
-    configuration,
-    corpus: fixtures.corpus,
-    questionSet: fixtures.questionSet,
-    adapterFactory: await loadAdapterFactory(adapterModule),
-    workspaceRoot,
-    cacheRootRelative: CACHE_ROOT_RELATIVE,
-    run: true,
-    allowDownloads: options.allowDownloads,
-  });
+  const report = await executeWithVerifiedAdapterArtifacts(
+    {
+      configuration,
+      workspaceRoot,
+      adapterRootRelative: ADAPTER_ROOT_RELATIVE,
+      suppliedModulePath: adapterModule,
+    },
+    (adapterPreflights) =>
+      runBenchmarkIsolated({
+        configuration,
+        corpus: fixtures.corpus,
+        questionSet: fixtures.questionSet,
+        verifiedAdapters: adapterPreflights.map((entry) => entry.verified),
+        absoluteModulePaths: adapterPreflights.map(
+          (entry) => entry.absoluteModulePath
+        ),
+        adapterRootRelative: ADAPTER_ROOT_RELATIVE,
+        executeCandidate: executeCandidateInFreshProcess,
+        workspaceRoot,
+        cacheRootRelative: CACHE_ROOT_RELATIVE,
+        run: true,
+        allowDownloads: options.allowDownloads,
+      })
+  );
   const outputDirectory = await ensureConfinedDirectory(
     workspaceRoot,
     REPORT_ROOT_RELATIVE,
@@ -212,9 +208,9 @@ if (invokedPath === import.meta.url) {
 }
 
 export {
+  ADAPTER_ROOT_RELATIVE,
   CACHE_ROOT_RELATIVE,
   createDryRunSummary,
-  loadAdapterFactory,
   main,
   parseCliOptions,
   parseJsonFixture,

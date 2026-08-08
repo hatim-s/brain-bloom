@@ -15,17 +15,38 @@ const QUESTION_CATEGORIES: QuestionCategory[] = [
   "paraphrases",
 ];
 
-/** Calculates cosine similarity for validated non-zero vectors. */
-function cosineSimilarity(left: number[], right: number[]): number {
-  let dot = 0;
-  let leftNorm = 0;
-  let rightNorm = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    dot += left[index] * right[index];
-    leftNorm += left[index] * left[index];
-    rightNorm += right[index] * right[index];
+/** Normalizes through max-component scaling so finite 1e308 values never overflow. */
+function normalizeForCosine(vector: number[]): number[] {
+  const scale = vector.reduce(
+    (maximum, value) => Math.max(maximum, Math.abs(value)),
+    0
+  );
+  if (!Number.isFinite(scale) || scale === 0) {
+    throw new Error("Cosine vector has an invalid scale");
   }
-  return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
+  const scaled = vector.map((value) => value / scale);
+  const norm = Math.sqrt(scaled.reduce((sum, value) => sum + value * value, 0));
+  if (!Number.isFinite(norm) || norm === 0) {
+    throw new Error("Cosine vector has an invalid norm");
+  }
+  return scaled.map((value) => value / norm);
+}
+
+/** Calculates cosine similarity with bounded normalized components. */
+function cosineSimilarity(left: number[], right: number[]): number {
+  if (left.length !== right.length) {
+    throw new Error("Cosine vectors must have matching dimensions");
+  }
+  const normalizedLeft = normalizeForCosine(left);
+  const normalizedRight = normalizeForCosine(right);
+  const similarity = normalizedLeft.reduce(
+    (sum, value, index) => sum + value * normalizedRight[index],
+    0
+  );
+  if (!Number.isFinite(similarity)) {
+    throw new Error("Cosine similarity is non-finite");
+  }
+  return similarity;
 }
 
 /** Ranks segment IDs by score with a stable ID tie-breaker. */
@@ -34,10 +55,13 @@ function rankSegments(
   segmentVectors: Array<{ id: string; vector: number[] }>
 ): string[] {
   return segmentVectors
-    .map(({ id, vector }) => ({
-      id,
-      score: cosineSimilarity(queryVector, vector),
-    }))
+    .map(({ id, vector }) => {
+      const score = cosineSimilarity(queryVector, vector);
+      if (!Number.isFinite(score)) {
+        throw new Error(`Non-finite similarity for segment ${id}`);
+      }
+      return { id, score };
+    })
     .sort(
       (left, right) =>
         right.score - left.score || left.id.localeCompare(right.id)
@@ -178,6 +202,7 @@ export {
   calculateRecallMetrics,
   cosineSimilarity,
   createRecallAggregate,
+  normalizeForCosine,
   rankSegments,
   recallAtDepth,
   summarizeLatencies,

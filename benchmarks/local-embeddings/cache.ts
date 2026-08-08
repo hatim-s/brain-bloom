@@ -113,7 +113,12 @@ async function hashFile(
   remainingBytes: number
 ): Promise<number> {
   let streamedBytes = 0;
-  const noFollow = constants.O_NOFOLLOW ?? 0;
+  if (constants.O_NOFOLLOW === undefined) {
+    throw new Error(
+      "Secure no-follow file opens are unavailable on this platform"
+    );
+  }
+  const noFollow = constants.O_NOFOLLOW;
   const handle = await open(file.absolutePath, constants.O_RDONLY | noFollow);
   try {
     const openedMetadata = await handle.stat();
@@ -181,9 +186,61 @@ async function verifyCacheArtifact(
   return metadata;
 }
 
+/** Reads one no-follow file under a strict cap after validating stable identity. */
+async function readBoundedFile(
+  filePath: string,
+  maxBytes: number
+): Promise<Buffer> {
+  const metadata = await lstat(filePath);
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
+    throw new Error(`Bounded artifact must be a real file: ${filePath}`);
+  }
+  if (metadata.size > maxBytes) {
+    throw new Error(
+      `Bounded artifact exceeds maxBytes ${maxBytes}: ${filePath}`
+    );
+  }
+  if (constants.O_NOFOLLOW === undefined) {
+    throw new Error(
+      "Secure no-follow file opens are unavailable on this platform"
+    );
+  }
+  const noFollow = constants.O_NOFOLLOW;
+  const handle = await open(filePath, constants.O_RDONLY | noFollow);
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  try {
+    const openedMetadata = await handle.stat();
+    if (
+      !openedMetadata.isFile() ||
+      openedMetadata.dev !== metadata.dev ||
+      openedMetadata.ino !== metadata.ino ||
+      openedMetadata.size !== metadata.size
+    ) {
+      throw new Error(`Bounded artifact changed before reading: ${filePath}`);
+    }
+    for await (const chunk of handle.createReadStream({ autoClose: false })) {
+      bytes += chunk.length;
+      if (bytes > maxBytes || bytes > metadata.size) {
+        throw new Error(
+          `Bounded artifact changed or exceeded maxBytes: ${filePath}`
+        );
+      }
+      chunks.push(Buffer.from(chunk));
+    }
+  } finally {
+    await handle.close();
+  }
+  if (bytes !== metadata.size) {
+    throw new Error(`Bounded artifact changed size while reading: ${filePath}`);
+  }
+  return Buffer.concat(chunks, bytes);
+}
+
 export {
   type CacheMetadata,
   enumerateCacheFiles,
   inspectCacheArtifact,
+  readBoundedFile,
   verifyCacheArtifact,
 };

@@ -4,6 +4,208 @@
     "required": true,
     "languages": ["en", "es"]
   },
+  "sources": [
+    {
+      "sourceId": "study-guide-pdf-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "study-guide-v1",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "history-notes-docx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "history-notes-v1",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "physics-review-pptx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "physics-review-v1",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "biology-reader-pdf-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "biology-reader-v1",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "biology-reader-pdf-v2",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "biology-reader-v2",
+      "version": "2",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "chemistry-guide-pdf-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "chemistry-guide",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "geography-notes-docx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "geography-notes",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "economics-notes-docx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "economics-notes",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "writing-notes-docx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "writing-notes",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "history-notes-docx-v2",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "history-notes-v2",
+      "version": "2",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "math-review-pptx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "math-review",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "computing-review-pptx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "computing-review",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "adversarial-instructions-pdf-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "adversarial-fixture",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "adversarial"
+    },
+    {
+      "sourceId": "limit-boundary-pdf-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "limit-fixture",
+      "version": "1",
+      "active": true,
+      "retrievable": false,
+      "scenario": "limit"
+    },
+    {
+      "sourceId": "malformed-source-note-pdf-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "malformed-fixture",
+      "version": "1",
+      "active": true,
+      "retrievable": false,
+      "scenario": "malformed"
+    },
+    {
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "ownerId": "owner-alpha",
+      "scopeId": "scope-alpha",
+      "logicalSourceId": "tenant-alpha-private",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "cross-owner"
+    },
+    {
+      "sourceId": "tenant-beta-private-pdf-v1",
+      "ownerId": "owner-beta",
+      "scopeId": "scope-beta",
+      "logicalSourceId": "tenant-beta-private",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "cross-owner"
+    },
+    {
+      "sourceId": "tenant-alpha-other-pdf-v1",
+      "ownerId": "owner-alpha",
+      "scopeId": "scope-other",
+      "logicalSourceId": "tenant-alpha-other",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "out-of-scope"
+    },
+    {
+      "sourceId": "revision-policy-docx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "revision-policy",
+      "version": "1",
+      "active": false,
+      "retrievable": true,
+      "scenario": "inactive-version"
+    },
+    {
+      "sourceId": "revision-policy-docx-v2",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "revision-policy",
+      "version": "2",
+      "active": true,
+      "retrievable": true,
+      "scenario": "inactive-version"
+    }
+  ],
   "segments": [
     {
       "id": "pdf-01",
@@ -566,6 +768,30 @@
       "locator": "slide 20 > bullet 2",
       "language": "es",
       "text": "La búsqueda binaria reduce a la mitad un intervalo ordenado en cada paso."
+    },
+    {
+      "id": "pdf-26",
+      "sourceId": "tenant-alpha-other-pdf-v1",
+      "format": "pdf",
+      "locator": "page 1 > heading: Other scope marker",
+      "language": "en",
+      "text": "Synthetic Alpha secondary scope contains the harmless marker amber for isolation evaluation."
+    },
+    {
+      "id": "docx-26",
+      "sourceId": "revision-policy-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Retired revision policy",
+      "language": "en",
+      "text": "Retired revision policy says archived citations use the obsolete violet marker."
+    },
+    {
+      "id": "docx-27",
+      "sourceId": "revision-policy-docx-v2",
+      "format": "docx",
+      "locator": "heading 1: Active revision policy",
+      "language": "en",
+      "text": "Active revision policy says current citations use the verified emerald marker."
     }
   ]
 }

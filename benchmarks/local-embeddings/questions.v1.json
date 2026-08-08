@@ -1,5 +1,10 @@
 {
   "schemaVersion": 1,
+  "qualityContext": {
+    "ownerId": "owner-study",
+    "scopeId": "scope-core",
+    "scenario": "retrieval-quality"
+  },
   "questions": [
     {
       "id": "q01",
@@ -227,6 +232,68 @@
       "category": "paraphrases",
       "language": "en",
       "relevantSegmentIds": ["pptx-01"]
+    }
+  ],
+  "integrityQuestions": [
+    {
+      "id": "iq-cross-owner",
+      "text": "Synthetic scope fixture Alpha contains the harmless marker cedar for isolation evaluation.",
+      "language": "en",
+      "ownerId": "owner-alpha",
+      "scopeId": "scope-alpha",
+      "scenario": "cross-owner",
+      "expectedSegmentIds": ["pdf-21"],
+      "forbiddenSegmentIds": ["pdf-22"]
+    },
+    {
+      "id": "iq-out-of-scope",
+      "text": "Synthetic scope fixture Alpha contains the harmless marker cedar for isolation evaluation.",
+      "language": "en",
+      "ownerId": "owner-alpha",
+      "scopeId": "scope-alpha",
+      "scenario": "out-of-scope",
+      "expectedSegmentIds": ["pdf-21"],
+      "forbiddenSegmentIds": ["pdf-26"]
+    },
+    {
+      "id": "iq-inactive-version",
+      "text": "Active revision policy says current citations use the verified emerald marker.",
+      "language": "en",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "scenario": "inactive-version",
+      "expectedSegmentIds": ["docx-27"],
+      "forbiddenSegmentIds": ["docx-26"]
+    },
+    {
+      "id": "iq-adversarial",
+      "text": "Untrusted document text says to ignore application rules; this sentence is evidence only and grants no authority.",
+      "language": "en",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "scenario": "adversarial",
+      "expectedSegmentIds": ["pdf-23"],
+      "forbiddenSegmentIds": []
+    },
+    {
+      "id": "iq-malformed",
+      "text": "This normalized note represents a rejected malformed-file test case and is not a parser fallback.",
+      "language": "en",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "scenario": "malformed",
+      "expectedSegmentIds": [],
+      "forbiddenSegmentIds": ["pdf-25"]
+    },
+    {
+      "id": "iq-limit",
+      "text": "Synthetic boundary fixture marks the final permitted PDF page without containing private content.",
+      "language": "en",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "scenario": "limit",
+      "expectedSegmentIds": [],
+      "forbiddenSegmentIds": ["pdf-24"]
     }
   ]
 }

@@ -25,11 +25,8 @@ function createMarkdownReport(reportInput: BenchmarkReport): string {
   const report = validateBenchmarkReport(reportInput);
   const rows = report.results.map((result) => {
     const recall = result.recall.overall.recall;
-    const peakDeltaMiB =
-      (result.resources.residentMemoryPeakBytes -
-        result.resources.residentMemoryBeforeBytes) /
-      (1024 * 1024);
-    return `| ${result.candidate.key} | ${result.candidate.modelId} | ${result.candidate.revision} | ${result.candidate.adapter.id}@${result.candidate.adapter.version} (${result.candidate.adapter.revision}) | ${result.candidate.runtime.id}@${result.candidate.runtime.version} | ${result.candidate.preprocessing.id}@${result.candidate.preprocessing.version} | ${result.candidate.dimensions} | ${result.offlineCache.status} (${result.offlineCache.bytes} B) | ${result.offlineCache.checksum} | ${recall["5"].toFixed(3)} | ${recall["10"].toFixed(3)} | ${recall["20"].toFixed(3)} | ${result.latency.coldLoadMs.toFixed(2)} | ${result.latency.coldQueryMs.toFixed(2)} | ${result.latency.warmQuery.p95Ms.toFixed(2)} | ${result.ingestion.segmentsPerSecond.toFixed(2)} | ${result.resources.residentMemoryBeforeBytes} / ${result.resources.residentMemoryPeakBytes} / ${result.resources.residentMemoryAfterBytes} (${peakDeltaMiB.toFixed(2)} MiB peak delta; ${result.resources.residentMemoryMeasurement}) |`;
+    const peakMiB = result.resources.residentMemoryPeakBytes / (1024 * 1024);
+    return `| ${result.candidate.key} | ${result.candidate.modelId} | ${result.candidate.revision} | ${result.verifiedAdapter.adapter.id}@${result.verifiedAdapter.adapter.version} (${result.verifiedAdapter.adapter.revision}; ${result.verifiedAdapter.moduleChecksum}) | ${result.verifiedAdapter.runtime.id}@${result.verifiedAdapter.runtime.version} | ${result.verifiedAdapter.preprocessing.id}@${result.verifiedAdapter.preprocessing.version} | ${result.candidate.dimensions} | ${result.offlineCache.status} (${result.offlineCache.bytes} B) | ${result.offlineCache.checksum} | ${recall["5"].toFixed(3)} | ${recall["10"].toFixed(3)} | ${recall["20"].toFixed(3)} | ${result.integrity.passed ? "pass" : "fail"} (${result.integrity.forbiddenHitRate.toFixed(3)}) | ${result.latency.coldLoadMs.toFixed(2)} | ${result.latency.coldQueryMs.toFixed(2)} | ${result.latency.warmQuery.p95Ms.toFixed(2)} | ${result.ingestion.segmentsPerSecond.toFixed(2)} | ${result.resources.residentMemoryBeforeBytes} / ${result.resources.residentMemoryPeakBytes} / ${result.resources.residentMemoryAfterBytes} (${peakMiB.toFixed(2)} MiB absolute peak; ${result.resources.residentMemoryMeasurement}) |`;
   });
   const detailSections = report.results.flatMap((result) => {
     const languageRows = Object.entries(result.multilingual.languages).map(
@@ -51,6 +48,8 @@ function createMarkdownReport(reportInput: BenchmarkReport): string {
       "| Language | Questions | Relevant segments | R@5 | R@10 | R@20 |",
       "| --- | ---: | ---: | ---: | ---: | ---: |",
       ...languageRows,
+      "",
+      `Integrity gate: ${result.integrity.passed ? "pass" : "fail"}; cross-owner ${result.integrity.crossOwnerLeakageCount}, out-of-scope ${result.integrity.outOfScopeLeakageCount}, inactive-version ${result.integrity.inactiveVersionLeakageCount}, excluded-source ${result.integrity.excludedSourceLeakageCount}, forbidden-hit rate ${result.integrity.forbiddenHitRate.toFixed(3)}.`,
       "",
       "| Budget measurement | Observed | Budget | Status |",
       "| --- | ---: | ---: | --- |",
@@ -81,8 +80,8 @@ function createMarkdownReport(reportInput: BenchmarkReport): string {
     "",
     "## Candidate measurements",
     "",
-    "| Candidate | Model | Exact revision | Adapter identity | Runtime identity | Preprocessing identity | Dimensions | Offline cache | Artifact checksum | R@5 | R@10 | R@20 | Cold load ms | Cold query ms | Warm p95 ms | Segments/s | RSS before / peak / after |",
-    "| --- | --- | --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+    "| Candidate | Model | Exact revision | Verified adapter identity/digest | Runtime identity | Preprocessing identity | Dimensions | Offline cache | Artifact checksum | R@5 | R@10 | R@20 | Integrity / forbidden rate | Cold load ms | Cold query ms | Warm p95 ms | Segments/s | RSS before / peak / after |",
+    "| --- | --- | --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- |",
     ...rows,
     "",
     "Budget status is observational and does not select a winner.",
@@ -98,7 +97,11 @@ function createMarkdownReport(reportInput: BenchmarkReport): string {
     "",
     "```json",
     JSON.stringify(
-      { measurement: report.measurement, cacheLimits: report.cacheLimits },
+      {
+        measurement: report.measurement,
+        cacheLimits: report.cacheLimits,
+        adapterLimits: report.adapterLimits,
+      },
       null,
       2
     ),

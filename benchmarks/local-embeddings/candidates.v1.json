@@ -12,9 +12,13 @@
     "maxFiles": 2000,
     "maxDepth": 8
   },
+  "adapterLimits": {
+    "maxBytes": 16777216,
+    "maxFiles": 4,
+    "maxDepth": 2
+  },
   "measurement": {
-    "warmQueryPasses": 3,
-    "memorySampleIntervalMs": 5
+    "warmQueryPasses": 3
   },
   "candidates": [
     {
@@ -28,7 +32,10 @@
         "id": "sprig-local-embedding-adapter",
         "version": "1.0.0",
         "revision": "4b1ad7e8c2a76b69c87e5876b1c78be78d1ab092",
-        "artifactChecksum": "sha256:a6be51dd880e7da398f9060202f3c1cb3ffc20188c77b3beab1d6d5317a14314"
+        "modulePath": "sprig-local-embedding-adapter-1.0.0/adapter.mjs",
+        "artifactChecksum": "sha256:a6be51dd880e7da398f9060202f3c1cb3ffc20188c77b3beab1d6d5317a14314",
+        "manifestPath": "sprig-local-embedding-adapter-1.0.0/minilm.manifest.json",
+        "manifestChecksum": "sha256:3de8dd2207a3ef133c25331dc9f317dc39049551ed517ff4537b4cc87f5f0a88"
       },
       "runtime": {
         "id": "onnxruntime",
@@ -54,7 +61,10 @@
         "id": "sprig-local-embedding-adapter",
         "version": "1.0.0",
         "revision": "4b1ad7e8c2a76b69c87e5876b1c78be78d1ab092",
-        "artifactChecksum": "sha256:a6be51dd880e7da398f9060202f3c1cb3ffc20188c77b3beab1d6d5317a14314"
+        "modulePath": "sprig-local-embedding-adapter-1.0.0/adapter.mjs",
+        "artifactChecksum": "sha256:a6be51dd880e7da398f9060202f3c1cb3ffc20188c77b3beab1d6d5317a14314",
+        "manifestPath": "sprig-local-embedding-adapter-1.0.0/bge.manifest.json",
+        "manifestChecksum": "sha256:0eed1d03a8e1975fb811c319f426ead384888ca366d54ad263b03fc27a13a343"
       },
       "runtime": {
         "id": "onnxruntime",
