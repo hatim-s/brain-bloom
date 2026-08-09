@@ -35,12 +35,14 @@ HTTP adapter (future) -> exact route/method -> assertion + replay verification
 ```
 
 Authentication occurs before body parsing. Missing, malformed, or
-signature-invalid assertions are not attributed to an owner. Once the internal
-signature has authenticated and a server-resolved owner is known, the endpoint
-budget is consumed even if replay, request context, media type, size, JSON, or
-operation input later rejects the attempt. Authentication failures remain
-`unauthorized` even if charging also fails, so budget state cannot become an
-authentication oracle.
+signature-invalid assertions are not attributed to an owner. Signature
+authentication is a narrow first stage that trusts no unparsed assertion claim.
+Once a configured key authenticates the raw bytes and a server-resolved owner is
+known, the endpoint budget is awaited before canonical encoding, claim, replay,
+request context, media type, size, JSON, or operation validation. The remaining
+assertion validation still runs when the budget rejects, preserving replay
+consumption for structurally valid signed attempts. An invalid signed assertion
+remains `unauthorized`, so budget state does not become an authentication oracle.
 
 The rate-budget interface receives both the per-owner and global limits in one
 server-owned policy object. A live implementation must consume both dimensions
@@ -52,6 +54,15 @@ Provider, operation, model, command, environment, path, and tool policy cannot
 be overridden at the envelope level. Each operation parser remains responsible
 for a strict operation-specific input schema. The handler receives the verified
 claims and a derived abort signal, never raw headers or route policy.
+
+Streaming input is bounded independently by total bytes, non-empty chunk count,
+and one wall-clock read deadline. Zero-byte chunks are invalid, exact-limit
+one-byte chunks are accepted, and the next chunk fails closed. Abort and deadline
+can interrupt a stalled iterator read; rejection requests iterator cleanup with
+a finite cleanup grace period, so a hostile `return()` hook cannot hang the
+response. Execution uses a separate timeout and an idempotent terminal-state
+guard: an abort or timeout that wins before the queued handoff prevents the
+operation callback from starting.
 
 ## Stable outcomes
 

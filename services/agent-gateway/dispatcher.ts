@@ -1,5 +1,6 @@
 import {
-  type AssertionErrorCode,
+  type AuthenticatedInternalAssertion,
+  authenticateInternalAssertion,
   type Clock,
   type ExpectedAssertionContext,
   GATEWAY_OPERATIONS,
@@ -8,30 +9,18 @@ import {
   InternalAssertionError,
   type ReplayDefense,
   type VerificationKeys,
-  verifyInternalAssertion,
+  verifyAuthenticatedInternalAssertion,
 } from "./internal-auth.ts";
 
 const DEFAULT_MAX_BODY_BYTES = 64 * 1_024;
+const DEFAULT_MAX_BODY_CHUNKS = 256;
+const DEFAULT_BODY_READ_TIMEOUT_MS = 5_000;
 const DEFAULT_EXECUTION_TIMEOUT_MS = 30_000;
 const MAX_BODY_BYTES = 1024 * 1_024;
+const MAX_BODY_CHUNKS = 4_096;
+const MAX_BODY_READ_TIMEOUT_MS = 30_000;
 const MAX_EXECUTION_TIMEOUT_MS = 5 * 60_000;
-
-const AUTHENTICATED_ASSERTION_FAILURES = new Set<AssertionErrorCode>([
-  "assertion_expired",
-  "assertion_from_future",
-  "assertion_lifetime_invalid",
-  "audience_mismatch",
-  "connection_mismatch",
-  "issuer_mismatch",
-  "noncanonical_assertion",
-  "operation_mismatch",
-  "provider_mismatch",
-  "replay_defense_unavailable",
-  "replay_detected",
-  "request_id_mismatch",
-  "subject_mismatch",
-  "unsupported_assertion_version",
-]);
+const BODY_CLEANUP_GRACE_MS = 25;
 
 type GatewayHeaderValue = string | readonly string[] | undefined;
 
@@ -165,6 +154,8 @@ type GatewayDispatcherOptions = Readonly<{
   rateBudget: RateBudget;
   operationRegistry: CodexOperationRegistry;
   maxBodyBytes?: number;
+  maxBodyChunks?: number;
+  bodyReadTimeoutMs?: number;
   executionTimeoutMs?: number;
 }>;
 
@@ -191,9 +182,18 @@ function createGatewayDispatcher(
   options: GatewayDispatcherOptions
 ): GatewayDispatcher {
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  const maxBodyChunks = options.maxBodyChunks ?? DEFAULT_MAX_BODY_CHUNKS;
+  const bodyReadTimeoutMs =
+    options.bodyReadTimeoutMs ?? DEFAULT_BODY_READ_TIMEOUT_MS;
   const executionTimeoutMs =
     options.executionTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS;
-  assertDispatcherConfiguration(options, maxBodyBytes, executionTimeoutMs);
+  assertDispatcherConfiguration(
+    options,
+    maxBodyBytes,
+    maxBodyChunks,
+    bodyReadTimeoutMs,
+    executionTimeoutMs
+  );
   const configuredOptions = snapshotDispatcherOptions(options);
 
   return async (request: GatewayRequestEnvelope): Promise<GatewayResponse> => {
@@ -208,24 +208,13 @@ function createGatewayDispatcher(
     }
 
     const assertion = readBearerAssertion(request.headers);
-    let claims: InternalAssertionClaims;
+    let authenticated: AuthenticatedInternalAssertion;
     try {
-      claims = await verifyInternalAssertion(assertion, {
-        clock: configuredOptions.clock,
-        expected: configuredOptions.expected,
-        replayDefense: configuredOptions.replayDefense,
-        verificationKeys: configuredOptions.verificationKeys,
-      });
+      authenticated = authenticateInternalAssertion(
+        assertion,
+        configuredOptions.verificationKeys
+      );
     } catch (error) {
-      // The verifier reaches these codes only after signature authentication.
-      // Charge the trusted, server-resolved owner without revealing whether the
-      // signed context or the budget was the reason for denial.
-      if (
-        error instanceof InternalAssertionError &&
-        AUTHENTICATED_ASSERTION_FAILURES.has(error.code)
-      ) {
-        await consumeRejectedAttempt(configuredOptions);
-      }
       if (
         error instanceof InternalAssertionError &&
         error.code === "internal_auth_configuration_invalid"
@@ -236,6 +225,25 @@ function createGatewayDispatcher(
     }
 
     const rateFailure = await consumeRateBudget(configuredOptions);
+
+    let claims: InternalAssertionClaims;
+    try {
+      // Budget charging is intentionally between signature authentication and
+      // all parsing, canonical, temporal, replay, and context validation.
+      claims = await verifyAuthenticatedInternalAssertion(authenticated, {
+        clock: configuredOptions.clock,
+        expected: configuredOptions.expected,
+        replayDefense: configuredOptions.replayDefense,
+      });
+    } catch (error) {
+      if (
+        error instanceof InternalAssertionError &&
+        error.code === "internal_auth_configuration_invalid"
+      ) {
+        return errorResponse("gateway_configuration_unavailable");
+      }
+      return errorResponse("unauthorized");
+    }
     if (rateFailure) {
       return errorResponse(rateFailure);
     }
@@ -245,7 +253,10 @@ function createGatewayDispatcher(
       const body = await readJsonBody(
         request.body,
         request.headers,
-        maxBodyBytes
+        maxBodyBytes,
+        maxBodyChunks,
+        bodyReadTimeoutMs,
+        request.signal
       );
       const operationInput = readOperationInput(body);
       const definition = configuredOptions.operationRegistry.get(
@@ -298,6 +309,8 @@ function snapshotDispatcherOptions(
 function assertDispatcherConfiguration(
   options: GatewayDispatcherOptions,
   maxBodyBytes: number,
+  maxBodyChunks: number,
+  bodyReadTimeoutMs: number,
   executionTimeoutMs: number
 ): void {
   if (
@@ -308,6 +321,10 @@ function assertDispatcherConfiguration(
     !options.operationRegistry.get(options.route.operation) ||
     !isPositiveSafeInteger(maxBodyBytes) ||
     maxBodyBytes > MAX_BODY_BYTES ||
+    !isPositiveSafeInteger(maxBodyChunks) ||
+    maxBodyChunks > MAX_BODY_CHUNKS ||
+    !isPositiveSafeInteger(bodyReadTimeoutMs) ||
+    bodyReadTimeoutMs > MAX_BODY_READ_TIMEOUT_MS ||
     !isPositiveSafeInteger(executionTimeoutMs) ||
     executionTimeoutMs > MAX_EXECUTION_TIMEOUT_MS
   ) {
@@ -366,19 +383,78 @@ function readSingletonHeader(
 async function readJsonBody(
   body: AsyncIterable<Uint8Array>,
   headers: Readonly<Record<string, GatewayHeaderValue>>,
-  maxBodyBytes: number
+  maxBodyBytes: number,
+  maxBodyChunks: number,
+  bodyReadTimeoutMs: number,
+  requestSignal: AbortSignal | undefined
 ): Promise<unknown> {
   const declaredLength = readContentLength(headers);
   if (declaredLength !== undefined && declaredLength > maxBodyBytes) {
     throw new GatewayRequestError("payload_too_large");
   }
 
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
+  if (requestSignal?.aborted) {
+    throw new GatewayRequestError("request_aborted");
+  }
+
+  let iterator: AsyncIterator<Uint8Array>;
   try {
-    for await (const chunk of body) {
+    iterator = body[Symbol.asyncIterator]();
+    if (typeof iterator.next !== "function") {
+      throw new GatewayRequestError("invalid_request");
+    }
+  } catch (error) {
+    if (error instanceof GatewayRequestError) throw error;
+    throw new GatewayRequestError("invalid_request");
+  }
+
+  const chunks: Uint8Array[] = [];
+  let chunkCount = 0;
+  let completed = false;
+  let totalBytes = 0;
+  let rejectCancellation: ((error: GatewayRequestError) => void) | undefined;
+  const cancellation = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = reject;
+  });
+  const handleAbort = (): void => {
+    rejectCancellation?.(new GatewayRequestError("request_aborted"));
+  };
+  requestSignal?.addEventListener("abort", handleAbort, { once: true });
+  const timeout = setTimeout(() => {
+    rejectCancellation?.(new GatewayRequestError("request_timeout"));
+  }, bodyReadTimeoutMs);
+
+  try {
+    if (requestSignal?.aborted) handleAbort();
+    while (true) {
+      let result: IteratorResult<Uint8Array>;
+      try {
+        result = await Promise.race([
+          Promise.resolve().then(() => iterator.next()),
+          cancellation,
+        ]);
+      } catch (error) {
+        if (error instanceof GatewayRequestError) throw error;
+        throw new GatewayRequestError("invalid_request");
+      }
+      if (typeof result !== "object" || result === null) {
+        throw new GatewayRequestError("invalid_request");
+      }
+      if (result.done) {
+        completed = true;
+        break;
+      }
+
+      const chunk = result.value;
       if (!(chunk instanceof Uint8Array)) {
         throw new GatewayRequestError("invalid_request");
+      }
+      if (chunk.byteLength === 0) {
+        throw new GatewayRequestError("invalid_request");
+      }
+      chunkCount += 1;
+      if (chunkCount > maxBodyChunks) {
+        throw new GatewayRequestError("payload_too_large");
       }
       if (chunk.byteLength > maxBodyBytes - totalBytes) {
         throw new GatewayRequestError("payload_too_large");
@@ -389,6 +465,10 @@ async function readJsonBody(
   } catch (error) {
     if (error instanceof GatewayRequestError) throw error;
     throw new GatewayRequestError("invalid_request");
+  } finally {
+    clearTimeout(timeout);
+    requestSignal?.removeEventListener("abort", handleAbort);
+    if (!completed) await closeBodyIterator(iterator);
   }
   if (declaredLength !== undefined && declaredLength !== totalBytes) {
     throw new GatewayRequestError("invalid_request");
@@ -405,6 +485,36 @@ async function readJsonBody(
     return JSON.parse(json) as unknown;
   } catch {
     throw new GatewayRequestError("invalid_request");
+  }
+}
+
+/** Requests iterator cleanup without allowing a hostile return hook to hang. */
+async function closeBodyIterator(
+  iterator: AsyncIterator<Uint8Array>
+): Promise<void> {
+  let returnMethod: AsyncIterator<Uint8Array>["return"];
+  try {
+    returnMethod = iterator.return;
+  } catch {
+    return;
+  }
+  if (typeof returnMethod !== "function") return;
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const cleanup = Promise.resolve()
+      .then(() => returnMethod.call(iterator))
+      .then(
+        () => undefined,
+        () => undefined
+      );
+    await Promise.race([
+      cleanup,
+      new Promise<void>((resolve) => {
+        cleanupTimer = setTimeout(resolve, BODY_CLEANUP_GRACE_MS);
+      }),
+    ]);
+  } finally {
+    if (cleanupTimer !== undefined) clearTimeout(cleanupTimer);
   }
 }
 
@@ -463,18 +573,6 @@ async function consumeRateBudget(
   }
 }
 
-/** Charges a signed rejected attempt while preserving its unauthorized result. */
-async function consumeRejectedAttempt(
-  options: GatewayDispatcherOptions
-): Promise<void> {
-  try {
-    await options.rateBudget.consume(rateAttempt(options));
-  } catch {
-    // The request already fails closed as unauthorized. Suppress store details
-    // and avoid turning rate state into an authentication oracle.
-  }
-}
-
 /** Builds the immutable budget key exclusively from server-authenticated data. */
 function rateAttempt(options: GatewayDispatcherOptions): RateBudgetAttempt {
   return {
@@ -508,12 +606,16 @@ async function executeWithCancellation(
       action();
     };
     const handleRequestAbort = (): void => {
-      executionController.abort();
-      finish(() => reject(new GatewayRequestError("request_aborted")));
+      finish(() => {
+        executionController.abort();
+        reject(new GatewayRequestError("request_aborted"));
+      });
     };
     const timeout = setTimeout(() => {
-      executionController.abort();
-      finish(() => reject(new GatewayRequestError("request_timeout")));
+      finish(() => {
+        executionController.abort();
+        reject(new GatewayRequestError("request_timeout"));
+      });
     }, timeoutMs);
     requestSignal?.addEventListener("abort", handleRequestAbort, {
       once: true,
@@ -526,12 +628,15 @@ async function executeWithCancellation(
     }
 
     Promise.resolve()
-      .then(() =>
-        definition.execute(input, {
+      .then(() => {
+        // Abort and timeout may settle while this microtask is queued. Never
+        // cross the execution boundary after either terminal outcome.
+        if (settled) return;
+        return definition.execute(input, {
           claims,
           signal: executionController.signal,
-        })
-      )
+        });
+      })
       .then(
         (result) => finish(() => resolve(result)),
         () => finish(() => reject(new GatewayRequestError("operation_failed")))
@@ -585,8 +690,10 @@ export {
   type CodexOperationDefinition,
   CodexOperationRegistry,
   createGatewayDispatcher,
+  DEFAULT_BODY_READ_TIMEOUT_MS,
   DEFAULT_EXECUTION_TIMEOUT_MS,
   DEFAULT_MAX_BODY_BYTES,
+  DEFAULT_MAX_BODY_CHUNKS,
   type GatewayDispatcher,
   type GatewayDispatcherOptions,
   type GatewayErrorBody,
@@ -598,6 +705,8 @@ export {
   type GatewayRoute,
   type GatewaySuccessBody,
   MAX_BODY_BYTES,
+  MAX_BODY_CHUNKS,
+  MAX_BODY_READ_TIMEOUT_MS,
   MAX_EXECUTION_TIMEOUT_MS,
   type OperationExecutionContext,
   type RateBudget,

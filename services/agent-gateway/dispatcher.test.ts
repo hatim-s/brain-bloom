@@ -62,6 +62,8 @@ function createFixture(
     parseInput: CodexOperationDefinition["parseInput"];
     timeoutMs: number;
     maxBodyBytes: number;
+    maxBodyChunks: number;
+    bodyReadTimeoutMs: number;
   }> = {}
 ) {
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
@@ -120,6 +122,8 @@ function createFixture(
     rateBudget,
     operationRegistry: registry,
     maxBodyBytes: options.maxBodyBytes ?? 64,
+    maxBodyChunks: options.maxBodyChunks ?? 32,
+    bodyReadTimeoutMs: options.bodyReadTimeoutMs ?? 1_000,
     executionTimeoutMs: options.timeoutMs ?? 1_000,
   });
 
@@ -161,19 +165,33 @@ function issueToken(
   );
 }
 
-/** Re-signs one controlled token so provider mismatch reaches context checks. */
-function rewriteSignedProvider(
+/** Re-signs controlled raw JSON so authenticated-invalid cases reach validation. */
+function rewriteSignedToken(
   token: string,
   privateKey: KeyObject,
-  provider: string
+  mutate: Readonly<{
+    header?: (value: Record<string, unknown>) => void;
+    claims?: (value: Record<string, unknown>) => void;
+    prettyHeader?: boolean;
+    prettyClaims?: boolean;
+  }>
 ): string {
-  const [header, encodedClaims] = token.split(".");
+  const [encodedHeader, encodedClaims] = token.split(".");
+  const header = JSON.parse(
+    Buffer.from(encodedHeader, "base64url").toString("utf8")
+  ) as Record<string, unknown>;
   const claims = JSON.parse(
     Buffer.from(encodedClaims, "base64url").toString("utf8")
   ) as Record<string, unknown>;
-  claims.provider = provider;
-  const nextClaims = Buffer.from(JSON.stringify(claims)).toString("base64url");
-  const signingInput = `${header}.${nextClaims}`;
+  mutate.header?.(header);
+  mutate.claims?.(claims);
+  const nextHeader = Buffer.from(
+    JSON.stringify(header, null, mutate.prettyHeader ? 2 : undefined)
+  ).toString("base64url");
+  const nextClaims = Buffer.from(
+    JSON.stringify(claims, null, mutate.prettyClaims ? 2 : undefined)
+  ).toString("base64url");
+  const signingInput = `${nextHeader}.${nextClaims}`;
   const signature = signBytes(
     null,
     Buffer.from(signingInput),
@@ -216,6 +234,36 @@ function createRequest(
 /** Converts text chunks into a transport-neutral async byte stream. */
 async function* chunks(...values: string[]): AsyncIterable<Uint8Array> {
   for (const value of values) yield Buffer.from(value);
+}
+
+/** Creates a body whose first read stalls until dispatcher cancellation. */
+function createStalledBody(): Readonly<{
+  body: AsyncIterable<Uint8Array>;
+  cleanupCalls: () => number;
+  started: Promise<void>;
+}> {
+  let cleanupCount = 0;
+  let markStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  const iterator: AsyncIterator<Uint8Array> = {
+    next() {
+      markStarted?.();
+      return new Promise<IteratorResult<Uint8Array>>(() => undefined);
+    },
+    async return() {
+      cleanupCount += 1;
+      return { done: true, value: undefined };
+    },
+  };
+  return {
+    body: {
+      [Symbol.asyncIterator]: () => iterator,
+    },
+    cleanupCalls: () => cleanupCount,
+    started,
+  };
 }
 
 /** Reads the stable error code without relying on implementation messages. */
@@ -326,7 +374,11 @@ describe("gateway dispatcher", () => {
         ...(kind === "operation" ? { operation: "node-editing" } : {}),
       });
       if (kind === "provider") {
-        token = rewriteSignedProvider(token, fixture.privateKey, "claude");
+        token = rewriteSignedToken(token, fixture.privateKey, {
+          claims: (claims) => {
+            claims.provider = "claude";
+          },
+        });
       }
 
       const response = await fixture.dispatch(
@@ -340,6 +392,82 @@ describe("gateway dispatcher", () => {
     }
   );
 
+  it.each(["noncanonical", "header", "claim", "kid"] as const)(
+    "charges a configured-key signature before rejecting invalid %s data",
+    async (kind) => {
+      const fixture = createFixture();
+      const token = rewriteSignedToken(
+        issueToken(fixture),
+        fixture.privateKey,
+        {
+          ...(kind === "noncanonical" ? { prettyClaims: true } : {}),
+          ...(kind === "header"
+            ? {
+                header: (header: Record<string, unknown>) => {
+                  header.algorithm = "not-EdDSA";
+                },
+              }
+            : {}),
+          ...(kind === "claim"
+            ? {
+                claims: (claims: Record<string, unknown>) => {
+                  claims.subject = "";
+                },
+              }
+            : {}),
+          ...(kind === "kid"
+            ? {
+                header: (header: Record<string, unknown>) => {
+                  header.kid = "configured-key-alias-mismatch";
+                },
+                claims: (claims: Record<string, unknown>) => {
+                  claims.kid = "configured-key-alias-mismatch";
+                },
+              }
+            : {}),
+        }
+      );
+
+      const response = await fixture.dispatch(
+        createRequest(fixture, { token })
+      );
+      expect([response.status, responseCode(response)]).toEqual([
+        401,
+        "unauthorized",
+      ]);
+      expect(fixture.rateBudget.attempts).toHaveLength(1);
+    }
+  );
+
+  it("does not charge unknown-key or signature-tampered assertions", async () => {
+    const fixture = createFixture();
+    const unknownKeys = generateKeyPairSync("ed25519");
+    const unknownToken = issueInternalAssertion(
+      {
+        ...fixture.expected,
+        nonce: "unknown_nonce",
+      },
+      { keyId: "unknown-key", privateKey: unknownKeys.privateKey },
+      fixture.clock
+    );
+    const validToken = issueToken(fixture, { nonce: "tampered_nonce" });
+    const [header, claims, signature] = validToken.split(".");
+    const signatureBytes = Buffer.from(signature, "base64url");
+    signatureBytes[0] ^= 0x01;
+    const tamperedToken = `${header}.${claims}.${signatureBytes.toString("base64url")}`;
+
+    for (const token of [unknownToken, tamperedToken]) {
+      const response = await fixture.dispatch(
+        createRequest(fixture, { token })
+      );
+      expect([response.status, responseCode(response)]).toEqual([
+        401,
+        "unauthorized",
+      ]);
+    }
+    expect(fixture.rateBudget.attempts).toHaveLength(0);
+  });
+
   it("keeps a signed context rejection unauthorized when charging is unavailable", async () => {
     const fixture = createFixture();
     fixture.rateBudget.failure = new Error(SECRET_CANARY);
@@ -352,6 +480,25 @@ describe("gateway dispatcher", () => {
     ]);
     expect(fixture.rateBudget.attempts).toHaveLength(1);
     expect(JSON.stringify(response)).not.toContain(SECRET_CANARY);
+  });
+
+  it("consumes replay state for a valid assertion rejected by the rate budget", async () => {
+    const fixture = createFixture();
+    fixture.rateBudget.failure = new RateBudgetError("exhausted");
+    const token = issueToken(fixture);
+    const limited = await fixture.dispatch(createRequest(fixture, { token }));
+    fixture.rateBudget.failure = undefined;
+    const replay = await fixture.dispatch(createRequest(fixture, { token }));
+
+    expect([limited.status, responseCode(limited)]).toEqual([
+      429,
+      "rate_limited",
+    ]);
+    expect([replay.status, responseCode(replay)]).toEqual([
+      401,
+      "unauthorized",
+    ]);
+    expect(fixture.rateBudget.attempts).toHaveLength(2);
   });
 
   it("charges replayed assertions while preserving an unauthorized response", async () => {
@@ -465,6 +612,83 @@ describe("gateway dispatcher", () => {
     ]);
   });
 
+  it("rejects zero-byte chunk floods and requests iterator cleanup", async () => {
+    const fixture = createFixture();
+    let closed = false;
+    async function* zeroByteFlood(): AsyncIterable<Uint8Array> {
+      try {
+        while (true) yield new Uint8Array();
+      } finally {
+        closed = true;
+      }
+    }
+
+    const response = await fixture.dispatch(
+      createRequest(fixture, { body: zeroByteFlood() })
+    );
+    expect([response.status, responseCode(response), closed]).toEqual([
+      400,
+      "invalid_request",
+      true,
+    ]);
+  });
+
+  it("accepts at most the configured number of one-byte chunks", async () => {
+    const json = JSON.stringify({ input: "hello" });
+    const exactFixture = createFixture({ maxBodyChunks: json.length });
+    const overflowFixture = createFixture({ maxBodyChunks: json.length });
+    const oneByteChunks = (value: string): AsyncIterable<Uint8Array> =>
+      chunks(...value.split(""));
+
+    const accepted = await exactFixture.dispatch(
+      createRequest(exactFixture, { body: oneByteChunks(json) })
+    );
+    const rejected = await overflowFixture.dispatch(
+      createRequest(overflowFixture, { body: oneByteChunks(`${json} `) })
+    );
+    expect(accepted.status).toBe(200);
+    expect([rejected.status, responseCode(rejected)]).toEqual([
+      413,
+      "payload_too_large",
+    ]);
+  });
+
+  it("aborts a stalled body read and requests iterator cleanup", async () => {
+    const execute = vi.fn();
+    const fixture = createFixture({ execute });
+    const controller = new AbortController();
+    const stalled = createStalledBody();
+    const pending = fixture.dispatch(
+      createRequest(fixture, { body: stalled.body, signal: controller.signal })
+    );
+    await stalled.started;
+    controller.abort(SECRET_CANARY);
+
+    const response = await pending;
+    expect([response.status, responseCode(response)]).toEqual([
+      499,
+      "request_aborted",
+    ]);
+    expect(stalled.cleanupCalls()).toBe(1);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("times out a stalled body read and requests iterator cleanup", async () => {
+    const execute = vi.fn();
+    const fixture = createFixture({ bodyReadTimeoutMs: 10, execute });
+    const stalled = createStalledBody();
+
+    const response = await fixture.dispatch(
+      createRequest(fixture, { body: stalled.body })
+    );
+    expect([response.status, responseCode(response)]).toEqual([
+      504,
+      "request_timeout",
+    ]);
+    expect(stalled.cleanupCalls()).toBe(1);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed lengths, invalid UTF-8, and byte-count mismatch", async () => {
     const requests = [
       (fixture: Fixture) => createRequest(fixture, { contentLength: "+2" }),
@@ -547,6 +771,29 @@ describe("gateway dispatcher", () => {
     expect(fixture.rateBudget.attempts).toHaveLength(1);
   });
 
+  it("never executes when an abort settles ahead of the queued handoff", async () => {
+    const controller = new AbortController();
+    const execute = vi.fn();
+    const fixture = createFixture({
+      execute,
+      parseInput: (input) => {
+        // This abort microtask is queued before executeWithCancellation queues
+        // its operation microtask, deterministically exercising the prior race.
+        queueMicrotask(() => controller.abort());
+        return input;
+      },
+    });
+
+    const response = await fixture.dispatch(
+      createRequest(fixture, { signal: controller.signal })
+    );
+    expect([response.status, responseCode(response)]).toEqual([
+      499,
+      "request_aborted",
+    ]);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("aborts an active operation without reflecting its eventual error", async () => {
     let operationSignal: AbortSignal | undefined;
     const fixture = createFixture({
@@ -618,7 +865,7 @@ describe("gateway dispatcher", () => {
     expect(JSON.stringify(responses)).not.toContain(SECRET_CANARY);
   });
 
-  it("maps verifier configuration failure to a stable unavailable response", async () => {
+  it("charges authenticated bytes before mapping later verifier configuration failure", async () => {
     const fixture = createFixture();
     const token = issueToken(fixture);
     fixture.clock.set(-1);
@@ -628,7 +875,7 @@ describe("gateway dispatcher", () => {
       503,
       "gateway_configuration_unavailable",
     ]);
-    expect(fixture.rateBudget.attempts).toHaveLength(0);
+    expect(fixture.rateBudget.attempts).toHaveLength(1);
   });
 
   it("rejects invalid or incomplete server registries during startup", () => {

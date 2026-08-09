@@ -108,6 +108,21 @@ type VerifyAssertionOptions = Readonly<{
   verificationKeys: VerificationKeys;
 }>;
 
+type VerifyAuthenticatedAssertionOptions = Omit<
+  VerifyAssertionOptions,
+  "verificationKeys"
+>;
+
+const AUTHENTICATED_ASSERTION_BRAND = Symbol("authenticated assertion");
+const AUTHENTICATED_ASSERTIONS = new WeakSet<object>();
+
+type AuthenticatedInternalAssertion = Readonly<{
+  [AUTHENTICATED_ASSERTION_BRAND]: true;
+  encodedHeader: string;
+  encodedClaims: string;
+  authenticatedKeyIds: readonly string[];
+}>;
+
 type ReplayEntry = Readonly<{
   requestId: string;
   nonce: string;
@@ -271,6 +286,23 @@ async function verifyInternalAssertion(
   token: string | null | undefined,
   options: VerifyAssertionOptions
 ): Promise<InternalAssertionClaims> {
+  const authenticated = authenticateInternalAssertion(
+    token,
+    options.verificationKeys
+  );
+  return verifyAuthenticatedInternalAssertion(authenticated, options);
+}
+
+/**
+ * Proves that the raw assertion bytes were signed by a configured key.
+ *
+ * Parsing is deliberately deferred. A trusted dispatcher may charge its
+ * server-resolved owner after this stage without trusting any unparsed claim.
+ */
+function authenticateInternalAssertion(
+  token: string | null | undefined,
+  verificationKeys: VerificationKeys
+): AuthenticatedInternalAssertion {
   if (!token) {
     throw new InternalAssertionError(
       "missing_assertion",
@@ -295,8 +327,34 @@ async function verifyInternalAssertion(
   const authenticatedKeyIds = authenticateSignature(
     signingInput,
     signature,
-    options.verificationKeys
+    verificationKeys
   );
+
+  const authenticated = Object.freeze({
+    [AUTHENTICATED_ASSERTION_BRAND]: true as const,
+    encodedHeader,
+    encodedClaims,
+    authenticatedKeyIds: Object.freeze([...authenticatedKeyIds]),
+  });
+  AUTHENTICATED_ASSERTIONS.add(authenticated);
+  return authenticated;
+}
+
+/**
+ * Validates authenticated bytes, consumes replay state, then matches context.
+ * Replay consumption remains before every expected-context comparison.
+ */
+async function verifyAuthenticatedInternalAssertion(
+  authenticated: AuthenticatedInternalAssertion,
+  options: VerifyAuthenticatedAssertionOptions
+): Promise<InternalAssertionClaims> {
+  if (
+    authenticated[AUTHENTICATED_ASSERTION_BRAND] !== true ||
+    !AUTHENTICATED_ASSERTIONS.has(authenticated)
+  ) {
+    throw invalidAssertion();
+  }
+  const { authenticatedKeyIds, encodedClaims, encodedHeader } = authenticated;
 
   const header = parseHeader(encodedHeader);
   const claims = parseClaims(encodedClaims);
@@ -646,6 +704,8 @@ function invalidAssertion(): InternalAssertionError {
 export {
   ASSERTION_VERSION,
   type AssertionErrorCode,
+  type AuthenticatedInternalAssertion,
+  authenticateInternalAssertion,
   BoundedReplayCache,
   type Clock,
   type ExpectedAssertionContext,
@@ -664,5 +724,7 @@ export {
   type VerificationKey,
   type VerificationKeys,
   type VerifyAssertionOptions,
+  type VerifyAuthenticatedAssertionOptions,
+  verifyAuthenticatedInternalAssertion,
   verifyInternalAssertion,
 };

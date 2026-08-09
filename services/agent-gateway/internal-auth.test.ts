@@ -3,6 +3,7 @@ import { generateKeyPairSync, sign as signBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
+  authenticateInternalAssertion,
   BoundedReplayCache,
   type Clock,
   type ExpectedAssertionContext,
@@ -12,6 +13,7 @@ import {
   type ReplayDefense,
   type SigningKey,
   type VerificationKeys,
+  verifyAuthenticatedInternalAssertion,
   verifyInternalAssertion,
 } from "./internal-auth.ts";
 
@@ -164,6 +166,74 @@ async function captureAssertionError(
 }
 
 describe("internal gateway assertions", () => {
+  it("stages configured-key authentication before strict payload validation", async () => {
+    const fixture = createFixture();
+    const token = issueToken(fixture);
+    const [encodedHeader, encodedClaims] = token.split(".");
+    const claims = JSON.parse(
+      Buffer.from(encodedClaims, "base64url").toString("utf8")
+    ) as Record<string, unknown>;
+    const noncanonicalClaims = Buffer.from(
+      JSON.stringify(claims, null, 2)
+    ).toString("base64url");
+    const signedNoncanonical = signEncodedAssertion(
+      encodedHeader,
+      noncanonicalClaims,
+      fixture.current.signing
+    );
+
+    const authenticated = authenticateInternalAssertion(
+      signedNoncanonical,
+      fixture.verificationKeys
+    );
+    await expectCode(
+      () =>
+        verifyAuthenticatedInternalAssertion(authenticated, {
+          clock: fixture.clock,
+          expected: fixture.expected,
+          replayDefense: new BoundedReplayCache(4),
+        }),
+      "noncanonical_assertion"
+    );
+
+    // Even copying every enumerable field and hidden symbol from a real stage
+    // cannot mint another signature-authenticated object identity.
+    const forged = { ...authenticated };
+    await expectCode(
+      () =>
+        verifyAuthenticatedInternalAssertion(forged, {
+          clock: fixture.clock,
+          expected: fixture.expected,
+          replayDefense: new BoundedReplayCache(4),
+        }),
+      "invalid_assertion"
+    );
+  });
+
+  it("does not create an authenticated stage for unknown or tampered signatures", async () => {
+    const fixture = createFixture();
+    const unknown = createKeyPair("unknown-key");
+    const unknownToken = issueToken(fixture, {}, unknown.signing);
+    await expectCode(
+      () =>
+        authenticateInternalAssertion(unknownToken, fixture.verificationKeys),
+      "invalid_signature"
+    );
+
+    const token = issueToken(fixture);
+    const [header, claims, signature] = token.split(".");
+    const bytes = Buffer.from(signature, "base64url");
+    bytes[0] ^= 0x01;
+    await expectCode(
+      () =>
+        authenticateInternalAssertion(
+          `${header}.${claims}.${bytes.toString("base64url")}`,
+          fixture.verificationKeys
+        ),
+      "invalid_signature"
+    );
+  });
+
   it("issues and verifies the exact Codex-only v1 context", async () => {
     const fixture = createFixture();
     const claims = await verifyToken(fixture, issueToken(fixture));
