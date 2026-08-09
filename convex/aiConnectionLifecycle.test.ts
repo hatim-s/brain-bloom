@@ -21,6 +21,11 @@ const reconcileGatewayLifecycle = makeFunctionReference<
     applied: boolean;
   }
 >("aiConnectionLifecycle:reconcileGatewayLifecycle");
+const listConnections = makeFunctionReference<
+  "action",
+  Record<string, never>,
+  unknown[]
+>("aiConnections:list");
 
 type Harness = ReturnType<typeof convexTest>;
 
@@ -69,6 +74,76 @@ function snapshot(
     state,
     ...overrides,
   };
+}
+
+const lifecycleStatuses: LifecycleState["status"][] = [
+  "pending",
+  "connected",
+  "error",
+  "expired",
+  "revoking",
+  "revoked",
+  "deleted",
+];
+const allowedTransitionKeys = new Set([
+  "pending->pending",
+  "pending->connected",
+  "pending->error",
+  "pending->expired",
+  "pending->revoking",
+  "connected->connected",
+  "connected->error",
+  "connected->expired",
+  "connected->revoking",
+  "error->error",
+  "error->connected",
+  "error->expired",
+  "error->revoking",
+  "expired->expired",
+  "expired->connected",
+  "expired->error",
+  "expired->revoking",
+  "revoking->revoked",
+  "revoked->deleted",
+]);
+const transitionCases = lifecycleStatuses.flatMap((source) =>
+  lifecycleStatuses.map((target) => ({
+    source,
+    target,
+    allowed: allowedTransitionKeys.has(`${source}->${target}`),
+  }))
+);
+
+/** Builds the closed provider fields required for one target status. */
+function stateForStatus(status: LifecycleState["status"]): LifecycleState {
+  switch (status) {
+    case "pending":
+      return { status };
+    case "connected":
+      return {
+        status,
+        gatewayCredentialId: "credential-transition",
+        validatedAt: 100,
+      };
+    case "error":
+      return {
+        status,
+        validatedAt: 100,
+        errorCode: "PROVIDER_UNAVAILABLE",
+      };
+    case "expired":
+      return {
+        status,
+        validatedAt: 100,
+        errorCode: "SESSION_EXPIRED",
+      };
+    case "revoking":
+      return { status, gatewayCredentialId: "credential-cleanup" };
+    case "revoked":
+      return { status, validatedAt: 100 };
+    case "deleted":
+      return { status, validatedAt: 100 };
+  }
 }
 
 /** Requires a complete stable error instead of accepting an oracle-prone substring. */
@@ -131,12 +206,7 @@ describe("gateway lifecycle reconciliation", () => {
 
     const projection = await t
       .withIdentity({ subject: "user_alice" })
-      .action(
-        makeFunctionReference<"action", Record<string, never>, unknown[]>(
-          "aiConnections:list"
-        ),
-        {}
-      );
+      .action(listConnections, {});
     expect(projection[0]).not.toHaveProperty("ownerId");
     expect(projection[0]).not.toHaveProperty("gatewayCredentialId");
     expect(projection[0]).not.toHaveProperty("lifecycleVersion");
@@ -316,77 +386,112 @@ describe("gateway lifecycle reconciliation", () => {
     );
   });
 
-  it.each([
-    {
-      source: "pending" as const,
-      state: {
-        status: "error" as const,
-        validatedAt: 100,
-        errorCode: "PROVIDER_UNAVAILABLE",
-      },
-    },
-    {
-      source: "connected" as const,
-      state: {
-        status: "expired" as const,
-        validatedAt: 100,
-        errorCode: "SESSION_EXPIRED",
-      },
-    },
-    {
-      source: "error" as const,
-      state: {
-        status: "connected" as const,
-        gatewayCredentialId: "credential-revalidated",
-        validatedAt: 100,
-      },
-    },
-    {
-      source: "expired" as const,
-      state: {
-        status: "connected" as const,
-        gatewayCredentialId: "credential-refreshed",
-        validatedAt: 100,
-      },
-    },
-  ])(
-    "allows provider evidence to move $source to $state.status",
-    async ({ source, state }) => {
+  it.each(transitionCases)(
+    "enforces transition $source -> $target (allowed: $allowed)",
+    async ({ source, target, allowed }) => {
       const t = createHarness();
       const connectionId = await seedConnection(t, "user_alice", source);
-
-      await t.mutation(reconcileGatewayLifecycle, {
-        snapshot: snapshot(connectionId, 1, state),
+      const reconciliation = t.mutation(reconcileGatewayLifecycle, {
+        snapshot: snapshot(connectionId, 1, stateForStatus(target)),
       });
 
+      if (!allowed) {
+        await expectErrorMessage(
+          reconciliation,
+          "Lifecycle transition rejected"
+        );
+        expect(
+          await t.run((ctx) =>
+            ctx.db.query("aiConnectionLifecycleReceipts").collect()
+          )
+        ).toEqual([]);
+        expect((await t.run((ctx) => ctx.db.get(connectionId)))?.status).toBe(
+          source
+        );
+        return;
+      }
+
+      await expect(reconciliation).resolves.toMatchObject({
+        connectionId,
+        status: target,
+        revision: 1,
+        applied: true,
+      });
       const stored = await t.run((ctx) => ctx.db.get(connectionId));
-      expect(stored?.status).toBe(state.status);
-      expect(stored?.isDefault).toBe(false);
+      expect(stored?.status).toBe(target);
       expect(stored?.lifecycleRevision).toBe(1);
+      expect(
+        await t.run((ctx) =>
+          ctx.db.query("aiConnectionLifecycleReceipts").collect()
+        )
+      ).toHaveLength(1);
     }
   );
 
   it("allows de-allowlisted cleanup to finish but never reactivate", async () => {
     const t = createHarness();
     const connectionId = await seedConnection(t, "user_removed", "connected");
-    const states: LifecycleState[] = [
-      {
-        status: "revoking",
+    await t.run((ctx) =>
+      ctx.db.patch(connectionId, {
         gatewayCredentialId: "credential-removed",
-        validatedAt: 100,
-      },
-      { status: "revoked", validatedAt: 200 },
-      { status: "deleted", validatedAt: 300 },
-    ];
+        accountHint: "rem***",
+        planLabel: "Stale plan",
+        lastValidationAt: 50,
+        lastErrorCode: "STALE_ERROR",
+      })
+    );
 
-    for (let index = 0; index < states.length; index += 1) {
-      const state = states[index];
-      await t.mutation(reconcileGatewayLifecycle, {
-        snapshot: snapshot(connectionId, index + 1, state, {
-          ownerId: "user_removed",
-        }),
-      });
-    }
+    await t.mutation(reconcileGatewayLifecycle, {
+      snapshot: snapshot(
+        connectionId,
+        1,
+        {
+          status: "revoking",
+          gatewayCredentialId: "credential-removed",
+        },
+        { ownerId: "user_removed" }
+      ),
+    });
+    const revoking = await t.run((ctx) => ctx.db.get(connectionId));
+    expect(revoking).toMatchObject({
+      status: "revoking",
+      gatewayCredentialId: "credential-removed",
+      isDefault: false,
+    });
+    expect(revoking?.accountHint).toBeUndefined();
+    expect(revoking?.planLabel).toBeUndefined();
+    expect(revoking?.lastValidationAt).toBeUndefined();
+    expect(revoking?.lastErrorCode).toBeUndefined();
+
+    const projection = await t
+      .withIdentity({ subject: "user_removed" })
+      .action(listConnections, {});
+    expect(projection[0]).toMatchObject({ status: "revoking" });
+    expect(projection[0]).not.toHaveProperty("gatewayCredentialId");
+    expect(projection[0]).not.toHaveProperty("accountHint");
+    expect(projection[0]).not.toHaveProperty("planLabel");
+    expect(projection[0]).not.toHaveProperty("lastValidationAt");
+    expect(projection[0]).not.toHaveProperty("lastErrorCode");
+
+    await t.mutation(reconcileGatewayLifecycle, {
+      snapshot: snapshot(
+        connectionId,
+        2,
+        { status: "revoked", validatedAt: 200 },
+        { ownerId: "user_removed" }
+      ),
+    });
+    expect(
+      (await t.run((ctx) => ctx.db.get(connectionId)))?.gatewayCredentialId
+    ).toBeUndefined();
+    await t.mutation(reconcileGatewayLifecycle, {
+      snapshot: snapshot(
+        connectionId,
+        3,
+        { status: "deleted", validatedAt: 300 },
+        { ownerId: "user_removed" }
+      ),
+    });
     const tombstone = await t.run((ctx) => ctx.db.get(connectionId));
     expect(tombstone).toMatchObject({
       status: "deleted",
@@ -414,29 +519,6 @@ describe("gateway lifecycle reconciliation", () => {
       "deleted"
     );
   });
-
-  it.each(["revoking", "revoked"] as const)(
-    "does not reactivate a %s connection",
-    async (terminalStatus) => {
-      const t = createHarness();
-      const connectionId = await seedConnection(
-        t,
-        "user_alice",
-        terminalStatus
-      );
-
-      await expectErrorMessage(
-        t.mutation(reconcileGatewayLifecycle, {
-          snapshot: snapshot(connectionId, 1, {
-            status: "connected",
-            gatewayCredentialId: "credential-reactivated",
-            validatedAt: 100,
-          }),
-        }),
-        "Lifecycle transition rejected"
-      );
-    }
-  );
 
   it("serializes concurrent first revisions so only one can advance", async () => {
     const t = createHarness();

@@ -34,9 +34,14 @@ Gateway cleanup or validation
 - Revisions begin at one and advance by exactly one. Stale, skipped,
   cross-owner, cross-connection, and non-Codex evidence fails with stable,
   secret-free errors.
-- `revoking`, `revoked`, and `deleted` cannot transition back to an executable
-  state. The stored `deleted` row is an intentional tombstone, not a live
-  credential record.
+- Teardown has one fail-closed graph: every nonterminal state must enter
+  `revoking`, only gateway cleanup evidence may advance `revoking` to
+  `revoked`, and only `revoked` may advance to the final `deleted` tombstone.
+  No terminal state can repeat with fresh evidence or return to an executable
+  state.
+- Entering `revoking` immediately clears public account, plan, validation, and
+  error metadata, while retaining only the internal opaque credential handle
+  required for cleanup. `revoked` and `deleted` clear that handle.
 - Gateway credential handles, reconciliation revisions, evidence ids, request
   ids, and owners are absent from public connection projections. Display hints
   and stable provider error codes are bounded and reject control characters or

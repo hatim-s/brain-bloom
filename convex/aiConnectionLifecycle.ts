@@ -38,8 +38,7 @@ const expiredState = v.object({
 });
 const revokingState = v.object({
   status: v.literal("revoking"),
-  gatewayCredentialId: v.optional(v.string()),
-  validatedAt: v.number(),
+  gatewayCredentialId: v.string(),
 });
 const revokedState = v.object({
   status: v.literal("revoked"),
@@ -89,8 +88,7 @@ type LifecycleState =
     }
   | {
       status: "revoking";
-      gatewayCredentialId?: string;
-      validatedAt: number;
+      gatewayCredentialId: string;
     }
   | {
       status: "revoked";
@@ -114,35 +112,13 @@ type LifecycleStatus = LifecycleState["status"];
 
 const allowedTransitions: Record<LifecycleStatus, readonly LifecycleStatus[]> =
   {
-    pending: [
-      "pending",
-      "connected",
-      "error",
-      "expired",
-      "revoking",
-      "revoked",
-      "deleted",
-    ],
-    connected: [
-      "connected",
-      "error",
-      "expired",
-      "revoking",
-      "revoked",
-      "deleted",
-    ],
-    error: ["error", "connected", "expired", "revoking", "revoked", "deleted"],
-    expired: [
-      "expired",
-      "connected",
-      "error",
-      "revoking",
-      "revoked",
-      "deleted",
-    ],
-    revoking: ["revoking", "revoked", "deleted"],
-    revoked: ["revoked", "deleted"],
-    deleted: ["deleted"],
+    pending: ["pending", "connected", "error", "expired", "revoking"],
+    connected: ["connected", "error", "expired", "revoking"],
+    error: ["error", "connected", "expired", "revoking"],
+    expired: ["expired", "connected", "error", "revoking"],
+    revoking: ["revoked"],
+    revoked: ["deleted"],
+    deleted: [],
   };
 
 /** Detects display-unsafe ASCII controls without retaining provider text. */
@@ -290,7 +266,9 @@ function lifecyclePatch(state: LifecycleState): Partial<Doc<"aiConnections">> {
         status: state.status,
         isDefault: false,
         gatewayCredentialId: state.gatewayCredentialId,
-        lastValidationAt: state.validatedAt,
+        accountHint: undefined,
+        planLabel: undefined,
+        lastValidationAt: undefined,
         lastErrorCode: undefined,
       };
     case "revoked":
