@@ -86,7 +86,7 @@ afterEach(() => {
 describe("ai connections", () => {
   it("creates pending Codex metadata entirely from server-derived fields", async () => {
     const { t, asAlice } = createHarness();
-    const { connectionId } = await asAlice.mutation(
+    const { connectionId } = await asAlice.action(
       api.aiConnections.createPendingCodex,
       {}
     );
@@ -117,29 +117,32 @@ describe("ai connections", () => {
     ["lastValidationAt", 1],
     ["lastErrorCode", "raw provider output"],
   ])("rejects the client-supplied %s field", async (field, value) => {
-    const { asAlice } = createHarness();
+    const { t, asAlice } = createHarness();
 
     await expectErrorMessage(
-      asAlice.mutation(api.aiConnections.createPendingCodex, {
+      asAlice.action(api.aiConnections.createPendingCodex, {
         [field]: value,
       } as never),
-      `Validator error: Unexpected field \`${field}\` in object`
+      "Invalid connection request"
     );
+    expect(
+      await t.run((ctx) => ctx.db.query("aiConnections").collect())
+    ).toEqual([]);
   });
 
   it("denies duplicate pending connections without affecting another owner", async () => {
     const { asAlice, asBob } = createHarness();
 
-    await asAlice.mutation(api.aiConnections.createPendingCodex, {});
-    await asBob.mutation(api.aiConnections.createPendingCodex, {});
+    await asAlice.action(api.aiConnections.createPendingCodex, {});
+    await asBob.action(api.aiConnections.createPendingCodex, {});
 
     await expectErrorMessage(
-      asAlice.mutation(api.aiConnections.createPendingCodex, {}),
+      asAlice.action(api.aiConnections.createPendingCodex, {}),
       "Connection already pending"
     );
 
-    expect(await asAlice.query(api.aiConnections.list, {})).toHaveLength(1);
-    expect(await asBob.query(api.aiConnections.list, {})).toHaveLength(1);
+    expect(await asAlice.action(api.aiConnections.list, {})).toHaveLength(1);
+    expect(await asBob.action(api.aiConnections.list, {})).toHaveLength(1);
   });
 
   it.each([undefined, "", "user_bob"])(
@@ -154,7 +157,7 @@ describe("ai connections", () => {
       }
 
       await expectErrorMessage(
-        asAlice.mutation(api.aiConnections.createPendingCodex, {}),
+        asAlice.action(api.aiConnections.createPendingCodex, {}),
         "Personal beta access unavailable"
       );
     }
@@ -168,7 +171,7 @@ describe("ai connections", () => {
     });
     await seedConnection(t, { ownerId: "user_bob" });
 
-    const connections = await asAlice.query(api.aiConnections.list, {});
+    const connections = await asAlice.action(api.aiConnections.list, {});
 
     expect(connections).toHaveLength(1);
     expect(connections[0]).toMatchObject({
@@ -188,8 +191,8 @@ describe("ai connections", () => {
     const connectionId = await seedConnection(t, { ownerId: "user_alice" });
     vi.stubEnv(PERSONAL_BETA_SUBJECTS_ENV, "user_bob");
 
-    const listed = await asAlice.query(api.aiConnections.list, {});
-    const status = await asAlice.query(api.aiConnections.getStatus, {
+    const listed = await asAlice.action(api.aiConnections.list, {});
+    const status = await asAlice.action(api.aiConnections.getStatus, {
       connectionId,
     });
 
@@ -206,13 +209,13 @@ describe("ai connections", () => {
     await t.run((ctx) => ctx.db.delete(missingConnection));
 
     await expectErrorMessage(
-      asAlice.query(api.aiConnections.getStatus, {
+      asAlice.action(api.aiConnections.getStatus, {
         connectionId: bobConnection,
       }),
       "Connection unavailable"
     );
     await expectErrorMessage(
-      asAlice.query(api.aiConnections.getStatus, {
+      asAlice.action(api.aiConnections.getStatus, {
         connectionId: missingConnection,
       }),
       "Connection unavailable"
@@ -234,7 +237,7 @@ describe("ai connections", () => {
       isDefault: true,
     });
 
-    await asAlice.mutation(api.aiConnections.selectDefaultCodex, {
+    await asAlice.action(api.aiConnections.selectDefaultCodex, {
       connectionId: selectedAlice,
     });
 
@@ -264,7 +267,7 @@ describe("ai connections", () => {
       });
 
       await expectErrorMessage(
-        asAlice.mutation(api.aiConnections.selectDefaultCodex, {
+        asAlice.action(api.aiConnections.selectDefaultCodex, {
           connectionId: invalid,
         }),
         "Connection unavailable"
@@ -291,7 +294,7 @@ describe("ai connections", () => {
     });
 
     await expectErrorMessage(
-      asAlice.mutation(api.aiConnections.selectDefaultCodex, {
+      asAlice.action(api.aiConnections.selectDefaultCodex, {
         connectionId: bobDefault,
       }),
       "Connection unavailable"
@@ -311,7 +314,7 @@ describe("ai connections", () => {
     vi.stubEnv(PERSONAL_BETA_SUBJECTS_ENV, "user_bob");
 
     await expectErrorMessage(
-      asAlice.mutation(api.aiConnections.selectDefaultCodex, { connectionId }),
+      asAlice.action(api.aiConnections.selectDefaultCodex, { connectionId }),
       "Personal beta access unavailable"
     );
     expect((await t.run((ctx) => ctx.db.get(connectionId)))?.isDefault).toBe(
@@ -320,14 +323,25 @@ describe("ai connections", () => {
   });
 
   it("requires Clerk authentication for every entry point", async () => {
-    const { anonymous } = createHarness();
+    const { t, anonymous } = createHarness();
+    const connectionId = await seedConnection(t, { ownerId: "user_alice" });
 
     await expectErrorMessage(
-      anonymous.query(api.aiConnections.list, {}),
+      anonymous.action(api.aiConnections.list, {}),
       "Unauthenticated"
     );
     await expectErrorMessage(
-      anonymous.mutation(api.aiConnections.createPendingCodex, {}),
+      anonymous.action(api.aiConnections.createPendingCodex, {}),
+      "Unauthenticated"
+    );
+    await expectErrorMessage(
+      anonymous.action(api.aiConnections.getStatus, { connectionId }),
+      "Unauthenticated"
+    );
+    await expectErrorMessage(
+      anonymous.action(api.aiConnections.selectDefaultCodex, {
+        connectionId,
+      }),
       "Unauthenticated"
     );
   });

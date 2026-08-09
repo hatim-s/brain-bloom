@@ -1,39 +1,51 @@
+import { makeFunctionReference } from "convex/server";
 import { ConvexError, v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { mutation, query } from "./_generated/server";
+import { action } from "./_generated/server";
 import { requireUser } from "./lib/access";
 import { isPersonalBetaSubjectAllowed } from "./lib/personalBeta";
 
 const PERSONAL_BETA_ACCESS_UNAVAILABLE = "Personal beta access unavailable";
-const CONNECTION_ALREADY_PENDING = "Connection already pending";
-const CONNECTION_UNAVAILABLE = "Connection unavailable";
+const INVALID_CONNECTION_REQUEST = "Invalid connection request";
 
-type ConnectionContext = MutationCtx | QueryCtx;
+type ConnectionRateEndpoint =
+  | "createPendingCodex"
+  | "selectDefaultCodex"
+  | "list"
+  | "getStatus";
 type SafeConnection = Omit<
   Doc<"aiConnections">,
   "ownerId" | "gatewayCredentialId"
 >;
 
-/** Removes owner and gateway-only identifiers from an owner-facing connection. */
-function toSafeConnection(connection: Doc<"aiConnections">): SafeConnection {
-  return {
-    _id: connection._id,
-    _creationTime: connection._creationTime,
-    provider: connection.provider,
-    label: connection.label,
-    status: connection.status,
-    authenticationMethod: connection.authenticationMethod,
-    accountHint: connection.accountHint,
-    planLabel: connection.planLabel,
-    isDefault: connection.isDefault,
-    createdAt: connection.createdAt,
-    updatedAt: connection.updatedAt,
-    lastValidationAt: connection.lastValidationAt,
-    lastErrorCode: connection.lastErrorCode,
-  };
-}
+// Explicit references avoid a generated-API type cycle in the module whose
+// public actions call these internal functions.
+const consumeRateBudget = makeFunctionReference<
+  "mutation",
+  { subject: string; endpoint: ConnectionRateEndpoint },
+  null
+>("connectionRateBudget:consume");
+const listOwned = makeFunctionReference<
+  "query",
+  { subject: string },
+  SafeConnection[]
+>("aiConnectionsInternal:listOwned");
+const getOwnedStatus = makeFunctionReference<
+  "query",
+  { subject: string; connectionId: string },
+  SafeConnection
+>("aiConnectionsInternal:getOwnedStatus");
+const createPendingCodexOwned = makeFunctionReference<
+  "mutation",
+  { subject: string },
+  { connectionId: Id<"aiConnections"> }
+>("aiConnectionsInternal:createPendingCodexOwned");
+const selectDefaultCodexOwned = makeFunctionReference<
+  "mutation",
+  { subject: string; connectionId: string },
+  { connectionId: Id<"aiConnections"> }
+>("aiConnectionsInternal:selectDefaultCodexOwned");
 
 /** Requires the current Clerk subject to remain on the server-controlled beta list. */
 function requirePersonalBetaAccess(subject: string): void {
@@ -42,120 +54,98 @@ function requirePersonalBetaAccess(subject: string): void {
   }
 }
 
-/** Loads an owned connection without revealing whether another owner's id exists. */
-async function getOwnedConnection(
-  ctx: ConnectionContext,
-  connectionId: Id<"aiConnections">,
-  subject: string
-): Promise<Doc<"aiConnections">> {
-  const connection = await ctx.db.get("aiConnections", connectionId);
-
-  if (connection === null || connection.ownerId !== subject) {
-    throw new ConvexError(CONNECTION_UNAVAILABLE);
+/** Requires a public call to supply an exact empty argument object. */
+function requireEmptyArguments(args: unknown): void {
+  if (
+    typeof args !== "object" ||
+    args === null ||
+    Array.isArray(args) ||
+    Object.keys(args).length !== 0
+  ) {
+    throw new ConvexError(INVALID_CONNECTION_REQUEST);
   }
-
-  return connection;
 }
 
-/** Lists only secret-free metadata for the authenticated owner. */
-const list = query({
-  args: {},
-  handler: async (ctx) => {
+/** Parses the sole connection id only after the known owner has spent capacity. */
+function requireConnectionIdString(args: unknown): string {
+  if (
+    typeof args !== "object" ||
+    args === null ||
+    Array.isArray(args) ||
+    Object.keys(args).length !== 1 ||
+    !("connectionId" in args) ||
+    typeof args.connectionId !== "string"
+  ) {
+    throw new ConvexError(INVALID_CONNECTION_REQUEST);
+  }
+
+  return args.connectionId;
+}
+
+/** Lists rate-limited, secret-free metadata for the authenticated owner. */
+const list = action({
+  // Broad validation lets malformed known-owner attempts consume capacity
+  // before the handler returns a stable application-level error.
+  args: v.record(v.string(), v.any()),
+  handler: async (ctx, args: unknown) => {
     const subject = await requireUser(ctx);
-    const connections = await ctx.db
-      .query("aiConnections")
-      .withIndex("by_owner", (index) => index.eq("ownerId", subject))
-      .order("desc")
-      .collect();
-
-    return connections.map(toSafeConnection);
-  },
-});
-
-/** Reads safe status for one owned connection, including after de-allowlisting. */
-const getStatus = query({
-  args: { connectionId: v.id("aiConnections") },
-  handler: async (ctx, { connectionId }) => {
-    const subject = await requireUser(ctx);
-    const connection = await getOwnedConnection(ctx, connectionId, subject);
-
-    return toSafeConnection(connection);
-  },
-});
-
-/** Creates one server-derived pending Codex device-code connection per owner at a time. */
-const createPendingCodex = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const subject = await requireUser(ctx);
-    requirePersonalBetaAccess(subject);
-
-    const existingPending = await ctx.db
-      .query("aiConnections")
-      .withIndex("by_owner_provider_status", (index) =>
-        index
-          .eq("ownerId", subject)
-          .eq("provider", "codex")
-          .eq("status", "pending")
-      )
-      .first();
-
-    if (existingPending !== null) {
-      throw new ConvexError(CONNECTION_ALREADY_PENDING);
-    }
-
-    const now = Date.now();
-    const connectionId = await ctx.db.insert("aiConnections", {
-      ownerId: subject,
-      provider: "codex",
-      label: "Codex",
-      status: "pending",
-      authenticationMethod: "device_code",
-      isDefault: false,
-      createdAt: now,
-      updatedAt: now,
+    await ctx.runMutation(consumeRateBudget, {
+      subject,
+      endpoint: "list",
     });
+    requireEmptyArguments(args);
 
-    return { connectionId };
+    return ctx.runQuery(listOwned, { subject });
   },
 });
 
-/** Atomically makes one connected Codex connection the owner's sole default. */
-const selectDefaultCodex = mutation({
-  args: { connectionId: v.id("aiConnections") },
-  handler: async (ctx, { connectionId }) => {
+/** Reads rate-limited safe status, including after owner de-allowlisting. */
+const getStatus = action({
+  args: v.record(v.string(), v.any()),
+  handler: async (ctx, args: unknown) => {
     const subject = await requireUser(ctx);
+    await ctx.runMutation(consumeRateBudget, {
+      subject,
+      endpoint: "getStatus",
+    });
+    const connectionId = requireConnectionIdString(args);
+
+    return ctx.runQuery(getOwnedStatus, {
+      subject,
+      connectionId,
+    });
+  },
+});
+
+/** Creates one server-derived pending Codex connection after charging capacity. */
+const createPendingCodex = action({
+  args: v.record(v.string(), v.any()),
+  handler: async (ctx, args: unknown) => {
+    const subject = await requireUser(ctx);
+    await ctx.runMutation(consumeRateBudget, {
+      subject,
+      endpoint: "createPendingCodex",
+    });
+    requireEmptyArguments(args);
     requirePersonalBetaAccess(subject);
-    const selected = await getOwnedConnection(ctx, connectionId, subject);
 
-    if (selected.provider !== "codex" || selected.status !== "connected") {
-      throw new ConvexError(CONNECTION_UNAVAILABLE);
-    }
+    return ctx.runMutation(createPendingCodexOwned, { subject });
+  },
+});
 
-    const connections = await ctx.db
-      .query("aiConnections")
-      .withIndex("by_owner", (index) => index.eq("ownerId", subject))
-      .collect();
-    const now = Date.now();
+/** Selects a connected Codex default after charging capacity and checking beta access. */
+const selectDefaultCodex = action({
+  args: v.record(v.string(), v.any()),
+  handler: async (ctx, args: unknown) => {
+    const subject = await requireUser(ctx);
+    await ctx.runMutation(consumeRateBudget, {
+      subject,
+      endpoint: "selectDefaultCodex",
+    });
+    const connectionId = requireConnectionIdString(args);
+    requirePersonalBetaAccess(subject);
 
-    // Convex mutations are transactional, so clearing stale duplicate defaults
-    // and selecting the target cannot expose an intermediate state.
-    await Promise.all(
-      connections.map((connection) => {
-        const shouldBeDefault = connection._id === selected._id;
-
-        if (connection.isDefault === shouldBeDefault) {
-          return Promise.resolve();
-        }
-
-        return ctx.db.patch(connection._id, {
-          isDefault: shouldBeDefault,
-          updatedAt: now,
-        });
-      })
-    );
-
-    return { connectionId: selected._id };
+    return ctx.runMutation(selectDefaultCodexOwned, { subject, connectionId });
   },
 });
 

@@ -26,6 +26,21 @@ export default defineSchema({
     .index("by_owner", ["ownerId"])
     .index("by_owner_provider_status", ["ownerId", "provider", "status"]),
 
+  aiConnectionRateBudgets: defineTable({
+    scope: v.union(v.literal("owner"), v.literal("global")),
+    scopeKey: v.string(),
+    endpoint: v.union(
+      v.literal("createPendingCodex"),
+      v.literal("selectDefaultCodex"),
+      v.literal("list"),
+      v.literal("getStatus")
+    ),
+    windowStartedAt: v.number(),
+    windowMs: v.number(),
+    limit: v.number(),
+    consumed: v.number(),
+  }).index("by_scope_endpoint", ["scope", "scopeKey", "endpoint"]),
+
   mindmaps: defineTable({
     publicId: v.string(),
     name: v.string(),
