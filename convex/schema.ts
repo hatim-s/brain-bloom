@@ -11,7 +11,9 @@ export default defineSchema({
       v.literal("connected"),
       v.literal("error"),
       v.literal("expired"),
-      v.literal("revoked")
+      v.literal("revoking"),
+      v.literal("revoked"),
+      v.literal("deleted")
     ),
     authenticationMethod: v.literal("device_code"),
     gatewayCredentialId: v.optional(v.string()),
@@ -22,9 +24,35 @@ export default defineSchema({
     updatedAt: v.number(),
     lastValidationAt: v.optional(v.number()),
     lastErrorCode: v.optional(v.string()),
+    lifecycleVersion: v.optional(v.literal(1)),
+    lifecycleRevision: v.optional(v.number()),
   })
     .index("by_owner", ["ownerId"])
     .index("by_owner_provider_status", ["ownerId", "provider", "status"]),
+
+  aiConnectionLifecycleReceipts: defineTable({
+    connectionId: v.id("aiConnections"),
+    ownerId: v.string(),
+    provider: v.literal("codex"),
+    evidenceId: v.string(),
+    requestId: v.string(),
+    revision: v.number(),
+    version: v.literal(1),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("connected"),
+      v.literal("error"),
+      v.literal("expired"),
+      v.literal("revoking"),
+      v.literal("revoked"),
+      v.literal("deleted")
+    ),
+    fingerprint: v.string(),
+    appliedAt: v.number(),
+  })
+    .index("by_evidence", ["evidenceId"])
+    .index("by_request", ["requestId"])
+    .index("by_connection_revision", ["connectionId", "revision"]),
 
   aiConnectionRateBudgets: defineTable({
     scope: v.union(v.literal("owner"), v.literal("global")),

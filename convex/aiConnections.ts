@@ -16,7 +16,7 @@ type ConnectionRateEndpoint =
   | "getStatus";
 type SafeConnection = Omit<
   Doc<"aiConnections">,
-  "ownerId" | "gatewayCredentialId"
+  "ownerId" | "gatewayCredentialId" | "lifecycleRevision" | "lifecycleVersion"
 >;
 
 // Explicit references avoid a generated-API type cycle in the module whose

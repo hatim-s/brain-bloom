@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as aiConnectionLifecycle from "../aiConnectionLifecycle.js";
 import type * as aiConnections from "../aiConnections.js";
 import type * as aiConnectionsInternal from "../aiConnectionsInternal.js";
 import type * as connectionRateBudget from "../connectionRateBudget.js";
@@ -27,6 +28,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  aiConnectionLifecycle: typeof aiConnectionLifecycle;
   aiConnections: typeof aiConnections;
   aiConnectionsInternal: typeof aiConnectionsInternal;
   connectionRateBudget: typeof connectionRateBudget;

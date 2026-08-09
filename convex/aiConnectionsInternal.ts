@@ -11,7 +11,7 @@ const INVALID_CONNECTION_REQUEST = "Invalid connection request";
 type ConnectionContext = MutationCtx | QueryCtx;
 type SafeConnection = Omit<
   Doc<"aiConnections">,
-  "ownerId" | "gatewayCredentialId"
+  "ownerId" | "gatewayCredentialId" | "lifecycleRevision" | "lifecycleVersion"
 >;
 
 /** Removes owner and gateway-only identifiers from an owner-facing connection. */

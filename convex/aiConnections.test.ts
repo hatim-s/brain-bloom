@@ -11,7 +11,14 @@ const modules = import.meta.glob(["./**/*.*s", "!./**/*.test.ts"]);
 
 type ConnectionSeed = {
   ownerId: string;
-  status?: "pending" | "connected" | "error" | "expired" | "revoked";
+  status?:
+    | "pending"
+    | "connected"
+    | "error"
+    | "expired"
+    | "revoking"
+    | "revoked"
+    | "deleted";
   isDefault?: boolean;
   gatewayCredentialId?: string;
 };
@@ -116,6 +123,10 @@ describe("ai connections", () => {
     ["planLabel", "Enterprise"],
     ["lastValidationAt", 1],
     ["lastErrorCode", "raw provider output"],
+    ["lifecycleVersion", 1],
+    ["lifecycleRevision", 1],
+    ["evidenceId", "evidence-client"],
+    ["requestId", "request-client"],
   ])("rejects the client-supplied %s field", async (field, value) => {
     const { t, asAlice } = createHarness();
 
@@ -253,7 +264,14 @@ describe("ai connections", () => {
     expect(bob?.isDefault).toBe(true);
   });
 
-  it.each(["pending", "error", "expired", "revoked"] as const)(
+  it.each([
+    "pending",
+    "error",
+    "expired",
+    "revoking",
+    "revoked",
+    "deleted",
+  ] as const)(
     "rejects selecting a %s connection without changing defaults",
     async (status) => {
       const { t, asAlice } = createHarness();
