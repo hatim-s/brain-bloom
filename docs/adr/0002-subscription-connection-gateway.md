@@ -206,24 +206,29 @@ provider stdout/stderr are redacted or omitted by default.
 
 ### Convex metadata boundary
 
-Convex schema changes are additive. An owner-scoped `aiConnections` record may
-contain provider, label, status, opaque `gatewayCredentialId`, authentication
-method, redacted provider account hint, display-only plan label, default flag,
-timestamps, last validation time, and a stable last error code. Owner-only
-queries return display metadata, never secret material. Mutations derive the
-owner from Clerk authorization rather than accepting a client-supplied owner.
+Before the first human-approved deployment, the metadata schema may be
+hardened to remove unsafe fields. After deployment, schema changes are
+additive or use an explicit human-approved migration. An owner-scoped
+`aiConnections` record may contain provider, label, status, opaque
+`gatewayCredentialId`, authentication method, a closed ChatGPT
+subscription-account type, a small closed plan enum, default flag, timestamps,
+last validation time, and a closed stable error-code enum. Free-form provider
+account and plan strings are not stored or projected. Owner-only queries return
+enum metadata, never secret material. Mutations derive the owner from Clerk
+authorization rather than accepting a client-supplied owner.
 
 Owner-facing mutations may create a server-derived `pending` record, choose a
 default connection, request validation, or request revocation/deletion. They
 cannot supply or directly write provider-validated lifecycle status,
-`gatewayCredentialId`, provider account or plan hints, validation timestamps,
-or provider-derived error fields. Transitions from `pending` to `connected`,
-`error`, or `expired`, later provider-driven status changes, and final
-revocation/deletion outcomes occur only through a server-only reconciliation
-path after gateway-authenticated evidence. That evidence must bind the owner,
-connection, provider, request, and allowed transition; stale, duplicated, or
-mismatched evidence is rejected. A client request may start a lifecycle action,
-but it is never evidence that provider validation or cleanup succeeded.
+`gatewayCredentialId`, subscription-account or plan enums, validation
+timestamps, or provider-derived error fields. Transitions from `pending` to
+`connected`, `error`, or `expired`, later provider-driven status changes, and
+final revocation/deletion outcomes occur only through a server-only
+reconciliation path after gateway-authenticated evidence. That evidence must
+bind the owner, connection, provider, request, and allowed transition; stale,
+duplicated, or mismatched evidence is rejected. A client request may start a
+lifecycle action, but it is never evidence that provider validation or cleanup
+succeeded.
 
 Convex must never store plaintext provider tokens, serialized provider homes,
 wrapped or unwrapped data keys, gateway encryption keys, internal assertion
@@ -261,10 +266,12 @@ these invariants:
 12. Every connection endpoint has finite per-owner and global request-rate
     budgets, enforced independently of provider concurrency and queue bounds;
     unavailable enforcement state fails closed.
-13. Provider-validated connection status, credential handles, account hints,
-    validation times, and provider errors change only through server-only
-    reconciliation backed by gateway-authenticated evidence, never client
-    mutation fields or claimed success.
+13. Provider-validated connection status, the write-once credential handle,
+    closed subscription enums, validation times, and closed provider errors
+    change only through server-only reconciliation backed by
+    gateway-authenticated evidence, never client mutation fields or claimed
+    success. Free-form provider display strings are never persisted or
+    projected.
 14. Credential-intake requests are size-bounded and pass both CSRF and
     same-origin `Origin` validation before plaintext is forwarded in memory;
     plaintext is never reflected, analyzed, or persisted.
@@ -337,10 +344,11 @@ disposable harness must prove:
     limiter state fails closed. Separate load tests prove per-owner execution,
     global concurrency, and queue bounds still hold.
 13. Owner-facing mutations cannot set provider-validated status,
-    `gatewayCredentialId`, provider account or plan hints, validation time, or
-    provider-derived errors; invalid, stale, replayed, or mismatched gateway
+    `gatewayCredentialId`, subscription-account or plan enums, validation time,
+    or provider-derived errors; invalid, stale, replayed, or mismatched gateway
     evidence cannot advance lifecycle state, while valid evidence can perform
-    only its allowed transition.
+    only its allowed transition. Credential-canary inputs cannot enter storage
+    or owner-facing responses through display metadata.
 14. Oversized Claude setup-token requests and requests with missing or invalid
     CSRF tokens or `Origin` fail before gateway forwarding. Accepted and
     rejected tokens remain absent from responses, analytics, persistence,

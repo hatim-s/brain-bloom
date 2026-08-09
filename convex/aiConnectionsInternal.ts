@@ -11,7 +11,7 @@ const INVALID_CONNECTION_REQUEST = "Invalid connection request";
 type ConnectionContext = MutationCtx | QueryCtx;
 type SafeConnection = Omit<
   Doc<"aiConnections">,
-  "ownerId" | "gatewayCredentialId"
+  "ownerId" | "gatewayCredentialId" | "lifecycleRevision" | "lifecycleVersion"
 >;
 
 /** Removes owner and gateway-only identifiers from an owner-facing connection. */
@@ -23,8 +23,8 @@ function toSafeConnection(connection: Doc<"aiConnections">): SafeConnection {
     label: connection.label,
     status: connection.status,
     authenticationMethod: connection.authenticationMethod,
-    accountHint: connection.accountHint,
-    planLabel: connection.planLabel,
+    subscriptionAccountType: connection.subscriptionAccountType,
+    subscriptionPlan: connection.subscriptionPlan,
     isDefault: connection.isDefault,
     createdAt: connection.createdAt,
     updatedAt: connection.updatedAt,

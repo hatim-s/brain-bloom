@@ -11,7 +11,14 @@ const modules = import.meta.glob(["./**/*.*s", "!./**/*.test.ts"]);
 
 type ConnectionSeed = {
   ownerId: string;
-  status?: "pending" | "connected" | "error" | "expired" | "revoked";
+  status?:
+    | "pending"
+    | "connected"
+    | "error"
+    | "expired"
+    | "revoking"
+    | "revoked"
+    | "deleted";
   isDefault?: boolean;
   gatewayCredentialId?: string;
 };
@@ -46,8 +53,8 @@ async function seedConnection(
       status,
       authenticationMethod: "device_code",
       gatewayCredentialId,
-      accountHint: `${ownerId.slice(-3)}***`,
-      planLabel: "Subscription",
+      subscriptionAccountType: "chatgpt_subscription",
+      subscriptionPlan: "plus",
       isDefault,
       createdAt: 1,
       updatedAt: 1,
@@ -101,8 +108,8 @@ describe("ai connections", () => {
       isDefault: false,
     });
     expect(stored?.gatewayCredentialId).toBeUndefined();
-    expect(stored?.accountHint).toBeUndefined();
-    expect(stored?.planLabel).toBeUndefined();
+    expect(stored?.subscriptionAccountType).toBeUndefined();
+    expect(stored?.subscriptionPlan).toBeUndefined();
     expect(stored?.lastValidationAt).toBeUndefined();
     expect(stored?.lastErrorCode).toBeUndefined();
   });
@@ -114,8 +121,14 @@ describe("ai connections", () => {
     ["gatewayCredentialId", "stolen"],
     ["accountHint", "victim@example.com"],
     ["planLabel", "Enterprise"],
+    ["subscriptionAccountType", "chatgpt_subscription"],
+    ["subscriptionPlan", "plus"],
     ["lastValidationAt", 1],
     ["lastErrorCode", "raw provider output"],
+    ["lifecycleVersion", 1],
+    ["lifecycleRevision", 1],
+    ["evidenceId", "evidence-client"],
+    ["requestId", "request-client"],
   ])("rejects the client-supplied %s field", async (field, value) => {
     const { t, asAlice } = createHarness();
 
@@ -178,8 +191,8 @@ describe("ai connections", () => {
       _id: aliceConnection,
       provider: "codex",
       status: "connected",
-      accountHint: "ice***",
-      planLabel: "Subscription",
+      subscriptionAccountType: "chatgpt_subscription",
+      subscriptionPlan: "plus",
       isDefault: true,
     });
     expect(connections[0]).not.toHaveProperty("ownerId");
@@ -253,7 +266,14 @@ describe("ai connections", () => {
     expect(bob?.isDefault).toBe(true);
   });
 
-  it.each(["pending", "error", "expired", "revoked"] as const)(
+  it.each([
+    "pending",
+    "error",
+    "expired",
+    "revoking",
+    "revoked",
+    "deleted",
+  ] as const)(
     "rejects selecting a %s connection without changing defaults",
     async (status) => {
       const { t, asAlice } = createHarness();
