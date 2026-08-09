@@ -1083,6 +1083,141 @@ describe("Codex device ceremony flow", () => {
     expect(JSON.stringify(cyclicResult)).not.toContain(SECRET_CANARY);
   });
 
+  it("rejects huge sparse arrays before enumerating their claimed length", async () => {
+    const fixture = createFixture();
+    const sparseTarget: unknown[] = [];
+    sparseTarget.length = 0xffff_fffe;
+    let ownKeyReads = 0;
+    const sparse = new Proxy(sparseTarget, {
+      ownKeys: () => {
+        ownKeyReads += 1;
+        throw new Error(SECRET_CANARY);
+      },
+    });
+    fixture.client.begin.mockResolvedValue({
+      providerSessionRef: "sparse-session",
+      userCode: "ABCD-1234",
+      extra: sparse,
+    } as never);
+
+    const result = await fixture.flow.begin(OWNER_A);
+
+    expect(result).toEqual({ ok: false, error: "provider_unavailable" });
+    expect(ownKeyReads).toBe(0);
+    expect(JSON.stringify(result)).not.toContain(SECRET_CANARY);
+  });
+
+  it("rejects dense primitive arrays over the cardinality limit", async () => {
+    const store = new TestCeremonyStore();
+    vi.spyOn(store, "reserve").mockResolvedValue({
+      status: "not_found",
+      extra: Array.from({ length: 9 }, (_value, index) =>
+        index === 8 ? SECRET_CANARY : index
+      ),
+    } as never);
+    const fixture = createFixture({ store });
+
+    const result = await fixture.flow.begin(OWNER_A);
+
+    expect(result).toEqual({ ok: false, error: "store_unavailable" });
+    expect(JSON.stringify(result)).not.toContain(SECRET_CANARY);
+  });
+
+  it("rejects plain primitive objects over the own-key limit", async () => {
+    const fixture = createFixture();
+    const oversized = Object.fromEntries(
+      Array.from({ length: 17 }, (_value, index) => [
+        `field_${index}`,
+        index === 16 ? SECRET_CANARY : index,
+      ])
+    );
+    fixture.client.begin.mockResolvedValue({
+      providerSessionRef: "object-session",
+      userCode: "ABCD-1234",
+      extra: oversized,
+    } as never);
+
+    const result = await fixture.flow.begin(OWNER_A);
+
+    expect(result).toEqual({ ok: false, error: "provider_unavailable" });
+    expect(JSON.stringify(result)).not.toContain(SECRET_CANARY);
+  });
+
+  it("charges combined nested primitives and slots to one snapshot budget", async () => {
+    const fixture = createFixture();
+    const nested = Array.from({ length: 8 }, (_value, branch) => ({
+      values: Array.from({ length: 8 }, (_item, index) =>
+        branch === 7 && index === 7 ? SECRET_CANARY : `${branch}:${index}`
+      ),
+    }));
+    fixture.client.begin.mockResolvedValue({
+      providerSessionRef: "nested-session",
+      userCode: "ABCD-1234",
+      extra: nested,
+    } as never);
+
+    const result = await fixture.flow.begin(OWNER_A);
+
+    expect(result).toEqual({ ok: false, error: "provider_unavailable" });
+    expect(JSON.stringify(result)).not.toContain(SECRET_CANARY);
+  });
+
+  it.each([
+    `${SECRET_CANARY}${"A".repeat(1_024)}`,
+    `${SECRET_CANARY}${"€".repeat(680)}`,
+  ])("bounds runtime string code units and UTF-8 bytes", async (oversized) => {
+    const fixture = createFixture();
+    fixture.client.begin.mockResolvedValue({
+      providerSessionRef: "string-session",
+      userCode: "ABCD-1234",
+      extra: oversized,
+    } as never);
+
+    const result = await fixture.flow.begin(OWNER_A);
+
+    expect(result).toEqual({ ok: false, error: "provider_unavailable" });
+    expect(JSON.stringify(result)).not.toContain(SECRET_CANARY);
+  });
+
+  it("accepts the maximum valid record, array, key, and entry boundaries", async () => {
+    const store = new TestCeremonyStore();
+    const fixture = createFixture({ store });
+    const ceremony = await beginCeremony(fixture);
+    const active = store.records.get(ceremony.ceremonyId);
+    if (!active) throw new Error("expected durable ceremony");
+    // The first cleanup claim combines the maximum 16-key record, eight refs,
+    // account shape, and five-key envelope at exactly the shared entry budget.
+    const boundaryRecord: CodexDeviceCeremonyRecord = {
+      ...active,
+      status: "authorized",
+      account: { type: "chatgpt", present: true },
+      cleanupSessionRefs: Array.from(
+        { length: 8 },
+        (_value, index) => `boundary-cleanup-${index}`
+      ),
+    };
+    store.records.set(ceremony.ceremonyId, boundaryRecord);
+    vi.spyOn(store, "preparePoll").mockResolvedValue({
+      status: "current",
+      record: boundaryRecord,
+    });
+
+    await expect(
+      fixture.flow.poll(OWNER_A, ceremony.ceremonyId)
+    ).resolves.toEqual({
+      ok: true,
+      ceremony: {
+        ceremonyId: ceremony.ceremonyId,
+        status: "authorized",
+        verificationUrl: OFFICIAL_URL,
+        expiresAtMilliseconds: ceremony.expiresAtMilliseconds,
+        pollIntervalMilliseconds: ceremony.pollIntervalMilliseconds,
+        account: { type: "chatgpt", present: true },
+      },
+    });
+    expect(fixture.client.cancel).toHaveBeenCalledTimes(8);
+  });
+
   it("fails closed for null or malformed runtime scope", async () => {
     const fixture = createFixture();
     await expect(fixture.flow.begin(null as never)).resolves.toEqual({

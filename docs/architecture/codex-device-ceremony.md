@@ -45,7 +45,11 @@ coordinator reads it. The copy uses property descriptors rather than invoking
 getters and rejects accessors, unexpected prototypes or fields, functions,
 cycles, and malformed nested values. Hostile mutation after validation cannot
 change coordinator decisions, and exceptions at either dependency boundary are
-normalized to stable, secret-free unavailable results.
+normalized to stable, secret-free unavailable results. Server-owned limits cap
+array length, own-key cardinality, nesting depth, string size, and a shared
+budget that charges every value and property or array slot. Array length is
+rejected before key enumeration, so sparse claimed lengths cannot induce work
+proportional to attacker-controlled cardinality.
 
 ## Durable-store contract
 

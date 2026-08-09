@@ -9,8 +9,12 @@ const CEREMONY_ID_BYTES = 24;
 const MAX_CLEANUP_SESSION_REFS = 8;
 const MAX_IDENTIFIER_LENGTH = 160;
 const MAX_PROVIDER_SESSION_REF_LENGTH = 512;
+const MAX_RUNTIME_ARRAY_LENGTH = MAX_CLEANUP_SESSION_REFS;
+const MAX_RUNTIME_OWN_STRING_KEYS = 16;
 const MAX_RUNTIME_SNAPSHOT_DEPTH = 16;
-const MAX_RUNTIME_SNAPSHOT_NODES = 256;
+const MAX_RUNTIME_SNAPSHOT_ENTRIES = 65;
+const MAX_RUNTIME_STRING_CODE_UNITS = 1_024;
+const MAX_RUNTIME_STRING_UTF8_BYTES = 2_048;
 const USER_CODE_PATTERN = /^[A-Z0-9](?:[A-Z0-9-]{2,14}[A-Z0-9])$/;
 const OFFICIAL_CODEX_VERIFICATION_URLS = Object.freeze([
   "https://auth.openai.com/codex/device",
@@ -821,7 +825,7 @@ function awaitCallerLifecycle(
 }
 
 type RuntimeSnapshotState = {
-  nodes: number;
+  entries: number;
   seen: WeakSet<object>;
 };
 
@@ -832,7 +836,7 @@ function parseRuntimeSnapshot<T>(
 ): T | null {
   try {
     const state: RuntimeSnapshotState = {
-      nodes: 0,
+      entries: 0,
       seen: new WeakSet<object>(),
     };
     const snapshot = snapshotRuntimeValue(source, state, 0);
@@ -850,27 +854,32 @@ function snapshotRuntimeValue(
 ): unknown {
   if (
     source === null ||
-    typeof source === "string" ||
     typeof source === "number" ||
     typeof source === "boolean"
   ) {
+    consumeSnapshotEntries(state, 1);
+    return source;
+  }
+  if (typeof source === "string") {
+    consumeSnapshotEntries(state, 1);
+    if (
+      source.length > MAX_RUNTIME_STRING_CODE_UNITS ||
+      Buffer.byteLength(source, "utf8") > MAX_RUNTIME_STRING_UTF8_BYTES
+    ) {
+      throw new TypeError("oversized runtime string");
+    }
     return source;
   }
   if (
     typeof source !== "object" ||
     depth > MAX_RUNTIME_SNAPSHOT_DEPTH ||
-    state.nodes >= MAX_RUNTIME_SNAPSHOT_NODES ||
     state.seen.has(source)
   ) {
     throw new TypeError("invalid runtime snapshot");
   }
-  state.nodes += 1;
+  consumeSnapshotEntries(state, 1);
   state.seen.add(source);
   const prototype = Reflect.getPrototypeOf(source);
-  const keys = Reflect.ownKeys(source);
-  if (keys.some((key) => typeof key === "symbol")) {
-    throw new TypeError("symbol runtime keys are unavailable");
-  }
 
   if (Array.isArray(source)) {
     if (prototype !== Array.prototype) {
@@ -881,33 +890,47 @@ function snapshotRuntimeValue(
     if (
       typeof length !== "number" ||
       !Number.isSafeInteger(length) ||
-      length < 0
+      length < 0 ||
+      length > MAX_RUNTIME_ARRAY_LENGTH
     ) {
       throw new TypeError("invalid runtime array length");
     }
-    const expectedKeys: string[] = Array.from({ length }, (_value, index) =>
-      String(index)
-    );
+    // Length is capped before own-key enumeration so a huge sparse array never
+    // drives an allocation or iteration proportional to its claimed length.
+    const keys = Reflect.ownKeys(source);
     if (
-      keys.length !== expectedKeys.length + 1 ||
-      !keys.includes("length") ||
-      !expectedKeys.every((key) => keys.includes(key))
+      keys.length > MAX_RUNTIME_OWN_STRING_KEYS ||
+      keys.some((key) => typeof key === "symbol") ||
+      keys.length !== length + 1
     ) {
       throw new TypeError("sparse or extended runtime array");
     }
-    const snapshot = expectedKeys.map((key) => {
+    // Charge every own slot plus the primitive length value. Indexed values
+    // are charged recursively below.
+    consumeSnapshotEntries(state, keys.length + 1);
+    const snapshot: unknown[] = [];
+    for (let index = 0; index < length; index += 1) {
+      const key = String(index);
       const descriptor = Reflect.getOwnPropertyDescriptor(source, key);
       if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
         throw new TypeError("runtime array accessors are unavailable");
       }
-      return snapshotRuntimeValue(descriptor.value, state, depth + 1);
-    });
+      snapshot.push(snapshotRuntimeValue(descriptor.value, state, depth + 1));
+    }
     return Object.freeze(snapshot);
   }
 
   if (prototype !== Object.prototype && prototype !== null) {
     throw new TypeError("non-plain runtime object");
   }
+  const keys = Reflect.ownKeys(source);
+  if (
+    keys.length > MAX_RUNTIME_OWN_STRING_KEYS ||
+    keys.some((key) => typeof key === "symbol")
+  ) {
+    throw new TypeError("runtime object cardinality is unavailable");
+  }
+  consumeSnapshotEntries(state, keys.length);
   const snapshot = Object.create(null) as Record<string, unknown>;
   for (const key of keys as string[]) {
     const descriptor = Reflect.getOwnPropertyDescriptor(source, key);
@@ -922,6 +945,17 @@ function snapshotRuntimeValue(
     });
   }
   return Object.freeze(snapshot);
+}
+
+/** Charges values and property/array slots to one total snapshot budget. */
+function consumeSnapshotEntries(
+  state: RuntimeSnapshotState,
+  count: number
+): void {
+  if (state.entries + count > MAX_RUNTIME_SNAPSHOT_ENTRIES) {
+    throw new TypeError("runtime snapshot budget exhausted");
+  }
+  state.entries += count;
 }
 
 /** Normalizes caller scope once before it crosses any durable boundary. */
