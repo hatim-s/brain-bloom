@@ -17,6 +17,13 @@ import {
   type VerificationKeys,
   verifyAuthenticatedInternalAssertion,
 } from "./internal-auth.ts";
+import {
+  GATEWAY_CHAT_STREAM_CONTENT_TYPE,
+  GATEWAY_OPERATION_PROTOCOL_VERSION,
+  type GatewayResourceAuthority,
+  parseGatewayOperationEnvelope,
+  serializeGatewayChatStreamFrame,
+} from "./operation-protocol.ts";
 
 const DEFAULT_MAX_BODY_BYTES = 64 * 1_024;
 const DEFAULT_MAX_BODY_CHUNKS = 256;
@@ -65,11 +72,19 @@ type GatewaySuccessBody = Readonly<{
   data: unknown;
 }>;
 
-type GatewayResponse = Readonly<{
+type GatewayJsonResponse = Readonly<{
   status: number;
   headers: Readonly<Record<string, string>>;
   body: GatewayErrorBody | GatewaySuccessBody;
 }>;
+
+type GatewayStreamResponse = Readonly<{
+  status: 200;
+  headers: Readonly<Record<string, string>>;
+  body: AsyncIterable<Uint8Array>;
+}>;
+
+type GatewayResponse = GatewayJsonResponse | GatewayStreamResponse;
 
 type RateBudgetPolicy = Readonly<{
   endpoint: string;
@@ -112,7 +127,10 @@ type OperationExecutionContext = Readonly<{
 
 type CodexOperationDefinition = Readonly<{
   operation: GatewayOperation;
+  protocolVersion?: typeof GATEWAY_OPERATION_PROTOCOL_VERSION;
+  responseKind?: "json" | "stream";
   parseInput: (input: unknown) => unknown;
+  parseOutput?: (output: unknown) => unknown;
   execute: (
     input: unknown,
     context: OperationExecutionContext
@@ -135,6 +153,19 @@ class CodexOperationRegistry {
       if (entries.has(definition.operation)) {
         throw configurationError();
       }
+      if (
+        definition.protocolVersion !== undefined &&
+        definition.protocolVersion !== GATEWAY_OPERATION_PROTOCOL_VERSION
+      ) {
+        throw configurationError();
+      }
+      if (
+        definition.responseKind !== undefined &&
+        definition.responseKind !== "json" &&
+        definition.responseKind !== "stream"
+      ) {
+        throw configurationError();
+      }
       entries.set(definition.operation, Object.freeze({ ...definition }));
     }
     if (entries.size === 0) {
@@ -154,6 +185,7 @@ type GatewayRoute = Readonly<{
   method: "POST";
   path: `/${string}`;
   operation: GatewayOperation;
+  resourceAuthority?: GatewayResourceAuthority;
   rateBudget: RateBudgetPolicy;
 }>;
 
@@ -294,7 +326,6 @@ function createGatewayDispatcher(
         bodyReadTimeoutMs,
         request.signal
       );
-      const operationInput = readOperationInput(body);
       const definition = configuredOptions.operationRegistry.get(
         configuredOptions.route.operation
       );
@@ -304,18 +335,36 @@ function createGatewayDispatcher(
 
       let parsedInput: unknown;
       try {
-        parsedInput = definition.parseInput(operationInput);
+        const operationInput = readOperationInput(body);
+        const input =
+          definition.protocolVersion === GATEWAY_OPERATION_PROTOCOL_VERSION
+            ? parseGatewayOperationEnvelope(
+                operationInput,
+                configuredOptions.route.operation,
+                requireRouteResourceAuthority(configuredOptions.route)
+              ).input
+            : operationInput;
+        parsedInput = definition.parseInput(input);
       } catch {
         throw new GatewayRequestError("invalid_request");
       }
 
-      const data = await executeWithCancellation(
+      const result = await executeWithCancellation(
         definition,
         parsedInput,
         claims,
         request.signal,
         executionTimeoutMs
       );
+      if (definition.responseKind === "stream") {
+        return streamSuccessResponse(result);
+      }
+      let data = result;
+      try {
+        data = definition.parseOutput?.(result) ?? result;
+      } catch {
+        throw new GatewayRequestError("operation_failed");
+      }
       return successResponse(data);
     } catch (error) {
       if (error instanceof GatewayRequestError) {
@@ -335,6 +384,10 @@ function snapshotDispatcherOptions(
     expected: Object.freeze({ ...options.expected }),
     route: Object.freeze({
       ...options.route,
+      resourceAuthority:
+        options.route.resourceAuthority === undefined
+          ? undefined
+          : Object.freeze({ ...options.route.resourceAuthority }),
       rateBudget: Object.freeze({ ...options.route.rateBudget }),
     }),
     verificationKeys: Object.freeze({ ...options.verificationKeys }),
@@ -383,6 +436,22 @@ function assertDispatcherConfiguration(
   ) {
     throw configurationError();
   }
+
+  const definition = options.operationRegistry.get(options.route.operation);
+  if (
+    definition?.protocolVersion === GATEWAY_OPERATION_PROTOCOL_VERSION &&
+    options.route.resourceAuthority === undefined
+  ) {
+    throw configurationError();
+  }
+}
+
+/** Requires the server-owned authority paired with a versioned operation route. */
+function requireRouteResourceAuthority(
+  route: GatewayRoute
+): GatewayResourceAuthority {
+  if (route.resourceAuthority === undefined) throw configurationError();
+  return route.resourceAuthority;
 }
 
 /** Reads exactly one canonical Bearer credential without accepting duplicates. */
@@ -693,7 +762,7 @@ async function executeWithCancellation(
 }
 
 /** Maps one stable code to a fixed status without reflecting exception text. */
-function errorResponse(code: GatewayErrorCode): GatewayResponse {
+function errorResponse(code: GatewayErrorCode): GatewayJsonResponse {
   const statusByCode: Readonly<Record<GatewayErrorCode, number>> = {
     gateway_configuration_unavailable: 503,
     invalid_request: 400,
@@ -717,12 +786,42 @@ function errorResponse(code: GatewayErrorCode): GatewayResponse {
 }
 
 /** Creates the single successful response shape used by the transport adapter. */
-function successResponse(data: unknown): GatewayResponse {
+function successResponse(data: unknown): GatewayJsonResponse {
   return {
     status: 200,
     headers: { "content-type": "application/json" },
     body: { ok: true, data },
   };
+}
+
+/** Returns a streaming success only for a genuine event async iterable. */
+function streamSuccessResponse(data: unknown): GatewayStreamResponse {
+  if (
+    typeof data !== "object" ||
+    data === null ||
+    typeof (data as AsyncIterable<Uint8Array>)[Symbol.asyncIterator] !==
+      "function"
+  ) {
+    throw new GatewayRequestError("operation_failed");
+  }
+  return {
+    status: 200,
+    headers: { "content-type": GATEWAY_CHAT_STREAM_CONTENT_TYPE },
+    body: serializeGatewayChatStream(data as AsyncIterable<unknown>),
+  };
+}
+
+/** Serializes only validated chat events into the versioned NDJSON wire form. */
+async function* serializeGatewayChatStream(
+  events: AsyncIterable<unknown>
+): AsyncIterable<Uint8Array> {
+  for await (const event of events) {
+    try {
+      yield serializeGatewayChatStreamFrame(event);
+    } catch {
+      throw new GatewayRequestError("operation_failed");
+    }
+  }
 }
 
 /** Produces a stable startup error without embedding policy values. */
@@ -750,10 +849,12 @@ export {
   type GatewayErrorBody,
   type GatewayErrorCode,
   type GatewayHeaderValue,
+  type GatewayJsonResponse,
   type GatewayRequestEnvelope,
   GatewayRequestError,
   type GatewayResponse,
   type GatewayRoute,
+  type GatewayStreamResponse,
   type GatewaySuccessBody,
   MAX_BODY_BYTES,
   MAX_BODY_CHUNKS,
