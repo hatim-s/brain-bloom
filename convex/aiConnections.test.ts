@@ -53,8 +53,8 @@ async function seedConnection(
       status,
       authenticationMethod: "device_code",
       gatewayCredentialId,
-      accountHint: `${ownerId.slice(-3)}***`,
-      planLabel: "Subscription",
+      subscriptionAccountType: "chatgpt_subscription",
+      subscriptionPlan: "plus",
       isDefault,
       createdAt: 1,
       updatedAt: 1,
@@ -108,8 +108,8 @@ describe("ai connections", () => {
       isDefault: false,
     });
     expect(stored?.gatewayCredentialId).toBeUndefined();
-    expect(stored?.accountHint).toBeUndefined();
-    expect(stored?.planLabel).toBeUndefined();
+    expect(stored?.subscriptionAccountType).toBeUndefined();
+    expect(stored?.subscriptionPlan).toBeUndefined();
     expect(stored?.lastValidationAt).toBeUndefined();
     expect(stored?.lastErrorCode).toBeUndefined();
   });
@@ -121,6 +121,8 @@ describe("ai connections", () => {
     ["gatewayCredentialId", "stolen"],
     ["accountHint", "victim@example.com"],
     ["planLabel", "Enterprise"],
+    ["subscriptionAccountType", "chatgpt_subscription"],
+    ["subscriptionPlan", "plus"],
     ["lastValidationAt", 1],
     ["lastErrorCode", "raw provider output"],
     ["lifecycleVersion", 1],
@@ -189,8 +191,8 @@ describe("ai connections", () => {
       _id: aliceConnection,
       provider: "codex",
       status: "connected",
-      accountHint: "ice***",
-      planLabel: "Subscription",
+      subscriptionAccountType: "chatgpt_subscription",
+      subscriptionPlan: "plus",
       isDefault: true,
     });
     expect(connections[0]).not.toHaveProperty("ownerId");

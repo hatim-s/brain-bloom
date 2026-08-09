@@ -42,20 +42,39 @@ Gateway cleanup or validation
 - Entering `revoking` immediately clears public account, plan, validation, and
   error metadata, while retaining only the internal opaque credential handle
   required for cleanup. `revoked` and `deleted` clear that handle.
+- The opaque handle and closed ChatGPT subscription metadata are established
+  exactly once by `pending` to `connected`. Later validation, failure,
+  expiration, recovery, and teardown snapshots cannot echo, replace, inject,
+  or clear the handle; reconciliation derives it from the stored record until
+  `revoking` to `revoked` clears it.
 - Gateway credential handles, reconciliation revisions, evidence ids, request
-  ids, and owners are absent from public connection projections. Display hints
-  and stable provider error codes are bounded and reject control characters or
-  raw provider error text.
+  ids, and owners are absent from public connection projections. Free-form
+  account hints and plan labels are neither stored nor projected. Public
+  metadata uses only the fixed `chatgpt_subscription` account type, a small
+  plan enum, and closed stable provider error codes.
 - Server-only cleanup does not consult the personal-beta allowlist, so
   de-allowlisting cannot strand a credential in `revoking`. It cannot create,
   select, validate, or reactivate a connection.
 
+## Receipt capacity gate
+
+The receipt ledger is intentionally not pruned in this slice because snapshots
+do not yet carry a verifier-authenticated expiry or replay-retention horizon.
+Deleting receipts now would weaken the globally single-use evidence/request
+contract. The meaningless `pending` to `pending` transition is rejected to
+avoid a no-op growth path. Before deployment, the signed-evidence verifier and
+capacity design must define a bounded retention interval that is at least as
+long as the accepted evidence lifetime; only then may a server-only cleanup job
+delete expired receipts without reopening replay.
+
 ## Human deployment gate
 
-This change only updates source and generated local types. Do not run a Convex
-deployment or migration without explicit human approval. Before wiring any
-caller, implement and review the signed lifecycle-evidence verifier described
-in ADR 0002: signature, issuer, audience, expiry, owner, connection, provider,
-operation, request, and replay checks must complete before the internal
-mutation is invoked. Production credentials, environment changes, database
-writes, and gateway deployment remain out of scope.
+This change only updates source and generated local types. Replacing the former
+free-form account/plan fields with closed enums requires a human-reviewed check
+that no deployed row uses the removed fields, or an explicit data migration.
+Do not run a Convex deployment or migration without explicit human approval.
+Before wiring any caller, implement and review the signed lifecycle-evidence
+verifier described in ADR 0002: signature, issuer, audience, expiry, owner,
+connection, provider, operation, request, and replay checks must complete before
+the internal mutation is invoked. Production credentials, environment changes,
+database writes, and gateway deployment remain out of scope.

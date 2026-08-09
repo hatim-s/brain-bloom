@@ -7,43 +7,50 @@ import { internalMutation } from "./_generated/server";
 const LIFECYCLE_SNAPSHOT_REJECTED = "Lifecycle snapshot rejected";
 const LIFECYCLE_TRANSITION_REJECTED = "Lifecycle transition rejected";
 const MAX_IDENTIFIER_LENGTH = 256;
-const MAX_DISPLAY_LENGTH = 160;
-const MAX_ERROR_CODE_LENGTH = 64;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
-const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+
+const subscriptionPlan = v.union(
+  v.literal("free"),
+  v.literal("plus"),
+  v.literal("pro"),
+  v.literal("business"),
+  v.literal("enterprise"),
+  v.literal("edu")
+);
+const providerErrorCode = v.union(
+  v.literal("PROVIDER_UNAVAILABLE"),
+  v.literal("SESSION_EXPIRED"),
+  v.literal("VALIDATION_FAILED"),
+  v.literal("CREDENTIAL_REVOKED"),
+  v.literal("CLEANUP_FAILED")
+);
+const initialCredentialBinding = v.object({
+  gatewayCredentialId: v.string(),
+  subscriptionAccountType: v.literal("chatgpt_subscription"),
+  subscriptionPlan: v.optional(subscriptionPlan),
+});
 
 const pendingState = v.object({ status: v.literal("pending") });
 const connectedState = v.object({
   status: v.literal("connected"),
-  gatewayCredentialId: v.string(),
-  accountHint: v.optional(v.string()),
-  planLabel: v.optional(v.string()),
+  initialBinding: v.optional(initialCredentialBinding),
   validatedAt: v.number(),
 });
 const errorState = v.object({
   status: v.literal("error"),
-  gatewayCredentialId: v.optional(v.string()),
-  accountHint: v.optional(v.string()),
-  planLabel: v.optional(v.string()),
   validatedAt: v.number(),
-  errorCode: v.string(),
+  errorCode: providerErrorCode,
 });
 const expiredState = v.object({
   status: v.literal("expired"),
-  gatewayCredentialId: v.optional(v.string()),
-  accountHint: v.optional(v.string()),
-  planLabel: v.optional(v.string()),
   validatedAt: v.number(),
-  errorCode: v.string(),
+  errorCode: providerErrorCode,
 });
-const revokingState = v.object({
-  status: v.literal("revoking"),
-  gatewayCredentialId: v.string(),
-});
+const revokingState = v.object({ status: v.literal("revoking") });
 const revokedState = v.object({
   status: v.literal("revoked"),
   validatedAt: v.number(),
-  errorCode: v.optional(v.string()),
+  errorCode: v.optional(providerErrorCode),
 });
 const deletedState = v.object({
   status: v.literal("deleted"),
@@ -69,31 +76,41 @@ const lifecycleSnapshot = v.object({
   state: lifecycleState,
 });
 
+type SubscriptionPlan =
+  | "free"
+  | "plus"
+  | "pro"
+  | "business"
+  | "enterprise"
+  | "edu";
+type ProviderErrorCode =
+  | "PROVIDER_UNAVAILABLE"
+  | "SESSION_EXPIRED"
+  | "VALIDATION_FAILED"
+  | "CREDENTIAL_REVOKED"
+  | "CLEANUP_FAILED";
+type InitialCredentialBinding = {
+  gatewayCredentialId: string;
+  subscriptionAccountType: "chatgpt_subscription";
+  subscriptionPlan?: SubscriptionPlan;
+};
 type LifecycleState =
   | { status: "pending" }
   | {
       status: "connected";
-      gatewayCredentialId: string;
-      accountHint?: string;
-      planLabel?: string;
+      initialBinding?: InitialCredentialBinding;
       validatedAt: number;
     }
   | {
       status: "error" | "expired";
-      gatewayCredentialId?: string;
-      accountHint?: string;
-      planLabel?: string;
       validatedAt: number;
-      errorCode: string;
+      errorCode: ProviderErrorCode;
     }
-  | {
-      status: "revoking";
-      gatewayCredentialId: string;
-    }
+  | { status: "revoking" }
   | {
       status: "revoked";
       validatedAt: number;
-      errorCode?: string;
+      errorCode?: ProviderErrorCode;
     }
   | { status: "deleted"; validatedAt: number };
 
@@ -112,7 +129,7 @@ type LifecycleStatus = LifecycleState["status"];
 
 const allowedTransitions: Record<LifecycleStatus, readonly LifecycleStatus[]> =
   {
-    pending: ["pending", "connected", "error", "expired", "revoking"],
+    pending: ["connected", "error", "expired", "revoking"],
     connected: ["connected", "error", "expired", "revoking"],
     error: ["error", "connected", "expired", "revoking"],
     expired: ["expired", "connected", "error", "revoking"],
@@ -120,14 +137,6 @@ const allowedTransitions: Record<LifecycleStatus, readonly LifecycleStatus[]> =
     revoked: ["deleted"],
     deleted: [],
   };
-
-/** Detects display-unsafe ASCII controls without retaining provider text. */
-function hasControlCharacters(value: string): boolean {
-  return Array.from(value).some((character) => {
-    const codePoint = character.codePointAt(0) ?? 0;
-    return codePoint <= 0x1f || codePoint === 0x7f;
-  });
-}
 
 /** Rejects values that could carry raw provider output or ambiguous identifiers. */
 function requireSafeSnapshot(snapshot: GatewayLifecycleSnapshot): void {
@@ -158,35 +167,12 @@ function requireSafeSnapshot(snapshot: GatewayLifecycleSnapshot): void {
       throw new ConvexError(LIFECYCLE_SNAPSHOT_REJECTED);
     }
   }
-  if (
-    "gatewayCredentialId" in state &&
-    state.gatewayCredentialId !== undefined
-  ) {
+  if (state.status === "connected" && state.initialBinding !== undefined) {
+    const { gatewayCredentialId } = state.initialBinding;
     if (
-      state.gatewayCredentialId.length < 1 ||
-      state.gatewayCredentialId.length > MAX_IDENTIFIER_LENGTH ||
-      !IDENTIFIER_PATTERN.test(state.gatewayCredentialId)
-    ) {
-      throw new ConvexError(LIFECYCLE_SNAPSHOT_REJECTED);
-    }
-  }
-  for (const displayValue of [
-    "accountHint" in state ? state.accountHint : undefined,
-    "planLabel" in state ? state.planLabel : undefined,
-  ]) {
-    if (
-      displayValue !== undefined &&
-      (displayValue.length < 1 ||
-        displayValue.length > MAX_DISPLAY_LENGTH ||
-        hasControlCharacters(displayValue))
-    ) {
-      throw new ConvexError(LIFECYCLE_SNAPSHOT_REJECTED);
-    }
-  }
-  if ("errorCode" in state && state.errorCode !== undefined) {
-    if (
-      state.errorCode.length > MAX_ERROR_CODE_LENGTH ||
-      !ERROR_CODE_PATTERN.test(state.errorCode)
+      gatewayCredentialId.length < 1 ||
+      gatewayCredentialId.length > MAX_IDENTIFIER_LENGTH ||
+      !IDENTIFIER_PATTERN.test(gatewayCredentialId)
     ) {
       throw new ConvexError(LIFECYCLE_SNAPSHOT_REJECTED);
     }
@@ -220,12 +206,73 @@ function fingerprintSnapshot(snapshot: GatewayLifecycleSnapshot): string {
     snapshot.connectionId,
     snapshot.provider,
     state.status,
-    "gatewayCredentialId" in state ? (state.gatewayCredentialId ?? null) : null,
-    "accountHint" in state ? (state.accountHint ?? null) : null,
-    "planLabel" in state ? (state.planLabel ?? null) : null,
+    state.status === "connected"
+      ? (state.initialBinding?.gatewayCredentialId ?? null)
+      : null,
+    state.status === "connected"
+      ? (state.initialBinding?.subscriptionAccountType ?? null)
+      : null,
+    state.status === "connected"
+      ? (state.initialBinding?.subscriptionPlan ?? null)
+      : null,
     "validatedAt" in state ? state.validatedAt : null,
     "errorCode" in state ? (state.errorCode ?? null) : null,
   ]);
+}
+
+/** Rejects corrupt stored combinations before any transition can preserve them. */
+function requireConsistentStoredBinding(
+  connection: Doc<"aiConnections">
+): void {
+  const hasHandle = connection.gatewayCredentialId !== undefined;
+  const hasAccountType = connection.subscriptionAccountType !== undefined;
+  const hasPlan = connection.subscriptionPlan !== undefined;
+  const hasCompleteDisplayBinding = hasHandle && hasAccountType;
+  const isProviderState =
+    connection.status === "pending" ||
+    connection.status === "connected" ||
+    connection.status === "error" ||
+    connection.status === "expired";
+
+  if (
+    (isProviderState && hasHandle !== hasAccountType) ||
+    (isProviderState && hasPlan && !hasCompleteDisplayBinding) ||
+    (connection.status === "pending" &&
+      (hasHandle || hasAccountType || hasPlan)) ||
+    (connection.status === "connected" && !hasCompleteDisplayBinding) ||
+    (connection.status === "revoking" && (hasAccountType || hasPlan)) ||
+    ((connection.status === "revoked" || connection.status === "deleted") &&
+      (hasHandle || hasAccountType || hasPlan))
+  ) {
+    throw new ConvexError(LIFECYCLE_SNAPSHOT_REJECTED);
+  }
+}
+
+/** Allows the opaque handle to be established once and never rebound by evidence. */
+function requireCredentialBindingTransition(
+  connection: Doc<"aiConnections">,
+  state: LifecycleState
+): void {
+  requireConsistentStoredBinding(connection);
+  if (state.status !== "connected") return;
+
+  if (connection.status === "pending") {
+    if (state.initialBinding === undefined) {
+      throw new ConvexError(LIFECYCLE_SNAPSHOT_REJECTED);
+    }
+    return;
+  }
+
+  // Recovery and revalidation derive the existing binding from storage. An
+  // echoed binding is rejected even when identical so it can never become an
+  // alternate source of authority.
+  if (
+    state.initialBinding !== undefined ||
+    connection.gatewayCredentialId === undefined ||
+    connection.subscriptionAccountType !== "chatgpt_subscription"
+  ) {
+    throw new ConvexError(LIFECYCLE_SNAPSHOT_REJECTED);
+  }
 }
 
 /** Returns only provider-validated fields allowed by the target lifecycle state. */
@@ -236,17 +283,22 @@ function lifecyclePatch(state: LifecycleState): Partial<Doc<"aiConnections">> {
         status: state.status,
         isDefault: false,
         gatewayCredentialId: undefined,
-        accountHint: undefined,
-        planLabel: undefined,
+        subscriptionAccountType: undefined,
+        subscriptionPlan: undefined,
         lastValidationAt: undefined,
         lastErrorCode: undefined,
       };
     case "connected":
       return {
         status: state.status,
-        gatewayCredentialId: state.gatewayCredentialId,
-        accountHint: state.accountHint,
-        planLabel: state.planLabel,
+        ...(state.initialBinding === undefined
+          ? {}
+          : {
+              gatewayCredentialId: state.initialBinding.gatewayCredentialId,
+              subscriptionAccountType:
+                state.initialBinding.subscriptionAccountType,
+              subscriptionPlan: state.initialBinding.subscriptionPlan,
+            }),
         lastValidationAt: state.validatedAt,
         lastErrorCode: undefined,
       };
@@ -255,9 +307,6 @@ function lifecyclePatch(state: LifecycleState): Partial<Doc<"aiConnections">> {
       return {
         status: state.status,
         isDefault: false,
-        gatewayCredentialId: state.gatewayCredentialId,
-        accountHint: state.accountHint,
-        planLabel: state.planLabel,
         lastValidationAt: state.validatedAt,
         lastErrorCode: state.errorCode,
       };
@@ -265,9 +314,8 @@ function lifecyclePatch(state: LifecycleState): Partial<Doc<"aiConnections">> {
       return {
         status: state.status,
         isDefault: false,
-        gatewayCredentialId: state.gatewayCredentialId,
-        accountHint: undefined,
-        planLabel: undefined,
+        subscriptionAccountType: undefined,
+        subscriptionPlan: undefined,
         lastValidationAt: undefined,
         lastErrorCode: undefined,
       };
@@ -276,8 +324,8 @@ function lifecyclePatch(state: LifecycleState): Partial<Doc<"aiConnections">> {
         status: state.status,
         isDefault: false,
         gatewayCredentialId: undefined,
-        accountHint: undefined,
-        planLabel: undefined,
+        subscriptionAccountType: undefined,
+        subscriptionPlan: undefined,
         lastValidationAt: state.validatedAt,
         lastErrorCode: state.errorCode,
       };
@@ -286,8 +334,8 @@ function lifecyclePatch(state: LifecycleState): Partial<Doc<"aiConnections">> {
         status: state.status,
         isDefault: false,
         gatewayCredentialId: undefined,
-        accountHint: undefined,
-        planLabel: undefined,
+        subscriptionAccountType: undefined,
+        subscriptionPlan: undefined,
         lastValidationAt: state.validatedAt,
         lastErrorCode: undefined,
       };
@@ -353,6 +401,7 @@ const reconcileGatewayLifecycle = internalMutation({
     ) {
       throw new ConvexError(LIFECYCLE_TRANSITION_REJECTED);
     }
+    requireCredentialBindingTransition(connection, snapshot.state);
 
     const appliedAt = Date.now();
     await ctx.db.insert("aiConnectionLifecycleReceipts", {

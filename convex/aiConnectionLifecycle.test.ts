@@ -26,6 +26,11 @@ const listConnections = makeFunctionReference<
   Record<string, never>,
   unknown[]
 >("aiConnections:list");
+const getConnectionStatus = makeFunctionReference<
+  "action",
+  { connectionId: string },
+  unknown
+>("aiConnections:getStatus");
 
 type Harness = ReturnType<typeof convexTest>;
 
@@ -40,6 +45,14 @@ async function seedConnection(
   ownerId = "user_alice",
   status: LifecycleState["status"] = "pending"
 ): Promise<Id<"aiConnections">> {
+  const hasCredentialHandle =
+    status === "connected" ||
+    status === "error" ||
+    status === "expired" ||
+    status === "revoking";
+  const hasSubscriptionDisplay =
+    status === "connected" || status === "error" || status === "expired";
+
   return t.run((ctx) =>
     ctx.db.insert("aiConnections", {
       ownerId,
@@ -47,6 +60,13 @@ async function seedConnection(
       label: "Codex",
       status,
       authenticationMethod: "device_code",
+      gatewayCredentialId: hasCredentialHandle
+        ? `credential-${ownerId}`
+        : undefined,
+      subscriptionAccountType: hasSubscriptionDisplay
+        ? "chatgpt_subscription"
+        : undefined,
+      subscriptionPlan: hasSubscriptionDisplay ? "plus" : undefined,
       isDefault: status === "connected",
       createdAt: 1,
       updatedAt: 1,
@@ -86,7 +106,6 @@ const lifecycleStatuses: LifecycleState["status"][] = [
   "deleted",
 ];
 const allowedTransitionKeys = new Set([
-  "pending->pending",
   "pending->connected",
   "pending->error",
   "pending->expired",
@@ -114,36 +133,62 @@ const transitionCases = lifecycleStatuses.flatMap((source) =>
   }))
 );
 
-/** Builds the closed provider fields required for one target status. */
-function stateForStatus(status: LifecycleState["status"]): LifecycleState {
-  switch (status) {
+/** Builds the closed provider fields required for one source/target pair. */
+function stateForTransition(
+  source: LifecycleState["status"],
+  target: LifecycleState["status"]
+): LifecycleState {
+  switch (target) {
     case "pending":
-      return { status };
+      return { status: target };
     case "connected":
       return {
-        status,
-        gatewayCredentialId: "credential-transition",
+        status: target,
+        ...(source === "pending"
+          ? {
+              initialBinding: {
+                gatewayCredentialId: "credential-transition",
+                subscriptionAccountType: "chatgpt_subscription" as const,
+                subscriptionPlan: "plus" as const,
+              },
+            }
+          : {}),
         validatedAt: 100,
       };
     case "error":
       return {
-        status,
+        status: target,
         validatedAt: 100,
         errorCode: "PROVIDER_UNAVAILABLE",
       };
     case "expired":
       return {
-        status,
+        status: target,
         validatedAt: 100,
         errorCode: "SESSION_EXPIRED",
       };
     case "revoking":
-      return { status, gatewayCredentialId: "credential-cleanup" };
+      return { status: target };
     case "revoked":
-      return { status, validatedAt: 100 };
+      return { status: target, validatedAt: 100 };
     case "deleted":
-      return { status, validatedAt: 100 };
+      return { status: target, validatedAt: 100 };
   }
+}
+
+/** Builds the only snapshot shape permitted to establish a credential handle. */
+function initialConnectedState(
+  gatewayCredentialId = "credential-alice"
+): LifecycleState {
+  return {
+    status: "connected",
+    initialBinding: {
+      gatewayCredentialId,
+      subscriptionAccountType: "chatgpt_subscription",
+      subscriptionPlan: "plus",
+    },
+    validatedAt: 100,
+  };
 }
 
 /** Requires a complete stable error instead of accepting an oracle-prone substring. */
@@ -165,13 +210,7 @@ describe("gateway lifecycle reconciliation", () => {
     const t = createHarness();
     const connectionId = await seedConnection(t);
     const result = await t.mutation(reconcileGatewayLifecycle, {
-      snapshot: snapshot(connectionId, 1, {
-        status: "connected",
-        gatewayCredentialId: "credential-alice",
-        accountHint: "ali***",
-        planLabel: "Plus",
-        validatedAt: 100,
-      }),
+      snapshot: snapshot(connectionId, 1, initialConnectedState()),
     });
     const stored = await t.run((ctx) => ctx.db.get(connectionId));
     const receipts = await t.run((ctx) =>
@@ -189,8 +228,8 @@ describe("gateway lifecycle reconciliation", () => {
       provider: "codex",
       status: "connected",
       gatewayCredentialId: "credential-alice",
-      accountHint: "ali***",
-      planLabel: "Plus",
+      subscriptionAccountType: "chatgpt_subscription",
+      subscriptionPlan: "plus",
       lastValidationAt: 100,
       lifecycleVersion: 1,
       lifecycleRevision: 1,
@@ -207,6 +246,12 @@ describe("gateway lifecycle reconciliation", () => {
     const projection = await t
       .withIdentity({ subject: "user_alice" })
       .action(listConnections, {});
+    expect(projection[0]).toMatchObject({
+      subscriptionAccountType: "chatgpt_subscription",
+      subscriptionPlan: "plus",
+    });
+    expect(projection[0]).not.toHaveProperty("accountHint");
+    expect(projection[0]).not.toHaveProperty("planLabel");
     expect(projection[0]).not.toHaveProperty("ownerId");
     expect(projection[0]).not.toHaveProperty("gatewayCredentialId");
     expect(projection[0]).not.toHaveProperty("lifecycleVersion");
@@ -219,11 +264,7 @@ describe("gateway lifecycle reconciliation", () => {
     const t = createHarness();
     const connectionId = await seedConnection(t);
     const args = {
-      snapshot: snapshot(connectionId, 1, {
-        status: "connected" as const,
-        gatewayCredentialId: "credential-alice",
-        validatedAt: 100,
-      }),
+      snapshot: snapshot(connectionId, 1, initialConnectedState()),
     };
 
     const first = await t.mutation(reconcileGatewayLifecycle, args);
@@ -254,11 +295,7 @@ describe("gateway lifecycle reconciliation", () => {
     const t = createHarness();
     const connectionId = await seedConnection(t);
     await t.mutation(reconcileGatewayLifecycle, {
-      snapshot: snapshot(connectionId, 1, {
-        status: "connected",
-        gatewayCredentialId: "credential-alice",
-        validatedAt: 100,
-      }),
+      snapshot: snapshot(connectionId, 1, initialConnectedState()),
     });
 
     await expectErrorMessage(
@@ -296,11 +333,7 @@ describe("gateway lifecycle reconciliation", () => {
       "Lifecycle snapshot rejected"
     );
     await t.mutation(reconcileGatewayLifecycle, {
-      snapshot: snapshot(connectionId, 1, {
-        status: "connected",
-        gatewayCredentialId: "credential-alice",
-        validatedAt: 100,
-      }),
+      snapshot: snapshot(connectionId, 1, initialConnectedState()),
     });
     await expectErrorMessage(
       t.mutation(reconcileGatewayLifecycle, {
@@ -348,16 +381,7 @@ describe("gateway lifecycle reconciliation", () => {
 
     await expectErrorMessage(
       t.mutation(reconcileGatewayLifecycle, {
-        snapshot: snapshot(
-          connectionId,
-          1,
-          {
-            status: "connected",
-            gatewayCredentialId: "credential-alice",
-            validatedAt: 100,
-          },
-          override
-        ),
+        snapshot: snapshot(connectionId, 1, initialConnectedState(), override),
       }),
       "Lifecycle snapshot rejected"
     );
@@ -370,11 +394,7 @@ describe("gateway lifecycle reconciliation", () => {
 
     await expectErrorMessage(
       t.mutation(reconcileGatewayLifecycle, {
-        snapshot: snapshot(bobConnection, 1, {
-          status: "connected",
-          gatewayCredentialId: "credential-alice",
-          validatedAt: 100,
-        }),
+        snapshot: snapshot(bobConnection, 1, initialConnectedState()),
       }),
       "Lifecycle snapshot rejected"
     );
@@ -386,13 +406,139 @@ describe("gateway lifecycle reconciliation", () => {
     );
   });
 
+  it("retains one immutable handle through failure, recovery, and cleanup", async () => {
+    const t = createHarness();
+    const connectionId = await seedConnection(t);
+
+    await t.mutation(reconcileGatewayLifecycle, {
+      snapshot: snapshot(
+        connectionId,
+        1,
+        initialConnectedState("credential-immutable")
+      ),
+    });
+    await t.mutation(reconcileGatewayLifecycle, {
+      snapshot: snapshot(connectionId, 2, {
+        status: "error",
+        validatedAt: 200,
+        errorCode: "PROVIDER_UNAVAILABLE",
+      }),
+    });
+    await t.mutation(reconcileGatewayLifecycle, {
+      snapshot: snapshot(connectionId, 3, {
+        status: "expired",
+        validatedAt: 300,
+        errorCode: "SESSION_EXPIRED",
+      }),
+    });
+    await t.mutation(reconcileGatewayLifecycle, {
+      snapshot: snapshot(connectionId, 4, {
+        status: "connected",
+        validatedAt: 400,
+      }),
+    });
+    const recovered = await t.run((ctx) => ctx.db.get(connectionId));
+    expect(recovered).toMatchObject({
+      status: "connected",
+      gatewayCredentialId: "credential-immutable",
+      subscriptionAccountType: "chatgpt_subscription",
+      subscriptionPlan: "plus",
+      lifecycleRevision: 4,
+    });
+
+    await t.mutation(reconcileGatewayLifecycle, {
+      snapshot: snapshot(connectionId, 5, { status: "revoking" }),
+    });
+    const revoking = await t.run((ctx) => ctx.db.get(connectionId));
+    expect(revoking?.gatewayCredentialId).toBe("credential-immutable");
+    expect(revoking?.subscriptionAccountType).toBeUndefined();
+    expect(revoking?.subscriptionPlan).toBeUndefined();
+
+    await t.mutation(reconcileGatewayLifecycle, {
+      snapshot: snapshot(connectionId, 6, {
+        status: "revoked",
+        validatedAt: 600,
+      }),
+    });
+    expect(
+      (await t.run((ctx) => ctx.db.get(connectionId)))?.gatewayCredentialId
+    ).toBeUndefined();
+  });
+
+  it.each(["credential-other", "credential-user_bob"])(
+    "rejects later connected evidence that tries to rebind %s",
+    async (gatewayCredentialId) => {
+      const t = createHarness();
+      const connectionId = await seedConnection(t, "user_alice", "connected");
+
+      await expectErrorMessage(
+        t.mutation(reconcileGatewayLifecycle, {
+          snapshot: snapshot(connectionId, 1, {
+            status: "connected",
+            initialBinding: {
+              gatewayCredentialId,
+              subscriptionAccountType: "chatgpt_subscription",
+              subscriptionPlan: "plus",
+            },
+            validatedAt: 100,
+          }),
+        }),
+        "Lifecycle snapshot rejected"
+      );
+      expect(
+        (await t.run((ctx) => ctx.db.get(connectionId)))?.gatewayCredentialId
+      ).toBe("credential-user_alice");
+      expect(
+        await t.run((ctx) =>
+          ctx.db.query("aiConnectionLifecycleReceipts").collect()
+        )
+      ).toEqual([]);
+    }
+  );
+
+  it.each([
+    { status: "error", injectedHandle: "credential-other" },
+    { status: "expired", injectedHandle: null },
+    { status: "revoking", injectedHandle: "credential-user_bob" },
+  ] as const)(
+    "rejects $status evidence that injects or clears the stored handle",
+    async ({ status, injectedHandle }) => {
+      const t = createHarness();
+      const connectionId = await seedConnection(t, "user_alice", "connected");
+      const state =
+        status === "revoking"
+          ? { status, gatewayCredentialId: injectedHandle }
+          : {
+              status,
+              gatewayCredentialId: injectedHandle,
+              validatedAt: 100,
+              errorCode:
+                status === "error" ? "PROVIDER_UNAVAILABLE" : "SESSION_EXPIRED",
+            };
+
+      await expect(
+        t.mutation(reconcileGatewayLifecycle, {
+          snapshot: snapshot(connectionId, 1, state as never),
+        })
+      ).rejects.toThrow();
+      expect(
+        (await t.run((ctx) => ctx.db.get(connectionId)))?.gatewayCredentialId
+      ).toBe("credential-user_alice");
+      expect(
+        await t.run((ctx) =>
+          ctx.db.query("aiConnectionLifecycleReceipts").collect()
+        )
+      ).toEqual([]);
+    }
+  );
+
   it.each(transitionCases)(
     "enforces transition $source -> $target (allowed: $allowed)",
     async ({ source, target, allowed }) => {
       const t = createHarness();
       const connectionId = await seedConnection(t, "user_alice", source);
       const reconciliation = t.mutation(reconcileGatewayLifecycle, {
-        snapshot: snapshot(connectionId, 1, stateForStatus(target)),
+        snapshot: snapshot(connectionId, 1, stateForTransition(source, target)),
       });
 
       if (!allowed) {
@@ -434,10 +580,10 @@ describe("gateway lifecycle reconciliation", () => {
     await t.run((ctx) =>
       ctx.db.patch(connectionId, {
         gatewayCredentialId: "credential-removed",
-        accountHint: "rem***",
-        planLabel: "Stale plan",
+        subscriptionAccountType: "chatgpt_subscription",
+        subscriptionPlan: "enterprise",
         lastValidationAt: 50,
-        lastErrorCode: "STALE_ERROR",
+        lastErrorCode: "VALIDATION_FAILED",
       })
     );
 
@@ -445,10 +591,7 @@ describe("gateway lifecycle reconciliation", () => {
       snapshot: snapshot(
         connectionId,
         1,
-        {
-          status: "revoking",
-          gatewayCredentialId: "credential-removed",
-        },
+        { status: "revoking" },
         { ownerId: "user_removed" }
       ),
     });
@@ -458,8 +601,8 @@ describe("gateway lifecycle reconciliation", () => {
       gatewayCredentialId: "credential-removed",
       isDefault: false,
     });
-    expect(revoking?.accountHint).toBeUndefined();
-    expect(revoking?.planLabel).toBeUndefined();
+    expect(revoking?.subscriptionAccountType).toBeUndefined();
+    expect(revoking?.subscriptionPlan).toBeUndefined();
     expect(revoking?.lastValidationAt).toBeUndefined();
     expect(revoking?.lastErrorCode).toBeUndefined();
 
@@ -468,8 +611,8 @@ describe("gateway lifecycle reconciliation", () => {
       .action(listConnections, {});
     expect(projection[0]).toMatchObject({ status: "revoking" });
     expect(projection[0]).not.toHaveProperty("gatewayCredentialId");
-    expect(projection[0]).not.toHaveProperty("accountHint");
-    expect(projection[0]).not.toHaveProperty("planLabel");
+    expect(projection[0]).not.toHaveProperty("subscriptionAccountType");
+    expect(projection[0]).not.toHaveProperty("subscriptionPlan");
     expect(projection[0]).not.toHaveProperty("lastValidationAt");
     expect(projection[0]).not.toHaveProperty("lastErrorCode");
 
@@ -507,7 +650,6 @@ describe("gateway lifecycle reconciliation", () => {
           4,
           {
             status: "connected",
-            gatewayCredentialId: "credential-reactivated",
             validatedAt: 400,
           },
           { ownerId: "user_removed" }
@@ -525,11 +667,11 @@ describe("gateway lifecycle reconciliation", () => {
     const connectionId = await seedConnection(t);
     const outcomes = await Promise.allSettled([
       t.mutation(reconcileGatewayLifecycle, {
-        snapshot: snapshot(connectionId, 1, {
-          status: "connected",
-          gatewayCredentialId: "credential-first",
-          validatedAt: 100,
-        }),
+        snapshot: snapshot(
+          connectionId,
+          1,
+          initialConnectedState("credential-first")
+        ),
       }),
       t.mutation(reconcileGatewayLifecycle, {
         snapshot: snapshot(
@@ -564,56 +706,108 @@ describe("gateway lifecycle reconciliation", () => {
   it.each([
     {
       label: "unsupported version",
-      change: { version: 2 },
+      mutate: (candidate: GatewayLifecycleSnapshot) => ({
+        ...candidate,
+        version: 2,
+      }),
     },
     {
       label: "unsafe evidence id",
-      change: { evidenceId: "provider output\nsecret" },
-    },
-    {
-      label: "unsafe plan label",
-      state: {
-        status: "connected" as const,
-        gatewayCredentialId: "credential-alice",
-        planLabel: "Plus\nraw",
-        validatedAt: 100,
-      },
-    },
-    {
-      label: "raw error text",
-      state: {
-        status: "error" as const,
-        validatedAt: 100,
-        errorCode: "provider said token=secret",
-      },
+      mutate: (candidate: GatewayLifecycleSnapshot) => ({
+        ...candidate,
+        evidenceId: "provider output\nsecret",
+      }),
     },
     {
       label: "non-integer validation timestamp",
-      state: {
-        status: "connected" as const,
-        gatewayCredentialId: "credential-alice",
-        validatedAt: 1.5,
-      },
+      mutate: (candidate: GatewayLifecycleSnapshot) => ({
+        ...candidate,
+        state: { ...candidate.state, validatedAt: 1.5 },
+      }),
     },
   ])("rejects a $label with the stable snapshot error", async (testCase) => {
     const t = createHarness();
     const connectionId = await seedConnection(t);
-    const candidate = snapshot(
-      connectionId,
-      1,
-      testCase.state ?? {
-        status: "connected",
-        gatewayCredentialId: "credential-alice",
-        validatedAt: 100,
-      }
-    );
+    const candidate = snapshot(connectionId, 1, initialConnectedState());
 
     await expectErrorMessage(
       t.mutation(reconcileGatewayLifecycle, {
-        snapshot: { ...candidate, ...testCase.change },
+        snapshot: testCase.mutate(candidate) as GatewayLifecycleSnapshot,
       }),
       "Lifecycle snapshot rejected"
     );
+  });
+
+  it.each(["provider said token=secret", "TOKEN_SECRET", "OPENAI_API_KEY"])(
+    "rejects non-enumerated provider error code %s",
+    async (errorCode) => {
+      const t = createHarness();
+      const connectionId = await seedConnection(t, "user_alice", "connected");
+
+      await expect(
+        t.mutation(reconcileGatewayLifecycle, {
+          snapshot: snapshot(connectionId, 1, {
+            status: "error",
+            validatedAt: 100,
+            errorCode,
+          } as never),
+        })
+      ).rejects.toThrow();
+      expect(
+        await t.run((ctx) =>
+          ctx.db.query("aiConnectionLifecycleReceipts").collect()
+        )
+      ).toEqual([]);
+    }
+  );
+
+  it.each([
+    "sk-secret-must-never-cross-browser-boundary",
+    "Bearer eyJhbGciOiJIUzI1NiJ9.secret",
+    "password=hunter2",
+    "token=credential",
+    "/Users/alice/.codex/auth.json",
+    "OPENAI_API_KEY=secret",
+    "plus\nsecret",
+    "https://credential.example/token",
+    "рro",
+    "\u0000secret",
+  ])("rejects and never projects subscription canary %s", async (canary) => {
+    const t = createHarness();
+    const connectionId = await seedConnection(t);
+    const candidate = snapshot(connectionId, 1, {
+      status: "connected",
+      initialBinding: {
+        gatewayCredentialId: "credential-alice",
+        subscriptionAccountType: "chatgpt_subscription",
+        subscriptionPlan: canary,
+      },
+      validatedAt: 100,
+    } as never);
+
+    await expect(
+      t.mutation(reconcileGatewayLifecycle, { snapshot: candidate })
+    ).rejects.toThrow();
+    const stored = await t.run((ctx) => ctx.db.get(connectionId));
+    expect(stored?.gatewayCredentialId).toBeUndefined();
+    expect(stored?.subscriptionAccountType).toBeUndefined();
+    expect(stored?.subscriptionPlan).toBeUndefined();
+
+    const owner = t.withIdentity({ subject: "user_alice" });
+    const listed = await owner.action(listConnections, {});
+    const status = await owner.action(getConnectionStatus, { connectionId });
+    expect(JSON.stringify({ listed, status })).not.toContain(canary);
+    for (const projection of [listed[0], status]) {
+      expect(projection).not.toHaveProperty("subscriptionAccountType");
+      expect(projection).not.toHaveProperty("subscriptionPlan");
+    }
+    expect(listed[0]).not.toHaveProperty("accountHint");
+    expect(listed[0]).not.toHaveProperty("planLabel");
+    expect(
+      await t.run((ctx) =>
+        ctx.db.query("aiConnectionLifecycleReceipts").collect()
+      )
+    ).toEqual([]);
   });
 
   it("enforces a closed status-specific input schema", async () => {

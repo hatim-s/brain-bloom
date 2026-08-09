@@ -17,13 +17,30 @@ export default defineSchema({
     ),
     authenticationMethod: v.literal("device_code"),
     gatewayCredentialId: v.optional(v.string()),
-    accountHint: v.optional(v.string()),
-    planLabel: v.optional(v.string()),
+    subscriptionAccountType: v.optional(v.literal("chatgpt_subscription")),
+    subscriptionPlan: v.optional(
+      v.union(
+        v.literal("free"),
+        v.literal("plus"),
+        v.literal("pro"),
+        v.literal("business"),
+        v.literal("enterprise"),
+        v.literal("edu")
+      )
+    ),
     isDefault: v.boolean(),
     createdAt: v.number(),
     updatedAt: v.number(),
     lastValidationAt: v.optional(v.number()),
-    lastErrorCode: v.optional(v.string()),
+    lastErrorCode: v.optional(
+      v.union(
+        v.literal("PROVIDER_UNAVAILABLE"),
+        v.literal("SESSION_EXPIRED"),
+        v.literal("VALIDATION_FAILED"),
+        v.literal("CREDENTIAL_REVOKED"),
+        v.literal("CLEANUP_FAILED")
+      )
+    ),
     lifecycleVersion: v.optional(v.literal(1)),
     lifecycleRevision: v.optional(v.number()),
   })
