@@ -21,6 +21,7 @@ import {
   GATEWAY_CHAT_STREAM_CONTENT_TYPE,
   GATEWAY_OPERATION_PROTOCOL_VERSION,
   type GatewayResourceAuthority,
+  parseGatewayActionResult,
   parseGatewayOperationEnvelope,
   serializeGatewayChatStreamFrame,
 } from "./operation-protocol.ts";
@@ -128,24 +129,31 @@ type OperationExecutionContext = Readonly<{
 type CodexOperationDefinition = Readonly<{
   operation: GatewayOperation;
   protocolVersion?: typeof GATEWAY_OPERATION_PROTOCOL_VERSION;
-  responseKind?: "json" | "stream";
   parseInput: (input: unknown) => unknown;
-  parseOutput?: (output: unknown) => unknown;
   execute: (
     input: unknown,
     context: OperationExecutionContext
   ) => unknown | Promise<unknown>;
 }>;
 
+type RegisteredCodexOperationDefinition = CodexOperationDefinition &
+  Readonly<{
+    responseKind: "json" | "stream";
+    parseOutput?: (output: unknown) => unknown;
+  }>;
+
 /** Immutable server-owned operation lookup; transport input cannot mutate it. */
 class CodexOperationRegistry {
   private readonly definitions: ReadonlyMap<
     GatewayOperation,
-    CodexOperationDefinition
+    RegisteredCodexOperationDefinition
   >;
 
   constructor(definitions: readonly CodexOperationDefinition[]) {
-    const entries = new Map<GatewayOperation, CodexOperationDefinition>();
+    const entries = new Map<
+      GatewayOperation,
+      RegisteredCodexOperationDefinition
+    >();
     for (const definition of definitions) {
       if (!GATEWAY_OPERATIONS.includes(definition.operation)) {
         throw configurationError();
@@ -159,14 +167,7 @@ class CodexOperationRegistry {
       ) {
         throw configurationError();
       }
-      if (
-        definition.responseKind !== undefined &&
-        definition.responseKind !== "json" &&
-        definition.responseKind !== "stream"
-      ) {
-        throw configurationError();
-      }
-      entries.set(definition.operation, Object.freeze({ ...definition }));
+      entries.set(definition.operation, deriveOperationContract(definition));
     }
     if (entries.size === 0) {
       throw configurationError();
@@ -176,9 +177,36 @@ class CodexOperationRegistry {
   }
 
   /** Resolves only a compile-time gateway operation selected by server policy. */
-  get(operation: GatewayOperation): CodexOperationDefinition | undefined {
+  get(
+    operation: GatewayOperation
+  ): RegisteredCodexOperationDefinition | undefined {
     return this.definitions.get(operation);
   }
+}
+
+/** Derives all response semantics centrally from protocol version and operation. */
+function deriveOperationContract(
+  definition: CodexOperationDefinition
+): RegisteredCodexOperationDefinition {
+  const base = {
+    operation: definition.operation,
+    protocolVersion: definition.protocolVersion,
+    parseInput: definition.parseInput,
+    execute: definition.execute,
+  };
+  if (definition.protocolVersion !== GATEWAY_OPERATION_PROTOCOL_VERSION) {
+    return Object.freeze({ ...base, responseKind: "json" });
+  }
+  if (definition.operation === "chat") {
+    return Object.freeze({ ...base, responseKind: "stream" });
+  }
+  const actionOperation = definition.operation;
+  return Object.freeze({
+    ...base,
+    responseKind: "json",
+    parseOutput: (output: unknown) =>
+      parseGatewayActionResult(output, actionOperation),
+  });
 }
 
 type GatewayRoute = Readonly<{
@@ -349,6 +377,16 @@ function createGatewayDispatcher(
         throw new GatewayRequestError("invalid_request");
       }
 
+      if (definition.responseKind === "stream") {
+        const stream = await executeStreamingWithCancellation(
+          definition,
+          parsedInput,
+          claims,
+          request.signal,
+          executionTimeoutMs
+        );
+        return streamSuccessResponse(stream);
+      }
       const result = await executeWithCancellation(
         definition,
         parsedInput,
@@ -356,9 +394,6 @@ function createGatewayDispatcher(
         request.signal,
         executionTimeoutMs
       );
-      if (definition.responseKind === "stream") {
-        return streamSuccessResponse(result);
-      }
       let data = result;
       try {
         data = definition.parseOutput?.(result) ?? result;
@@ -701,6 +736,216 @@ function rateAttempt(options: GatewayDispatcherOptions): RateBudgetAttempt {
 }
 
 /** Hands execution an abort signal and bounds how long dispatch awaits it. */
+async function executeStreamingWithCancellation(
+  definition: RegisteredCodexOperationDefinition,
+  input: unknown,
+  claims: InternalAssertionClaims,
+  requestSignal: AbortSignal | undefined,
+  timeoutMs: number
+): Promise<AsyncIterable<unknown>> {
+  if (requestSignal?.aborted) {
+    throw new GatewayRequestError("request_aborted");
+  }
+
+  const executionController = new AbortController();
+  let iterator: AsyncIterator<unknown> | undefined;
+  let iteratorClaimed = false;
+  let terminalError: GatewayRequestError | undefined;
+  let completed = false;
+  let cleanupPromise: Promise<boolean> | undefined;
+
+  /** Clears lifetime resources and closes the provider iterator at most once. */
+  const cleanup = (closeIterator: boolean): Promise<boolean> => {
+    if (cleanupPromise !== undefined) return cleanupPromise;
+    clearTimeout(timeout);
+    requestSignal?.removeEventListener("abort", handleRequestAbort);
+    executionController.abort();
+    cleanupPromise =
+      closeIterator && iterator !== undefined
+        ? closeStreamingIterator(iterator)
+        : Promise.resolve(true);
+    return cleanupPromise;
+  };
+  const cancel = (code: "request_aborted" | "request_timeout"): void => {
+    if (completed || terminalError !== undefined) return;
+    terminalError = new GatewayRequestError(code);
+    executionController.abort();
+    void cleanup(true);
+  };
+  const handleRequestAbort = (): void => cancel("request_aborted");
+  const timeout = setTimeout(() => cancel("request_timeout"), timeoutMs);
+  requestSignal?.addEventListener("abort", handleRequestAbort, { once: true });
+  if (requestSignal?.aborted) handleRequestAbort();
+
+  const executionPromise = Promise.resolve().then(() => {
+    if (terminalError !== undefined) throw terminalError;
+    return definition.execute(input, {
+      claims,
+      signal: executionController.signal,
+    });
+  });
+  let result: unknown;
+  try {
+    result = await awaitStreamingOperation(
+      executionPromise,
+      executionController.signal,
+      () => terminalError ?? new GatewayRequestError("operation_failed"),
+      (lateResult) => observeLateStreamingResult(lateResult)
+    );
+    if (
+      typeof result !== "object" ||
+      result === null ||
+      typeof (result as AsyncIterable<unknown>)[Symbol.asyncIterator] !==
+        "function"
+    ) {
+      throw new GatewayRequestError("operation_failed");
+    }
+    iterator = (result as AsyncIterable<unknown>)[Symbol.asyncIterator]();
+    if (typeof iterator?.next !== "function") {
+      throw new GatewayRequestError("operation_failed");
+    }
+  } catch (error) {
+    await cleanup(true);
+    throw error instanceof GatewayRequestError
+      ? error
+      : new GatewayRequestError("operation_failed");
+  }
+
+  const ownedIterator = iterator;
+  return Object.freeze({
+    [Symbol.asyncIterator](): AsyncIterator<unknown> {
+      if (iteratorClaimed) {
+        throw new GatewayRequestError("operation_failed");
+      }
+      iteratorClaimed = true;
+      return {
+        async next(): Promise<IteratorResult<unknown>> {
+          if (terminalError !== undefined) throw terminalError;
+          if (completed) return { done: true, value: undefined };
+          try {
+            const next = await awaitStreamingOperation(
+              Promise.resolve().then(() => ownedIterator.next()),
+              executionController.signal,
+              () => terminalError ?? new GatewayRequestError("operation_failed")
+            );
+            if (typeof next !== "object" || next === null) {
+              throw new GatewayRequestError("operation_failed");
+            }
+            if (next.done) {
+              completed = true;
+              await cleanup(false);
+            }
+            return next;
+          } catch (error) {
+            completed = true;
+            await cleanup(true);
+            throw error instanceof GatewayRequestError
+              ? error
+              : new GatewayRequestError("operation_failed");
+          }
+        },
+        async return(): Promise<IteratorResult<unknown>> {
+          if (completed) return { done: true, value: undefined };
+          completed = true;
+          const cleaned = await cleanup(true);
+          if (!cleaned && terminalError === undefined) {
+            throw new GatewayRequestError("operation_failed");
+          }
+          return { done: true, value: undefined };
+        },
+      };
+    },
+  });
+}
+
+/** Races one provider handoff/iteration step while observing late settlement. */
+function awaitStreamingOperation<T>(
+  promise: PromiseLike<T>,
+  signal: AbortSignal,
+  cancellationError: () => GatewayRequestError,
+  onLateFulfilled?: (value: T) => void
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", handleAbort);
+      callback();
+    };
+    const handleAbort = (): void => finish(() => reject(cancellationError()));
+    signal.addEventListener("abort", handleAbort, { once: true });
+    if (signal.aborted) handleAbort();
+
+    Promise.resolve(promise).then(
+      (value) => {
+        if (settled) {
+          try {
+            onLateFulfilled?.(value);
+          } catch {
+            // Late cleanup hooks never replace the authoritative cancellation.
+          }
+          return;
+        }
+        finish(() => resolve(value));
+      },
+      () => finish(() => reject(new GatewayRequestError("operation_failed")))
+    );
+  });
+}
+
+/** Closes a provider iterator behind a finite bound and hides cleanup secrets. */
+async function closeStreamingIterator(
+  iterator: AsyncIterator<unknown>
+): Promise<boolean> {
+  let returnMethod: AsyncIterator<unknown>["return"];
+  try {
+    returnMethod = iterator.return;
+  } catch {
+    return false;
+  }
+  if (typeof returnMethod !== "function") return true;
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  let succeeded = false;
+  const cleanup = Promise.resolve()
+    .then(() => returnMethod.call(iterator))
+    .then(
+      () => {
+        succeeded = true;
+      },
+      () => undefined
+    );
+  await Promise.race([
+    cleanup,
+    new Promise<void>((resolve) => {
+      cleanupTimer = setTimeout(resolve, BODY_CLEANUP_GRACE_MS);
+    }),
+  ]);
+  if (cleanupTimer !== undefined) clearTimeout(cleanupTimer);
+  return succeeded;
+}
+
+/** Observes and closes an iterable returned after cancellation won handoff. */
+function observeLateStreamingResult(value: unknown): void {
+  void Promise.resolve()
+    .then(async () => {
+      if (
+        typeof value !== "object" ||
+        value === null ||
+        typeof (value as AsyncIterable<unknown>)[Symbol.asyncIterator] !==
+          "function"
+      ) {
+        return;
+      }
+      const iterator = (value as AsyncIterable<unknown>)[
+        Symbol.asyncIterator
+      ]();
+      await closeStreamingIterator(iterator);
+    })
+    .catch(() => undefined);
+}
+
+/** Hands buffered execution an abort signal and bounds how long dispatch awaits it. */
 async function executeWithCancellation(
   definition: CodexOperationDefinition,
   input: unknown,

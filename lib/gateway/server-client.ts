@@ -21,6 +21,7 @@ import {
   parseGatewayActionResult,
   parseGatewayChatStreamFrame,
 } from "../../services/agent-gateway/operation-protocol.ts";
+import { BoundedNdjsonFrameBuffer } from "./ndjson-frame-buffer.ts";
 
 const GATEWAY_BASE_PATH = "/internal/v1";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -1105,7 +1106,7 @@ async function createBoundedGatewayStream(
 
   let byteCount = 0;
   let chunkCount = 0;
-  let pendingBytes = new Uint8Array();
+  const frameBuffer = new BoundedNdjsonFrameBuffer(maxBytes);
   let upstreamDone = false;
   let terminal = false;
   let reading = false;
@@ -1154,10 +1155,8 @@ async function createBoundedGatewayStream(
         reading = true;
         try {
           while (true) {
-            const newline = pendingBytes.indexOf(10);
-            if (newline >= 0) {
-              const line = pendingBytes.slice(0, newline);
-              pendingBytes = pendingBytes.slice(newline + 1);
+            const line = frameBuffer.takeLine();
+            if (line !== null) {
               if (line.byteLength === 0) {
                 throw clientError("gateway_response_invalid");
               }
@@ -1175,7 +1174,7 @@ async function createBoundedGatewayStream(
 
             if (upstreamDone) {
               if (
-                pendingBytes.byteLength !== 0 ||
+                frameBuffer.pendingByteLength !== 0 ||
                 (declaredLength !== undefined && declaredLength !== byteCount)
               ) {
                 throw clientError("gateway_response_invalid");
@@ -1205,12 +1204,10 @@ async function createBoundedGatewayStream(
             if (chunkCount > maxChunks || byteCount > maxBytes) {
               throw clientError("response_too_large");
             }
-            const combined = new Uint8Array(
-              pendingBytes.byteLength + result.value.byteLength
-            );
-            combined.set(pendingBytes);
-            combined.set(result.value, pendingBytes.byteLength);
-            pendingBytes = combined;
+            if (declaredLength !== undefined && byteCount > declaredLength) {
+              throw clientError("gateway_response_invalid");
+            }
+            frameBuffer.push(result.value);
           }
         } catch (error) {
           close(true);

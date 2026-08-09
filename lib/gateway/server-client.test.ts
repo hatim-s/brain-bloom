@@ -982,6 +982,78 @@ describe("gateway server client", () => {
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects declared-length overrun before emitting any chat event", async () => {
+    const encoded = serializeGatewayChatStreamFrame({ type: "start" });
+    const cancel = vi.fn();
+    const current = fixture({
+      status: 200,
+      redirected: false,
+      url: RESPONSE_URL,
+      headers: new Headers({
+        "content-type": GATEWAY_CHAT_STREAM_CONTENT_TYPE,
+        "content-length": "1",
+      }),
+      body: {
+        getReader: () => ({
+          read: vi
+            .fn<() => Promise<ReadableStreamReadResult<Uint8Array>>>()
+            .mockResolvedValueOnce({ done: false, value: encoded }),
+          cancel,
+          releaseLock: vi.fn(),
+        }),
+        cancel,
+      },
+    });
+    const stream = await client(current).streamChat(chatRequest());
+
+    await expect(stream.getReader().read()).rejects.toMatchObject({
+      code: "gateway_response_invalid",
+      message: "Gateway client request failed",
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("decodes a UTF-8 chat frame split across individual bytes", async () => {
+    const event = {
+      type: "text-delta",
+      id: "text-utf8",
+      delta: "mind map 🧠 漢字",
+    } as const;
+    const encoded = serializeGatewayChatStreamFrame(event);
+    const byteResults = Array.from(encoded, (byte) => ({
+      done: false as const,
+      value: new Uint8Array([byte]),
+    }));
+    const read = vi
+      .fn<() => Promise<ReadableStreamReadResult<Uint8Array>>>()
+      .mockResolvedValueOnce(byteResults[0]);
+    for (const result of byteResults.slice(1))
+      read.mockResolvedValueOnce(result);
+    read.mockResolvedValueOnce({ done: true, value: undefined });
+    const current = fixture({
+      status: 200,
+      redirected: false,
+      url: RESPONSE_URL,
+      headers: new Headers({
+        "content-type": GATEWAY_CHAT_STREAM_CONTENT_TYPE,
+      }),
+      body: {
+        getReader: () => ({ read, cancel: vi.fn(), releaseLock: vi.fn() }),
+        cancel: vi.fn(),
+      },
+    });
+    const stream = await client(current, {
+      maxResponseChunks: encoded.byteLength + 1,
+    }).streamChat(chatRequest());
+    const reader = stream.getReader();
+
+    await expect(reader.read()).resolves.toEqual({ done: false, value: event });
+    await expect(reader.read()).resolves.toEqual({
+      done: true,
+      value: undefined,
+    });
+  });
+
   it("keeps caller abort active after returning a chat stream", async () => {
     const cancel = vi.fn();
     const current = fixture({

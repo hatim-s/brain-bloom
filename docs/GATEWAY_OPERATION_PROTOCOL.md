@@ -54,6 +54,14 @@ overflow cancels and releases the upstream reader. Redirects, response URL drift
 unexpected status/content type, unbounded header values, and late response bodies
 fail closed. Signed operations are sent once and never retried.
 
+The gateway retains the provider's derived abort signal, timer, request listener,
+and iterator through stream completion. Cancellation races every lazy `next()`
+and closes the upstream iterator exactly once behind a finite cleanup bound;
+provider `next()` and `return()` failures are normalized without reflecting their
+messages. Client framing retains immutable fragments in a queue, scans every byte
+once, and copies bytes only when a complete line is decoded, including when UTF-8
+code points cross transport chunks.
+
 ## Human-gated follow-ups
 
 Production composition still requires separate review of the persistent gateway
