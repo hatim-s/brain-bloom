@@ -118,6 +118,7 @@ async function createDryRunSummary(
     "",
     "Execution requires --run --adapter-module <path>. A cache miss additionally requires --allow-downloads.",
     "Content checksums are verified only during approved execution preflight.",
+    "Contract v1 execution is sandbox-smoke-only and invalid for model selection; it cannot access model cache bytes.",
     "The harness never selects or activates a candidate."
   );
   return `${lines.join("\n")}\n`;

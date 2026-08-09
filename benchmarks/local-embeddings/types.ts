@@ -1,8 +1,17 @@
+/** Machine-readable proof class for a benchmark execution boundary. */
+type AdapterExecutionEvidence = {
+  modelArtifactAccess: "none";
+  evidenceClass: "sandbox-smoke-only";
+  selectionEligibility: "invalid";
+  selectionIneligibilityReason: "no-model-artifact-capability";
+};
+
 /** Versioned executable contract for one immutable adapter bundle. */
 type AdapterBundleContract = {
   format: "self-contained-esm-bundle/v1";
   executionBoundary: "node-vm-source-text-module/v1";
   allowedNodeBuiltins: string[];
+  executionEvidence: AdapterExecutionEvidence;
 };
 
 /** Pinned adapter artifact and manifest that bind executable behavior. */
@@ -246,6 +255,7 @@ type IntegrityEvaluation = {
 type CandidateBenchmarkResult = {
   candidate: EmbeddingCandidate;
   verifiedAdapter: VerifiedAdapterArtifact;
+  executionEvidence: AdapterExecutionEvidence;
   offlineCache: {
     status: "verified";
     bytes: number;
@@ -297,6 +307,7 @@ type BenchmarkEnvironment = {
 type BenchmarkReport = {
   schemaVersion: 1;
   decision: "not-selected";
+  executionEvidence: AdapterExecutionEvidence;
   environment: BenchmarkEnvironment;
   fixtureVersions: {
     candidates: 1;
@@ -332,6 +343,7 @@ type RuntimeProbe = {
 export type {
   AdapterBundleContract,
   AdapterCreateOptions,
+  AdapterExecutionEvidence,
   AdapterIdentity,
   BenchmarkBudgets,
   BenchmarkClock,

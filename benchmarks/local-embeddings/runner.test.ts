@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { loadVerifiedAdapterFactory } from "./adapter-module.ts";
 import { createJsonReport, createMarkdownReport } from "./report.ts";
 import { runBenchmarkIsolated, runSingleCandidate } from "./runner.ts";
 import type {
@@ -57,6 +58,12 @@ const configuration: CandidateConfiguration = {
         format: "self-contained-esm-bundle/v1",
         executionBoundary: "node-vm-source-text-module/v1",
         allowedNodeBuiltins: [],
+        executionEvidence: {
+          modelArtifactAccess: "none",
+          evidenceClass: "sandbox-smoke-only",
+          selectionEligibility: "invalid",
+          selectionIneligibilityReason: "no-model-artifact-capability",
+        },
       },
     },
     runtime: { id: "fake-runtime", version: "1.0.0" },
@@ -340,6 +347,56 @@ function fakeVector(text: string, role: "document" | "query"): number[] {
   return vector;
 }
 
+/** Builds a VM bundle with a measurable initialization delay and fake vectors. */
+function createDelayedVmBundle(delayMs: number): string {
+  const candidate = configuration.candidates[0];
+  return `
+    const started = Date.now();
+    while (Date.now() - started < ${delayMs}) {}
+    const dimensions = ${dimensions};
+    const textVectorIndex = new Map(${JSON.stringify(Array.from(textVectorIndex))});
+    const segments = ${JSON.stringify(corpus.segments)};
+    const sourcesById = new Map(${JSON.stringify(Array.from(sourcesById))});
+    function vectorFor(text, role) {
+      const vector = Array.from({ length: dimensions }, () => 0);
+      const segmentIndex = textVectorIndex.get(text);
+      const negative = role === "query" &&
+        (text === "malformed excluded" || text === "limit excluded");
+      if (segmentIndex !== undefined && !negative) vector[segmentIndex] = 2;
+      if (role === "document" && segmentIndex !== undefined) {
+        const segment = segments[segmentIndex];
+        const source = sourcesById.get(segment.sourceId);
+        if (source.active && source.retrievable) {
+          if (source.ownerId === "owner-study" && source.scopeId === "scope-core") vector[70] = 1;
+          if (source.ownerId === "owner-alpha" && source.scopeId === "scope-alpha") vector[71] = 1;
+        }
+      } else if (role === "query") vector[text === "alpha cedar" ? 71 : 70] = 1;
+      return vector;
+    }
+    export const createEmbeddingAdapterFactory = async () => {
+      const factoryStarted = Date.now();
+      while (Date.now() - factoryStarted < ${delayMs}) {}
+      return {
+        async create() {
+          return {
+            identity: ${JSON.stringify({
+              adapter: {
+                id: candidate.adapter.id,
+                version: candidate.adapter.version,
+                revision: candidate.adapter.revision,
+              },
+              runtime: candidate.runtime,
+              preprocessing: candidate.preprocessing,
+            })},
+            async load() {},
+            async embed(texts, role) { return texts.map((text) => vectorFor(text, role)); }
+          };
+        }
+      };
+    };
+  `;
+}
+
 /** Creates a deterministic absolute/high-water RSS probe for CI. */
 function createRuntimeProbe(marker = 100): RuntimeProbe {
   return {
@@ -463,6 +520,33 @@ describe("local embedding benchmark runner", () => {
     );
     expect(result.latency.coldLoadMs).toBe(33);
     expect(result.latency.coldQueryMs).toBe(1);
+  });
+
+  it("includes delayed VM initialization and rejects model-selection evidence", async () => {
+    const source = createDelayedVmBundle(25);
+    const factory = await loadVerifiedAdapterFactory(
+      Buffer.from(source),
+      `sha256:${createHash("sha256").update(source).digest("hex")}`,
+      configuration.candidates[0].adapter.bundle
+    );
+    const result = await runFakeCandidate(0, "isolated", factory);
+
+    expect(result.latency.coldLoadMs).toBeGreaterThanOrEqual(40);
+    expect(result.offlineCache.status).toBe("verified");
+    expect(result.resources.residentMemoryMeasurement).toBe(
+      "valid-isolated-process"
+    );
+    expect(result.executionEvidence).toEqual({
+      modelArtifactAccess: "none",
+      evidenceClass: "sandbox-smoke-only",
+      selectionEligibility: "invalid",
+      selectionIneligibilityReason: "no-model-artifact-capability",
+    });
+    expect(
+      Object.values(result.budgets).every(
+        (observation) => observation.status === "invalid"
+      )
+    ).toBe(true);
   });
 
   it("denies a cache miss before creating an adapter", async () => {
@@ -595,11 +679,50 @@ describe("local embedding benchmark runner", () => {
     };
     const first = await runBenchmarkIsolated(options);
     const second = await runBenchmarkIsolated(options);
-    expect(createJsonReport(first)).toBe(createJsonReport(second));
+    const json = createJsonReport(first);
+    expect(json).toBe(createJsonReport(second));
+    expect(json).toContain('"modelArtifactAccess": "none"');
     expect(first.results.every((result) => result.integrity.passed)).toBe(true);
     const markdown = createMarkdownReport(first);
     expect(markdown).toContain("Decision: **not selected**");
+    expect(markdown).toContain("INVALID FOR MODEL SELECTION");
     expect(markdown).toContain("node-vm-source-text-module/v1");
+    expect(first.executionEvidence.selectionEligibility).toBe("invalid");
+    expect(
+      first.results.every((result) =>
+        Object.values(result.budgets).every(
+          (observation) => observation.status === "invalid"
+        )
+      )
+    ).toBe(true);
+    expect(() =>
+      validateBenchmarkReport({
+        ...first,
+        executionEvidence: {
+          ...first.executionEvidence,
+          selectionEligibility: "eligible",
+        },
+      })
+    ).toThrow();
+    expect(() =>
+      validateBenchmarkReport({
+        ...first,
+        results: first.results.map((result, index) =>
+          index === 0
+            ? {
+                ...result,
+                budgets: {
+                  ...result.budgets,
+                  coldLoadMs: {
+                    ...result.budgets.coldLoadMs,
+                    status: "within",
+                  },
+                },
+              }
+            : result
+        ),
+      })
+    ).toThrow(/budget observation/);
     expect(() =>
       validateBenchmarkReport({
         ...first,

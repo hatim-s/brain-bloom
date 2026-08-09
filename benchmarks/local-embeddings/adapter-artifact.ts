@@ -31,6 +31,12 @@ const adapterManifestSchema = z.strictObject({
     allowedNodeBuiltins: z
       .array(z.string().regex(/^node:[a-z0-9_/-]+$/))
       .max(32),
+    executionEvidence: z.strictObject({
+      modelArtifactAccess: z.literal("none"),
+      evidenceClass: z.literal("sandbox-smoke-only"),
+      selectionEligibility: z.literal("invalid"),
+      selectionIneligibilityReason: z.literal("no-model-artifact-capability"),
+    }),
   }),
   adapter: z.strictObject({
     id: z.string().trim().min(1),

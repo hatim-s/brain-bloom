@@ -42,10 +42,17 @@ function isSafeRelativePath(value: string): boolean {
 const safePathSchema = nonEmptyString.refine(isSafeRelativePath, {
   message: "path must remain relative to its dedicated cache root",
 });
+const executionEvidenceSchema = z.strictObject({
+  modelArtifactAccess: z.literal("none"),
+  evidenceClass: z.literal("sandbox-smoke-only"),
+  selectionEligibility: z.literal("invalid"),
+  selectionIneligibilityReason: z.literal("no-model-artifact-capability"),
+});
 const adapterBundleSchema = z.strictObject({
   format: z.literal("self-contained-esm-bundle/v1"),
   executionBoundary: z.literal("node-vm-source-text-module/v1"),
   allowedNodeBuiltins: z.array(z.string().regex(/^node:[a-z0-9_/-]+$/)).max(32),
+  executionEvidence: executionEvidenceSchema,
 });
 const adapterIdentitySchema = z.strictObject({
   id: nonEmptyString,
@@ -234,6 +241,7 @@ const integritySchema = z.strictObject({
 const candidateResultSchema = z.strictObject({
   candidate: candidateSchema,
   verifiedAdapter: verifiedAdapterSchema,
+  executionEvidence: executionEvidenceSchema,
   offlineCache: z.strictObject({
     status: z.literal("verified"),
     bytes: z.number().int().nonnegative(),
@@ -276,6 +284,7 @@ const candidateResultSchema = z.strictObject({
 const benchmarkReportSchema = z.strictObject({
   schemaVersion: z.literal(1),
   decision: z.literal("not-selected"),
+  executionEvidence: executionEvidenceSchema,
   environment: z.strictObject({
     platform: nonEmptyString,
     architecture: nonEmptyString,
@@ -539,6 +548,11 @@ function validateBenchmarkReport(input: unknown): BenchmarkReport {
       throw new Error(`Duplicate report candidate ${result.candidate.key}`);
     candidateKeys.add(result.candidate.key);
     if (
+      !isDeepStrictEqual(result.executionEvidence, report.executionEvidence) ||
+      !isDeepStrictEqual(
+        result.executionEvidence,
+        result.verifiedAdapter.bundle.executionEvidence
+      ) ||
       result.verifiedAdapter.modulePath !==
         result.candidate.adapter.modulePath ||
       result.verifiedAdapter.moduleChecksum !==
@@ -622,57 +636,43 @@ function validateBenchmarkReport(input: unknown): BenchmarkReport {
       )
     )
       throw new Error(`${result.candidate.key} peak RSS is incomplete`);
-    const isolated =
-      result.resources.residentMemoryMeasurement === "valid-isolated-process";
-    if (isolated !== (result.budgets.residentMemoryMb.status !== "invalid"))
-      throw new Error(
-        `${result.candidate.key} memory budget validity is inconsistent`
-      );
     const peakMiB = result.resources.residentMemoryPeakBytes / (1024 * 1024);
     if (result.budgets.residentMemoryMb.observed !== peakMiB)
       throw new Error(
         `${result.candidate.key} memory observation is inconsistent`
       );
-    if (
-      isolated &&
-      result.budgets.residentMemoryMb.status !==
-        (peakMiB <= report.budgets.maxResidentMemoryMb ? "within" : "outside")
-    )
-      throw new Error(`${result.candidate.key} memory status is inconsistent`);
     const budgetRows = [
       {
         observation: result.budgets.coldLoadMs,
         budget: report.budgets.maxColdLoadMs,
         observed: result.latency.coldLoadMs,
-        within: result.latency.coldLoadMs <= report.budgets.maxColdLoadMs,
       },
       {
         observation: result.budgets.warmQueryP95Ms,
         budget: report.budgets.maxWarmQueryP95Ms,
         observed: result.latency.warmQuery.p95Ms,
-        within:
-          result.latency.warmQuery.p95Ms <= report.budgets.maxWarmQueryP95Ms,
       },
       {
         observation: result.budgets.ingestionSegmentsPerSecond,
         budget: report.budgets.minIngestionSegmentsPerSecond,
         observed: result.ingestion.segmentsPerSecond,
-        within:
-          result.ingestion.segmentsPerSecond >=
-          report.budgets.minIngestionSegmentsPerSecond,
       },
       {
         observation: result.budgets.cacheBytes,
         budget: report.budgets.maxCacheBytes,
         observed: result.offlineCache.bytes,
-        within: result.offlineCache.bytes <= report.budgets.maxCacheBytes,
+      },
+      {
+        observation: result.budgets.residentMemoryMb,
+        budget: report.budgets.maxResidentMemoryMb,
+        observed: peakMiB,
       },
     ];
     for (const row of budgetRows)
       if (
         row.observation.budget !== row.budget ||
         row.observation.observed !== row.observed ||
-        row.observation.status !== (row.within ? "within" : "outside")
+        row.observation.status !== "invalid"
       )
         throw new Error(
           `${result.candidate.key} budget observation is inconsistent`

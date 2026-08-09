@@ -73,5 +73,6 @@ describe("local embedding benchmark CLI", () => {
     expect(metadataInspector).toHaveBeenCalledTimes(2);
     expect(summary).toContain("checksum not read");
     expect(summary).toContain("No cache contents");
+    expect(summary).toContain("invalid for model selection");
   });
 });

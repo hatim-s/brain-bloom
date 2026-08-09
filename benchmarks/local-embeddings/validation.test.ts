@@ -28,6 +28,12 @@ const validCandidate: EmbeddingCandidate = {
       format: "self-contained-esm-bundle/v1",
       executionBoundary: "node-vm-source-text-module/v1",
       allowedNodeBuiltins: [],
+      executionEvidence: {
+        modelArtifactAccess: "none",
+        evidenceClass: "sandbox-smoke-only",
+        selectionEligibility: "invalid",
+        selectionIneligibilityReason: "no-model-artifact-capability",
+      },
     },
   },
   runtime: { id: "test-runtime", version: "1.0.0" },
@@ -145,6 +151,17 @@ describe("embedding candidate runtime validation", () => {
     };
     candidate.adapter.bundle.executionBoundary = "ambient-data-module/v0";
     expect(() => validateCandidateConfiguration(configuration)).toThrow();
+
+    const forgedEvidence = createConfiguration() as unknown as {
+      candidates: Array<{
+        adapter: {
+          bundle: { executionEvidence: { selectionEligibility: string } };
+        };
+      }>;
+    };
+    forgedEvidence.candidates[0].adapter.bundle.executionEvidence.selectionEligibility =
+      "eligible";
+    expect(() => validateCandidateConfiguration(forgedEvidence)).toThrow();
   });
 });
 

@@ -10,7 +10,7 @@ import {
   preflightAdapterArtifacts,
 } from "./adapter-artifact.ts";
 import { loadVerifiedAdapterFactory } from "./adapter-module.ts";
-import type { CandidateConfiguration } from "./types.ts";
+import type { AdapterBundleContract, CandidateConfiguration } from "./types.ts";
 
 const sha256 = (contents: string) =>
   `sha256:${createHash("sha256").update(contents).digest("hex")}`;
@@ -48,11 +48,18 @@ const bundleContract = {
   format: "self-contained-esm-bundle/v1" as const,
   executionBoundary: "node-vm-source-text-module/v1" as const,
   allowedNodeBuiltins: ["node:crypto"],
+  executionEvidence: {
+    modelArtifactAccess: "none" as const,
+    evidenceClass: "sandbox-smoke-only" as const,
+    selectionEligibility: "invalid" as const,
+    selectionIneligibilityReason: "no-model-artifact-capability" as const,
+  },
 };
 const emptyBundleContract = {
   format: "self-contained-esm-bundle/v1" as const,
   executionBoundary: "node-vm-source-text-module/v1" as const,
   allowedNodeBuiltins: [],
+  executionEvidence: bundleContract.executionEvidence,
 };
 
 /** Creates two candidates pinned to the same module and distinct signed manifests. */
@@ -126,6 +133,23 @@ async function createFixture() {
     })),
   };
   return { workspaceRoot, adapterRootRelative, configuration };
+}
+
+/** Executes verified synthetic bytes through the measured sandbox create boundary. */
+async function createAdapterFromSource(
+  source: string,
+  bundle: AdapterBundleContract = emptyBundleContract
+) {
+  const fixture = await createFixture();
+  const factory = await loadVerifiedAdapterFactory(
+    Buffer.from(source),
+    sha256(source),
+    bundle
+  );
+  return factory.create(fixture.configuration.candidates[0], {
+    allowDownloads: false,
+    offlineCachePath: "/verified/cache",
+  });
 }
 
 describe("adapter artifact verification", () => {
@@ -272,13 +296,9 @@ describe("adapter artifact verification", () => {
   ])(
     "denies ambient and evaluator escape routes at runtime",
     async (source) => {
-      await expect(
-        loadVerifiedAdapterFactory(
-          Buffer.from(source),
-          sha256(source),
-          emptyBundleContract
-        )
-      ).rejects.toThrow(/sandbox initialization failed/);
+      await expect(createAdapterFromSource(source)).rejects.toThrow(
+        /sandbox initialization failed/
+      );
     }
   );
 
@@ -289,11 +309,7 @@ describe("adapter artifact verification", () => {
       export const createEmbeddingAdapterFactory = () => escaped;
     `;
     await expect(
-      loadVerifiedAdapterFactory(
-        Buffer.from(source),
-        sha256(source),
-        bundleContract
-      )
+      createAdapterFromSource(source, bundleContract)
     ).rejects.toThrow(/sandbox initialization failed/);
   });
 
@@ -305,13 +321,9 @@ describe("adapter artifact verification", () => {
         }
       });
     `;
-    await expect(
-      loadVerifiedAdapterFactory(
-        Buffer.from(source),
-        sha256(source),
-        emptyBundleContract
-      )
-    ).rejects.toThrow(/sandbox factory creation failed/);
+    await expect(createAdapterFromSource(source)).rejects.toThrow(
+      /sandbox factory creation failed/
+    );
   });
 
   it("JSON-clones factory inputs before invoking adapter code", async () => {

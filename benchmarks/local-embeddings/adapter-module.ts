@@ -315,13 +315,15 @@ function createAdapterProxy(
   };
 }
 
-/** Evaluates exact verified bytes in a capability-limited Node VM module. */
-async function loadVerifiedAdapterFactory(
+/** Links, evaluates, and creates the bundle factory inside one locked VM. */
+async function initializeVerifiedAdapterSandbox(
   moduleBytes: Uint8Array,
   moduleChecksum: string,
   bundle: AdapterBundleContract
-): Promise<EmbeddingAdapterFactory> {
-  validateSelfContainedAdapterBundle(moduleBytes, bundle);
+): Promise<{
+  invokers: SandboxInvokers;
+  sandboxFactory: SandboxFactory;
+}> {
   if (typeof vm.SourceTextModule !== "function")
     throw new Error("Adapter sandbox requires Node --experimental-vm-modules");
   const context = vm.createContext(vm.constants.DONT_CONTEXTIFY, {
@@ -375,11 +377,27 @@ async function loadVerifiedAdapterFactory(
   } catch {
     throw sandboxFailure("factory creation");
   }
+  return { invokers, sandboxFactory };
+}
+
+/** Defers all verified VM initialization into the measured create boundary. */
+async function loadVerifiedAdapterFactory(
+  moduleBytes: Uint8Array,
+  moduleChecksum: string,
+  bundle: AdapterBundleContract
+): Promise<EmbeddingAdapterFactory> {
+  validateSelfContainedAdapterBundle(moduleBytes, bundle);
   return {
     async create(
       candidate: EmbeddingCandidate,
       options: AdapterCreateOptions
     ): Promise<EmbeddingAdapter> {
+      const { invokers, sandboxFactory } =
+        await initializeVerifiedAdapterSandbox(
+          moduleBytes,
+          moduleChecksum,
+          bundle
+        );
       try {
         const handle = await invokers.createAdapter(
           sandboxFactory,

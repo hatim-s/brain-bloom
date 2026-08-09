@@ -128,6 +128,13 @@ function lowerBudget(budget: number, observed: number): BudgetObservation {
   };
 }
 
+/** Marks smoke-only observations as unusable for model-selection budgets. */
+function invalidateSelectionBudget(
+  observation: BudgetObservation
+): BudgetObservation {
+  return { ...observation, status: "invalid" };
+}
+
 /** Confirms runtime claims agree with the already verified adapter manifest. */
 function validateAdapterIdentity(
   adapter: EmbeddingAdapter,
@@ -365,8 +372,7 @@ async function runSingleCandidate(
       configuration.budgets.maxResidentMemoryMb,
       memoryPeakMiB
     );
-    if (memoryStatus === "invalid-in-process-test")
-      memoryBudget.status = "invalid";
+    memoryBudget.status = "invalid";
     const languages = Object.fromEntries(
       fixtures.corpus.multilingual.languages.map((language) => [
         language,
@@ -381,6 +387,7 @@ async function runSingleCandidate(
     return {
       candidate,
       verifiedAdapter: options.verifiedAdapter,
+      executionEvidence: options.verifiedAdapter.bundle.executionEvidence,
       offlineCache: {
         status: "verified",
         bytes: cacheMetadata.bytes,
@@ -402,22 +409,21 @@ async function runSingleCandidate(
         cacheBytes: cacheMetadata.bytes,
       },
       budgets: {
-        coldLoadMs: upperBudget(
-          configuration.budgets.maxColdLoadMs,
-          coldLoadMs
+        coldLoadMs: invalidateSelectionBudget(
+          upperBudget(configuration.budgets.maxColdLoadMs, coldLoadMs)
         ),
-        warmQueryP95Ms: upperBudget(
-          configuration.budgets.maxWarmQueryP95Ms,
-          warmQuery.p95Ms
+        warmQueryP95Ms: invalidateSelectionBudget(
+          upperBudget(configuration.budgets.maxWarmQueryP95Ms, warmQuery.p95Ms)
         ),
-        ingestionSegmentsPerSecond: lowerBudget(
-          configuration.budgets.minIngestionSegmentsPerSecond,
-          ingestionRate
+        ingestionSegmentsPerSecond: invalidateSelectionBudget(
+          lowerBudget(
+            configuration.budgets.minIngestionSegmentsPerSecond,
+            ingestionRate
+          )
         ),
         residentMemoryMb: memoryBudget,
-        cacheBytes: upperBudget(
-          configuration.budgets.maxCacheBytes,
-          cacheMetadata.bytes
+        cacheBytes: invalidateSelectionBudget(
+          upperBudget(configuration.budgets.maxCacheBytes, cacheMetadata.bytes)
         ),
       },
       multilingual: {
@@ -441,6 +447,8 @@ function buildReport(options: {
   return {
     schemaVersion: 1,
     decision: "not-selected",
+    executionEvidence:
+      options.configuration.candidates[0].adapter.bundle.executionEvidence,
     environment: options.environment,
     fixtureVersions: { candidates: 1, corpus: 1, questions: 1 },
     budgets: options.configuration.budgets,
