@@ -75,6 +75,7 @@ type CandidateConfiguration = {
   adapterLimits: CacheLimits;
   measurement: {
     warmQueryPasses: number;
+    candidateTimeoutMs: number;
   };
 };
 
@@ -298,6 +299,7 @@ type BenchmarkReport = {
   adapterLimits: CacheLimits;
   measurement: {
     warmQueryPasses: number;
+    candidateTimeoutMs: number;
     isolation: "fresh-child-process-per-candidate";
     memoryMetric: "process-high-water-rss";
   };

@@ -54,26 +54,19 @@ function evaluateIntegrity(options: {
     const queryVector = options.queryVectors.get(question.id);
     if (!queryVector)
       throw new Error(`Missing integrity vector for ${question.id}`);
-    const eligibleSegments = options.corpus.segments.filter((segment) => {
-      const source = sourcesById.get(segment.sourceId);
-      return (
-        source?.ownerId === question.ownerId &&
-        source.scopeId === question.scopeId &&
-        source.active &&
-        source.retrievable
-      );
-    });
-    const ranking = rankSegments(
+    // Rank before authorization filtering so a candidate cannot hide a strong
+    // forbidden match behind harness-enforced owner or lifecycle predicates.
+    const unscopedRanking = rankSegments(
       queryVector,
-      eligibleSegments.map((segment) => {
+      options.corpus.segments.map((segment) => {
         const vector = options.segmentVectors.get(segment.id);
         if (!vector)
           throw new Error(`Missing segment vector for ${segment.id}`);
         return { id: segment.id, vector };
       })
     ).slice(0, 20);
-    const retrieved = new Set(ranking);
-    for (const segmentId of ranking) {
+    const unscopedRetrieved = new Set(unscopedRanking);
+    for (const segmentId of unscopedRanking) {
       const segment = segmentsById.get(segmentId);
       const source = segment ? sourcesById.get(segment.sourceId) : undefined;
       if (!source)
@@ -84,12 +77,27 @@ function evaluateIntegrity(options: {
       if (!source.retrievable) excludedSourceLeakageCount += 1;
     }
 
+    // Apply eligibility only after leakage measurement, preserving the
+    // production-scoped view used for expected positive retrieval evidence.
+    const scopedRetrieved = new Set(
+      unscopedRanking.filter((segmentId) => {
+        const segment = segmentsById.get(segmentId)!;
+        const source = sourcesById.get(segment.sourceId)!;
+        return (
+          source.ownerId === question.ownerId &&
+          source.scopeId === question.scopeId &&
+          source.active &&
+          source.retrievable
+        );
+      })
+    );
+
     const scenario = scenarios[question.scenario];
     const questionExpectedHits = question.expectedSegmentIds.filter((id) =>
-      retrieved.has(id)
+      scopedRetrieved.has(id)
     ).length;
     const questionForbiddenHits = question.forbiddenSegmentIds.filter((id) =>
-      retrieved.has(id)
+      unscopedRetrieved.has(id)
     ).length;
     scenario.questionCount += 1;
     scenario.expectedSegments += question.expectedSegmentIds.length;

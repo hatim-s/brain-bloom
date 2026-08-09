@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
 
-import { readBoundedFile, verifyCacheArtifact } from "./cache.ts";
+import { readVerifiedBoundedFile } from "./cache.ts";
 import { inspectConfinedPath, validateRelativePath } from "./paths.ts";
 import type {
   CandidateConfiguration,
@@ -13,6 +13,7 @@ import { validateCandidateConfiguration } from "./validation.ts";
 type AdapterArtifactPreflight = {
   candidateKey: string;
   absoluteModulePath: string;
+  moduleBytes: Buffer;
   verified: VerifiedAdapterArtifact;
 };
 
@@ -79,25 +80,18 @@ async function preflightAdapterArtifacts(options: {
       );
     }
 
-    const moduleMetadata = await verifyCacheArtifact(
+    const moduleArtifact = await readVerifiedBoundedFile(
       moduleInspection.path,
       candidate.adapter.artifactChecksum,
-      configuration.adapterLimits
+      configuration.adapterLimits.maxBytes
     );
-    const manifestMetadata = await verifyCacheArtifact(
+    const manifestArtifact = await readVerifiedBoundedFile(
       manifestInspection.path,
       candidate.adapter.manifestChecksum,
-      configuration.adapterLimits
+      configuration.adapterLimits.maxBytes
     );
     const manifest = adapterManifestSchema.parse(
-      JSON.parse(
-        (
-          await readBoundedFile(
-            manifestInspection.path,
-            configuration.adapterLimits.maxBytes
-          )
-        ).toString("utf8")
-      )
+      JSON.parse(manifestArtifact.bytes.toString("utf8"))
     );
     const expectedAdapter = {
       id: candidate.adapter.id,
@@ -105,7 +99,7 @@ async function preflightAdapterArtifacts(options: {
       revision: candidate.adapter.revision,
     };
     if (
-      manifest.moduleChecksum !== moduleMetadata.checksum ||
+      manifest.moduleChecksum !== moduleArtifact.checksum ||
       !isDeepStrictEqual(manifest.adapter, expectedAdapter) ||
       !isDeepStrictEqual(manifest.runtime, candidate.runtime) ||
       !isDeepStrictEqual(manifest.preprocessing, candidate.preprocessing)
@@ -117,12 +111,13 @@ async function preflightAdapterArtifacts(options: {
     preflights.push({
       candidateKey: candidate.key,
       absoluteModulePath: moduleInspection.path,
+      moduleBytes: moduleArtifact.bytes,
       verified: {
         status: "verified",
         modulePath: candidate.adapter.modulePath,
-        moduleChecksum: moduleMetadata.checksum,
+        moduleChecksum: moduleArtifact.checksum,
         manifestPath: candidate.adapter.manifestPath,
-        manifestChecksum: manifestMetadata.checksum,
+        manifestChecksum: manifestArtifact.checksum,
         adapter: manifest.adapter,
         runtime: manifest.runtime,
         preprocessing: manifest.preprocessing,

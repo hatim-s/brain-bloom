@@ -51,7 +51,7 @@ function createConfiguration(): CandidateConfiguration {
     budgets: validBudgets,
     cacheLimits: { maxBytes: 1_000, maxFiles: 10, maxDepth: 3 },
     adapterLimits: { maxBytes: 1_000, maxFiles: 4, maxDepth: 2 },
-    measurement: { warmQueryPasses: 2 },
+    measurement: { warmQueryPasses: 2, candidateTimeoutMs: 1000 },
     candidates: [
       validCandidate,
       {
@@ -102,6 +102,15 @@ describe("embedding candidate runtime validation", () => {
         cacheLimits: { ...configuration.cacheLimits, maxFiles: 0 },
       })
     ).toThrow();
+    expect(() =>
+      validateCandidateConfiguration({
+        ...configuration,
+        measurement: {
+          ...configuration.measurement,
+          candidateTimeoutMs: 999,
+        },
+      })
+    ).toThrow();
   });
 });
 
@@ -113,6 +122,17 @@ describe("benchmark fixture runtime validation", () => {
     );
     expect(fixtures.corpus.segments.length).toBeGreaterThanOrEqual(60);
     expect(fixtures.questionSet.questions).toHaveLength(32);
+    for (const logicalSourceId of ["biology-reader", "history-notes"]) {
+      const versions = fixtures.corpus.sources.filter(
+        (source) => source.logicalSourceId === logicalSourceId
+      );
+      expect(versions).toHaveLength(2);
+      expect(versions.filter((source) => source.active)).toHaveLength(1);
+    }
+    const historyV1 = fixtures.corpus.sources.find(
+      (source) => source.sourceId === "history-notes-docx-v1"
+    );
+    expect(historyV1?.active).toBe(true);
   });
 
   it("rejects unknown enums and undeclared languages", async () => {
@@ -240,6 +260,26 @@ describe("benchmark fixture runtime validation", () => {
         ),
       })
     ).toThrow(/does not exercise cross-owner/);
+  });
+
+  it("rejects logical sources without exactly one active version", async () => {
+    const fixtures = validateBenchmarkFixtures(
+      await readJsonFixture("corpus.v1.json"),
+      await readJsonFixture("questions.v1.json")
+    );
+    expect(() =>
+      validateBenchmarkFixtures(
+        {
+          ...fixtures.corpus,
+          sources: fixtures.corpus.sources.map((source) =>
+            source.logicalSourceId === "biology-reader"
+              ? { ...source, active: false }
+              : source
+          ),
+        },
+        fixtures.questionSet
+      )
+    ).toThrow(/exactly one active version/);
   });
 });
 

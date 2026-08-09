@@ -25,7 +25,8 @@ async function executeRequest(request: CandidateProcessRequest): Promise<void> {
   const result = await runSingleCandidate({
     ...request,
     adapterFactory: await loadVerifiedAdapterFactory(
-      preflight.absoluteModulePath
+      preflight.moduleBytes,
+      preflight.verified.moduleChecksum
     ),
     memoryMode: "isolated",
   });

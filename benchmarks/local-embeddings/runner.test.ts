@@ -24,7 +24,7 @@ const artifactContents = "deterministic fake model artifact";
 const artifactChecksum = `sha256:${createHash("sha256").update(artifactContents).digest("hex")}`;
 const adapterChecksum = `sha256:${"d".repeat(64)}`;
 const manifestChecksum = `sha256:${"e".repeat(64)}`;
-const dimensions = 70;
+const dimensions = 72;
 
 const configuration: CandidateConfiguration = {
   schemaVersion: 1,
@@ -37,7 +37,7 @@ const configuration: CandidateConfiguration = {
   },
   cacheLimits: { maxBytes: 1_000, maxFiles: 10, maxDepth: 2 },
   adapterLimits: { maxBytes: 1_000, maxFiles: 4, maxDepth: 2 },
-  measurement: { warmQueryPasses: 2 },
+  measurement: { warmQueryPasses: 2, candidateTimeoutMs: 1000 },
   candidates: ["a", "b"].map((key) => ({
     key: `candidate-${key}`,
     modelId: `local/candidate-${key}`,
@@ -157,7 +157,7 @@ const corpus: BenchmarkCorpus = {
   segments: [
     ...Array.from({ length: 63 }, (_, index) => ({
       id: `segment-${index}`,
-      sourceId: "main",
+      sourceId: index >= 30 && index < 50 ? "alpha" : "main",
       format: (["pdf", "docx", "pptx"] as const)[index % 3],
       locator: `locator ${index}`,
       text: `study segment ${index}`,
@@ -274,12 +274,12 @@ const questionSet: BenchmarkQuestionSet = {
     },
     {
       id: "adversarial",
-      text: "study segment 30",
+      text: "study segment 20",
       language: "en",
       ownerId: "owner-study",
       scopeId: "scope-core",
       scenario: "adversarial",
-      expectedSegmentIds: ["segment-30"],
+      expectedSegmentIds: ["segment-20"],
       forbiddenSegmentIds: [],
     },
     {
@@ -308,10 +308,30 @@ const questionSet: BenchmarkQuestionSet = {
 const textVectorIndex = new Map(
   corpus.segments.map((segment, index) => [segment.text, index])
 );
-/** Produces stable one-hot vectors so fixture retrieval behavior is explicit. */
-function fakeVector(text: string): number[] {
+const sourcesById = new Map(
+  corpus.sources.map((source) => [source.sourceId, source] as const)
+);
+/** Produces explicit content and eligibility signals for scoped fake retrieval. */
+function fakeVector(text: string, role: "document" | "query"): number[] {
   const vector = Array.from({ length: dimensions }, () => 0);
-  vector[textVectorIndex.get(text) ?? dimensions - 1] = 1;
+  const segmentIndex = textVectorIndex.get(text);
+  const negativeIntegrityQuery =
+    role === "query" &&
+    (text === "malformed excluded" || text === "limit excluded");
+  if (segmentIndex !== undefined && !negativeIntegrityQuery)
+    vector[segmentIndex] = 2;
+  if (role === "document" && segmentIndex !== undefined) {
+    const segment = corpus.segments[segmentIndex];
+    const source = sourcesById.get(segment.sourceId)!;
+    if (source.active && source.retrievable) {
+      if (source.ownerId === "owner-study" && source.scopeId === "scope-core")
+        vector[70] = 1;
+      if (source.ownerId === "owner-alpha" && source.scopeId === "scope-alpha")
+        vector[71] = 1;
+    }
+  } else if (role === "query") {
+    vector[text === "alpha cedar" ? 71 : 70] = 1;
+  }
   return vector;
 }
 
@@ -356,7 +376,7 @@ function createAdapterFactory(
         embed: async (texts, role) => {
           events.push(`embed:${role}:${texts[0]}`);
           advance(1);
-          return texts.map(fakeVector);
+          return texts.map((text) => fakeVector(text, role));
         },
       };
     },
@@ -479,7 +499,8 @@ describe("local embedding benchmark runner", () => {
           preprocessing: candidate.preprocessing,
         },
         load,
-        embed: async (texts) => texts.map(fakeVector),
+        embed: async (texts, role) =>
+          texts.map((text) => fakeVector(text, role)),
       }),
     };
     await expect(

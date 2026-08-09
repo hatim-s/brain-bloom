@@ -73,6 +73,19 @@ describe("embedding benchmark metrics", () => {
     ).toEqual(["a", "z"]);
   });
 
+  it("breaks Unicode ties by code units instead of host collation", () => {
+    expect(
+      rankSegments(
+        [1, 0],
+        [
+          { id: "é", vector: [1, 0] },
+          { id: "e\u0301", vector: [1, 0] },
+          { id: "Z", vector: [1, 0] },
+        ]
+      )
+    ).toEqual(["Z", "e\u0301", "é"]);
+  });
+
   it("ranks 1e308-class finite vectors by similarity instead of NaN ID order", () => {
     expect(
       rankSegments(

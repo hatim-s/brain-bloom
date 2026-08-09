@@ -18,7 +18,8 @@
     "maxDepth": 2
   },
   "measurement": {
-    "warmQueryPasses": 3
+    "warmQueryPasses": 3,
+    "candidateTimeoutMs": 300000
   },
   "candidates": [
     {

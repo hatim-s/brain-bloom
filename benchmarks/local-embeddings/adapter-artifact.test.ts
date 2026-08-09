@@ -9,12 +9,13 @@ import {
   executeWithVerifiedAdapterArtifacts,
   preflightAdapterArtifacts,
 } from "./adapter-artifact.ts";
+import { loadVerifiedAdapterFactory } from "./adapter-module.ts";
 import type { CandidateConfiguration } from "./types.ts";
 
 const sha256 = (contents: string) =>
   `sha256:${createHash("sha256").update(contents).digest("hex")}`;
 const moduleContents =
-  "export const createEmbeddingAdapterFactory = () => ({});\n";
+  'export const createEmbeddingAdapterFactory = () => ({ marker: "verified" });\n';
 
 /** Creates two candidates pinned to the same module and distinct signed manifests. */
 async function createFixture() {
@@ -57,7 +58,7 @@ async function createFixture() {
     },
     cacheLimits: { maxBytes: 10_000, maxFiles: 10, maxDepth: 2 },
     adapterLimits: { maxBytes: 10_000, maxFiles: 4, maxDepth: 2 },
-    measurement: { warmQueryPasses: 2 },
+    measurement: { warmQueryPasses: 2, candidateTimeoutMs: 1000 },
     candidates: ["a", "b"].map((candidateKey, index) => ({
       key: candidateKey,
       modelId: `model-${candidateKey}`,
@@ -105,6 +106,31 @@ describe("adapter artifact verification", () => {
       )
     ).rejects.toThrow(/checksum mismatch/);
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("executes the verified module snapshot after its pathname is replaced", async () => {
+    const fixture = await createFixture();
+    const [preflight] = await preflightAdapterArtifacts({
+      ...fixture,
+      suppliedModulePath: "bundle/adapter.mjs",
+    });
+    await writeFile(
+      preflight.absoluteModulePath,
+      'export const createEmbeddingAdapterFactory = () => ({ marker: "replaced" });\n'
+    );
+
+    const factory = await loadVerifiedAdapterFactory(
+      preflight.moduleBytes,
+      preflight.verified.moduleChecksum
+    );
+
+    expect((factory as unknown as { marker: string }).marker).toBe("verified");
+    await expect(
+      preflightAdapterArtifacts({
+        ...fixture,
+        suppliedModulePath: "bundle/adapter.mjs",
+      })
+    ).rejects.toThrow(/checksum mismatch/);
   });
 
   it("rejects symlinked adapter entries and hard byte limits", async () => {

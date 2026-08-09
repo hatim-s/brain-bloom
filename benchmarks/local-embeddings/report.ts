@@ -1,3 +1,4 @@
+import { compareCodeUnits } from "./ordering.ts";
 import type { BenchmarkReport } from "./types.ts";
 import { validateBenchmarkReport } from "./validation.ts";
 
@@ -7,7 +8,7 @@ function sortJsonValue(value: unknown): unknown {
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => compareCodeUnits(left, right))
         .map(([key, nested]) => [key, sortJsonValue(nested)])
     );
   }

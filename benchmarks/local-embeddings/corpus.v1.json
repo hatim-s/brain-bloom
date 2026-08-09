@@ -19,7 +19,7 @@
       "sourceId": "history-notes-docx-v1",
       "ownerId": "owner-study",
       "scopeId": "scope-core",
-      "logicalSourceId": "history-notes-v1",
+      "logicalSourceId": "history-notes",
       "version": "1",
       "active": true,
       "retrievable": true,
@@ -39,9 +39,9 @@
       "sourceId": "biology-reader-pdf-v1",
       "ownerId": "owner-study",
       "scopeId": "scope-core",
-      "logicalSourceId": "biology-reader-v1",
+      "logicalSourceId": "biology-reader",
       "version": "1",
-      "active": true,
+      "active": false,
       "retrievable": true,
       "scenario": "representative"
     },
@@ -49,7 +49,7 @@
       "sourceId": "biology-reader-pdf-v2",
       "ownerId": "owner-study",
       "scopeId": "scope-core",
-      "logicalSourceId": "biology-reader-v2",
+      "logicalSourceId": "biology-reader",
       "version": "2",
       "active": true,
       "retrievable": true,
@@ -99,9 +99,9 @@
       "sourceId": "history-notes-docx-v2",
       "ownerId": "owner-study",
       "scopeId": "scope-core",
-      "logicalSourceId": "history-notes-v2",
+      "logicalSourceId": "history-notes",
       "version": "2",
-      "active": true,
+      "active": false,
       "retrievable": true,
       "scenario": "representative"
     },
@@ -792,6 +792,158 @@
       "locator": "heading 1: Active revision policy",
       "language": "en",
       "text": "Active revision policy says current citations use the verified emerald marker."
+    },
+    {
+      "id": "alpha-01",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 1",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note one covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-02",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 2",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note two covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-03",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 3",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note three covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-04",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 4",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note four covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-05",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 5",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note five covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-06",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 6",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note six covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-07",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 7",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note seven covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-08",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 8",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note eight covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-09",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 9",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note nine covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-10",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 10",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note ten covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-11",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 11",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note eleven covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-12",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 12",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note twelve covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-13",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 13",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note thirteen covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-14",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 14",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note fourteen covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-15",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 15",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note fifteen covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-16",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 16",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note sixteen covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-17",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 17",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note seventeen covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-18",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 18",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note eighteen covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-19",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 19",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note nineteen covers a harmless cedar review topic."
     }
   ]
 }

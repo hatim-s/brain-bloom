@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { lstat, open, opendir } from "node:fs/promises";
 import path from "node:path";
 
+import { compareCodeUnits } from "./ordering.ts";
 import type { CacheLimits } from "./types.ts";
 
 type CacheMetadata = {
@@ -66,7 +67,7 @@ async function enumerateCacheFiles(
     }
 
     for (const entry of entries.sort((left, right) =>
-      left.name.localeCompare(right.name)
+      compareCodeUnits(left.name, right.name)
     )) {
       const entryPath = path.join(directoryPath, entry.name);
       const metadata = await lstat(entryPath);
@@ -102,7 +103,7 @@ async function enumerateCacheFiles(
 
   await visit(rootPath, 0);
   return files.sort((left, right) =>
-    left.relativePath.localeCompare(right.relativePath)
+    compareCodeUnits(left.relativePath, right.relativePath)
   );
 }
 
@@ -237,10 +238,27 @@ async function readBoundedFile(
   return Buffer.concat(chunks, bytes);
 }
 
+/** Reads once, hashes that immutable buffer, and rejects any digest mismatch. */
+async function readVerifiedBoundedFile(
+  filePath: string,
+  expectedChecksum: string,
+  maxBytes: number
+): Promise<{ bytes: Buffer; checksum: string }> {
+  const bytes = await readBoundedFile(filePath, maxBytes);
+  const checksum = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  if (checksum !== expectedChecksum) {
+    throw new Error(
+      `Artifact checksum mismatch for ${filePath}: expected ${expectedChecksum}, received ${checksum}`
+    );
+  }
+  return { bytes, checksum };
+}
+
 export {
   type CacheMetadata,
   enumerateCacheFiles,
   inspectCacheArtifact,
   readBoundedFile,
+  readVerifiedBoundedFile,
   verifyCacheArtifact,
 };

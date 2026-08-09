@@ -1,3 +1,4 @@
+import { compareCodeUnits } from "./ordering.ts";
 import type {
   BenchmarkQuestion,
   BenchmarkSegment,
@@ -64,7 +65,7 @@ function rankSegments(
     })
     .sort(
       (left, right) =>
-        right.score - left.score || left.id.localeCompare(right.id)
+        right.score - left.score || compareCodeUnits(left.id, right.id)
     )
     .map(({ id }) => id);
 }
@@ -154,7 +155,7 @@ function calculateLexicalBaseline(
         }))
         .sort(
           (left, right) =>
-            right.score - left.score || left.id.localeCompare(right.id)
+            right.score - left.score || compareCodeUnits(left.id, right.id)
         )
         .map(({ id }) => id);
       return [question.id, ranking] as const;

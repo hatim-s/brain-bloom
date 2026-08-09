@@ -92,6 +92,7 @@ const candidateConfigurationSchema = z.strictObject({
   adapterLimits: limitsSchema,
   measurement: z.strictObject({
     warmQueryPasses: z.number().int().min(2).max(20),
+    candidateTimeoutMs: z.number().int().min(1_000).max(3_600_000),
   }),
   candidates: z.array(candidateSchema).min(2),
 });
@@ -284,6 +285,7 @@ const benchmarkReportSchema = z.strictObject({
   adapterLimits: limitsSchema,
   measurement: z.strictObject({
     warmQueryPasses: z.number().int().min(2).max(20),
+    candidateTimeoutMs: z.number().int().min(1_000).max(3_600_000),
     isolation: z.literal("fresh-child-process-per-candidate"),
     memoryMetric: z.literal("process-high-water-rss"),
   }),
@@ -330,6 +332,7 @@ function validateBenchmarkFixtures(
     throw new Error("Corpus languages must be unique");
   const sources = new Map<string, (typeof corpus.sources)[number]>();
   const activeLogicalSources = new Set<string>();
+  const logicalSourceIds = new Set<string>();
   for (const source of corpus.sources) {
     if (sources.has(source.sourceId))
       throw new Error(`Duplicate source id: ${source.sourceId}`);
@@ -338,8 +341,14 @@ function validateBenchmarkFixtures(
         `Logical source ${source.logicalSourceId} has multiple active versions`
       );
     if (source.active) activeLogicalSources.add(source.logicalSourceId);
+    logicalSourceIds.add(source.logicalSourceId);
     sources.set(source.sourceId, source);
   }
+  for (const logicalSourceId of Array.from(logicalSourceIds))
+    if (!activeLogicalSources.has(logicalSourceId))
+      throw new Error(
+        `Logical source ${logicalSourceId} must have exactly one active version`
+      );
   const segments = new Map<string, (typeof corpus.segments)[number]>();
   const formats = new Set<string>();
   const segmentLanguages = new Set<string>();

@@ -30,6 +30,30 @@ describe("offline model cache verification", () => {
     });
   });
 
+  it("hashes Unicode filenames in locale-independent code-unit order", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "sprig-cache-"));
+    const files = [
+      ["Ω.bin", "omega"],
+      ["ä.bin", "umlaut"],
+      ["Z.bin", "upper"],
+    ] as const;
+    await Promise.all(
+      files.map(([filename, contents]) =>
+        writeFile(path.join(directory, filename), contents, "utf8")
+      )
+    );
+    const expected = createHash("sha256");
+    for (const [filename, contents] of [files[2], files[1], files[0]]) {
+      expected.update(filename).update("\0").update(contents).update("\0");
+    }
+
+    await expect(
+      inspectCacheArtifact(directory, generousLimits)
+    ).resolves.toMatchObject({
+      checksum: `sha256:${expected.digest("hex")}`,
+    });
+  });
+
   it("refuses a cache whose bytes do not match the configured checksum", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "sprig-cache-"));
     const cachePath = path.join(directory, "model.bin");
