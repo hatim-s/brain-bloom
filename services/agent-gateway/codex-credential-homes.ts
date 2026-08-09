@@ -37,19 +37,10 @@ type RuntimeEnvironmentShape = Readonly<{
 type CodexRuntimeAuthority = RuntimeEnvironmentShape &
   Readonly<{ authority: "production" }>;
 
-type TestOnlyCodexRuntimeEnvironment = RuntimeEnvironmentShape &
-  Readonly<{ authority: "test-only" }>;
-
 type EnsuredCredentialHome = Readonly<{
   homeId: string;
   state: "created" | "existing";
   runtime: CodexRuntimeAuthority;
-}>;
-
-type TestOnlyEnsuredCredentialHome = Readonly<{
-  homeId: string;
-  state: "created" | "existing";
-  runtime: TestOnlyCodexRuntimeEnvironment;
 }>;
 
 type CredentialHomeTeardown = Readonly<{
@@ -153,11 +144,6 @@ type CredentialHomeManagerOptions = Readonly<{
   authority?: unknown;
 }>;
 
-type TestOnlyCredentialHomeManagerOptions = Readonly<{
-  rootPath: string;
-  capabilities: CredentialHomeCapabilities;
-}>;
-
 /** Stable, secret-free failure suitable for mapping at the gateway boundary. */
 class CredentialHomeError extends Error {
   readonly code: CredentialHomeErrorCode;
@@ -193,8 +179,7 @@ class CodexCredentialHomeManager {
     );
     const core = new CredentialHomeManagerCore(
       this.rootPath,
-      authority.capabilities,
-      mintProductionRuntimeAuthority
+      authority.capabilities
     );
     await core.initialize();
     this.core = core;
@@ -229,63 +214,14 @@ class CodexCredentialHomeManager {
   }
 }
 
-/**
- * Explicitly non-production manager used by local behavioral tests.
- *
- * Its runtime result is permanently labeled test-only and is never registered
- * with the module-private production runtime root of trust.
- */
-class TestOnlyCodexCredentialHomeManager {
-  private readonly core: CredentialHomeManagerCore;
-
-  constructor(options: TestOnlyCredentialHomeManagerOptions) {
-    this.core = new CredentialHomeManagerCore(
-      validateRootPath(options.rootPath),
-      options.capabilities,
-      buildTestOnlyRuntimeEnvironment
-    );
-  }
-
-  /** Initializes only the explicitly supplied local test capabilities. */
-  async initialize(): Promise<void> {
-    await this.core.initialize();
-  }
-
-  /** Exercises lifecycle logic without returning production runtime authority. */
-  async ensure(
-    identity: CredentialHomeIdentity
-  ): Promise<TestOnlyEnsuredCredentialHome> {
-    return this.core.ensure(identity) as Promise<TestOnlyEnsuredCredentialHome>;
-  }
-
-  /** Exercises terminal teardown logic without production authority. */
-  async teardown(
-    identity: CredentialHomeIdentity,
-    options: TeardownOptions
-  ): Promise<CredentialHomeTeardown> {
-    return this.core.teardown(identity, options);
-  }
-}
-
-type RuntimeEnvironmentFactory = (
-  homePath: string
-) => RuntimeEnvironmentShape & Readonly<{ authority: string }>;
-
-type CoreEnsureResult = Readonly<{
-  homeId: string;
-  state: "created" | "existing";
-  runtime: ReturnType<RuntimeEnvironmentFactory>;
-}>;
-
-/** Shared lifecycle implementation behind separately trusted public entries. */
+/** Production lifecycle implementation reachable only after brand validation. */
 class CredentialHomeManagerCore {
   private readonly rootKey: string;
   private rootIdentity: HostRootIdentity | undefined;
 
   constructor(
     private readonly rootPath: string,
-    private readonly capabilities: CredentialHomeCapabilities,
-    private readonly runtimeFactory: RuntimeEnvironmentFactory
+    private readonly capabilities: CredentialHomeCapabilities
   ) {
     this.rootKey = deriveRootKey(rootPath);
     requireMatchingIsolationDomain(capabilities);
@@ -312,7 +248,9 @@ class CredentialHomeManagerCore {
   }
 
   /** Allows ensure only from explicit provisionable or active lifecycle states. */
-  async ensure(identity: CredentialHomeIdentity): Promise<CoreEnsureResult> {
+  async ensure(
+    identity: CredentialHomeIdentity
+  ): Promise<EnsuredCredentialHome> {
     const homeId = deriveCredentialHomeId(identity);
     return this.coordinate(homeId, async (lease) => {
       const lifecycleState = requireLifecycleState(lease.state);
@@ -344,7 +282,7 @@ class CredentialHomeManagerCore {
       return {
         homeId,
         state: homeResult.state,
-        runtime: this.runtimeFactory(homeResult.homePath),
+        runtime: mintProductionRuntimeAuthority(homeResult.homePath),
       };
     });
   }
@@ -492,17 +430,6 @@ function mintProductionRuntimeAuthority(
   });
   trustedRuntimeAuthorities.add(runtime);
   return runtime;
-}
-
-/** Builds an explicitly non-authoritative runtime for behavioral tests. */
-function buildTestOnlyRuntimeEnvironment(
-  homePath: string
-): TestOnlyCodexRuntimeEnvironment {
-  return Object.freeze({
-    authority: "test-only",
-    env: Object.freeze({ CODEX_HOME: homePath }),
-    sessionFlags: Object.freeze([FILE_CREDENTIAL_STORE_FLAG] as const),
-  });
 }
 
 /** Validates that every capability belongs to one topology domain. */
@@ -705,8 +632,4 @@ export {
   type HostRootResult,
   type RootPinResult,
   type TeardownOptions,
-  TestOnlyCodexCredentialHomeManager,
-  type TestOnlyCodexRuntimeEnvironment,
-  type TestOnlyCredentialHomeManagerOptions,
-  type TestOnlyEnsuredCredentialHome,
 };

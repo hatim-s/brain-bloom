@@ -87,15 +87,19 @@ A future branded production result contains only `CODEX_HOME` plus the Codex
 session flag `cli_auth_credentials_store="file"`. It never merges ambient API
 keys or other-provider credentials. This change cannot mint that result.
 
-## Separate test-only support
+## Test boundary
 
-`TestOnlyCodexCredentialHomeManager` and
-`codex-credential-homes.test-support.ts` form an explicit non-production API.
-Its runtime result is permanently labeled `test-only` and is never registered
-with either production root of trust. The local path adapter and in-memory
-coordinator/root pins exist only to reproduce lifecycle races and filesystem
-attacks. They do **not** satisfy ADR 0002 and cannot be wrapped, cast, or proxied
-into production authority.
+All local path adapters, in-memory coordinators/root pins, test managers, and
+unbranded runtime-environment factories live inside
+`codex-credential-homes.test.ts`. None is exported from importable production
+source. A runtime export audit fixes the production module surface to the
+production manager, error, file-store flag, and runtime brand validator. A
+repository test also rejects imports of `.test` modules from non-test files
+under `services`, `app`, or `lib`.
+
+The test-local harness preserves lifecycle race and filesystem attack coverage,
+but it cannot be imported as application authority or produce a value accepted
+by the production runtime brand check. It does **not** satisfy ADR 0002.
 
 ## Human gates before real credentials
 

@@ -1,35 +1,663 @@
+import { createHash } from "node:crypto";
 import {
   chmod,
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  normalize,
+  parse,
+  relative,
+} from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  createLocalCredentialHomeTestCapabilities,
-  type LocalCredentialHomeTestCapabilities,
-  type LocalTestHostHooks,
-} from "./codex-credential-homes.test-support.ts";
+import * as credentialHomeModule from "./codex-credential-homes.ts";
 import {
   assertTrustedCodexRuntimeAuthority,
   CodexCredentialHomeManager,
+  type CredentialHomeCapabilities,
   CredentialHomeError,
+  type CredentialHomeHostCapability,
+  type CredentialHomeIdentity,
+  type CredentialHomeLifecycleLease,
+  type CredentialHomeLifecycleState,
+  type CredentialHomeTeardown,
   type DurableCredentialHomeCoordinator,
+  type DurableRootIdentityPins,
   FILE_CREDENTIAL_STORE_FLAG,
-  TestOnlyCodexCredentialHomeManager,
+  type HostDeleteHomeResult,
+  type HostEnsureHomeResult,
+  type HostRootIdentity,
+  type HostRootResult,
+  type RootPinResult,
+  type TeardownOptions,
 } from "./codex-credential-homes.ts";
 
 const temporaryDirectories: string[] = [];
+const LOCAL_HOME_NAMESPACE = "sprig/codex-credential-home/v1";
+const LOCAL_ROOT_NAMESPACE = "sprig/codex-root-pin/v1";
+const LOCAL_DOMAIN = "local-test-emulator-v1";
+const PRIVATE_MODE = 0o700;
+const NO_STATE_OVERRIDE = Symbol("no-test-state-override");
+
+type TestOnlyRuntimeEnvironment = Readonly<{
+  authority: "test-only";
+  env: Readonly<{ CODEX_HOME: string }>;
+  sessionFlags: readonly [typeof FILE_CREDENTIAL_STORE_FLAG];
+}>;
+
+type TestOnlyEnsureResult = Readonly<{
+  homeId: string;
+  state: "created" | "existing";
+  runtime: TestOnlyRuntimeEnvironment;
+}>;
+
+type LocalTestHostHooks = Readonly<{
+  beforeDelete?: (input: {
+    rootPath: string;
+    homePath: string;
+  }) => void | Promise<void>;
+}>;
+
+type LocalTestCoordinatorControls = Readonly<{
+  failNextMarkRevoked: () => void;
+  setNextLeaseState: (state: unknown) => void;
+}>;
+
+type LocalCredentialHomeTestCapabilities = CredentialHomeCapabilities &
+  Readonly<{ controls: LocalTestCoordinatorControls }>;
+
+/** In-memory coordinator used only inside this compiled test module. */
+class LocalTestCoordinator implements DurableCredentialHomeCoordinator {
+  readonly isolationDomain = LOCAL_DOMAIN;
+  private readonly locks = new Map<string, Promise<unknown>>();
+  private readonly states = new Map<string, CredentialHomeLifecycleState>();
+  private failMarkRevoked = false;
+  private nextStateOverride: unknown | typeof NO_STATE_OVERRIDE =
+    NO_STATE_OVERRIDE;
+
+  /** Injects one final-tombstone failure while retaining revoking state. */
+  failNextMarkRevoked(): void {
+    this.failMarkRevoked = true;
+  }
+
+  /** Supplies one controlled or malformed state to the next lease. */
+  setNextLeaseState(state: unknown): void {
+    this.nextStateOverride = state;
+  }
+
+  /** Serializes one local home and applies terminal transition rules. */
+  async runExclusive<T>(
+    homeId: string,
+    operation: (lease: CredentialHomeLifecycleLease) => Promise<T>
+  ): Promise<T> {
+    const previous = this.locks.get(homeId) ?? Promise.resolve();
+    const current = previous
+      .catch(() => undefined)
+      .then(async () => {
+        let state: unknown =
+          this.nextStateOverride === NO_STATE_OVERRIDE
+            ? (this.states.get(homeId) ?? "provisionable")
+            : this.nextStateOverride;
+        this.nextStateOverride = NO_STATE_OVERRIDE;
+        const lease: CredentialHomeLifecycleLease = {
+          state,
+          markActive: () => {
+            if (state !== "provisionable" && state !== "active") {
+              throw new Error("test active transition rejected");
+            }
+            state = "active";
+            this.states.set(homeId, "active");
+          },
+          markRevoking: () => {
+            if (
+              state !== "provisionable" &&
+              state !== "active" &&
+              state !== "revoking"
+            ) {
+              throw new Error("test revoking transition rejected");
+            }
+            state = "revoking";
+            this.states.set(homeId, "revoking");
+          },
+          markRevoked: () => {
+            if (this.failMarkRevoked) {
+              this.failMarkRevoked = false;
+              throw new Error("test final tombstone failure");
+            }
+            if (state !== "revoking" && state !== "revoked") {
+              throw new Error("test revoked transition rejected");
+            }
+            state = "revoked";
+            this.states.set(homeId, "revoked");
+          },
+        };
+        return operation(lease);
+      });
+    this.locks.set(homeId, current);
+    try {
+      return await current;
+    } finally {
+      if (this.locks.get(homeId) === current) {
+        this.locks.delete(homeId);
+      }
+    }
+  }
+}
+
+/** In-memory root pins shared only by local managers in one test. */
+class LocalTestRootPins implements DurableRootIdentityPins {
+  readonly isolationDomain = LOCAL_DOMAIN;
+  private readonly pins = new Map<string, HostRootIdentity>();
+
+  /** Pins the first identity and rejects a later replacement. */
+  async pinOrVerify(
+    rootKey: string,
+    identity: HostRootIdentity
+  ): Promise<RootPinResult> {
+    const existing = this.pins.get(rootKey);
+    if (!existing) {
+      this.pins.set(rootKey, identity);
+      return "pinned";
+    }
+    return localIdentityEquals(existing, identity) ? "verified" : "mismatch";
+  }
+}
+
+/** Path-based host emulator scoped to this test module only. */
+class LocalTestHost implements CredentialHomeHostCapability {
+  readonly isolationDomain = LOCAL_DOMAIN;
+
+  constructor(private readonly hooks: LocalTestHostHooks = {}) {}
+
+  /** Validates an already-provisioned local root. */
+  async ensureRoot(rootPath: string): Promise<HostRootResult> {
+    await localAssertSafeAncestors(dirname(rootPath));
+    return localInspectPrivateDirectory(rootPath);
+  }
+
+  /** Inspects the current local root identity. */
+  async inspectRoot(rootPath: string): Promise<HostRootResult> {
+    return localInspectPrivateDirectory(rootPath);
+  }
+
+  /** Creates one flat private local home for behavior tests. */
+  async ensureHome(input: {
+    rootPath: string;
+    rootIdentity: HostRootIdentity;
+    homeId: string;
+  }): Promise<HostEnsureHomeResult> {
+    if (!(await localRootMatches(input.rootPath, input.rootIdentity))) {
+      return { status: "unsafe" };
+    }
+    const homePath = join(input.rootPath, input.homeId);
+    let state: "created" | "existing" = "created";
+    try {
+      await mkdir(homePath, { mode: PRIVATE_MODE });
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== "EEXIST") {
+        throw error;
+      }
+      state = "existing";
+    }
+    const inspected = await localInspectPrivateDirectory(homePath);
+    if (
+      inspected.status !== "ok" ||
+      !(await localRootMatches(input.rootPath, input.rootIdentity))
+    ) {
+      return { status: "unsafe" };
+    }
+    return { status: "ok", state, homePath };
+  }
+
+  /** Emulates identity checks around local deletion for adversarial tests. */
+  async deleteHome(input: {
+    rootPath: string;
+    rootIdentity: HostRootIdentity;
+    homeId: string;
+  }): Promise<HostDeleteHomeResult> {
+    if (!(await localRootMatches(input.rootPath, input.rootIdentity))) {
+      return { status: "unsafe" };
+    }
+    const homePath = join(input.rootPath, input.homeId);
+    const before = await localInspectOptionalDirectory(homePath);
+    if (before === "absent") {
+      return { status: "absent" };
+    }
+    if (before.status !== "ok") {
+      return { status: "unsafe" };
+    }
+    await this.hooks.beforeDelete?.({ rootPath: input.rootPath, homePath });
+    const after = await localInspectOptionalDirectory(homePath);
+    if (
+      after === "absent" ||
+      after.status !== "ok" ||
+      !localIdentityEquals(before.identity, after.identity) ||
+      !(await localRootMatches(input.rootPath, input.rootIdentity))
+    ) {
+      return { status: "unsafe" };
+    }
+    await rm(homePath, { recursive: true, force: false, maxRetries: 0 });
+    return (await localRootMatches(input.rootPath, input.rootIdentity))
+      ? { status: "removed" }
+      : { status: "unsafe" };
+  }
+}
+
+/** Test-local manager that never registers or returns production authority. */
+class TestOnlyCodexCredentialHomeManager {
+  private readonly rootKey: string;
+  private rootIdentity: HostRootIdentity | undefined;
+
+  constructor(
+    private readonly rootPath: string,
+    private readonly capabilities: CredentialHomeCapabilities
+  ) {
+    if (
+      !isAbsolute(rootPath) ||
+      normalize(rootPath) !== rootPath ||
+      rootPath === parse(rootPath).root
+    ) {
+      throw localConfigurationError();
+    }
+    localRequireMatchingDomain(capabilities);
+    this.rootKey = localHash(LOCAL_ROOT_NAMESPACE, rootPath);
+  }
+
+  /** Pins one pre-provisioned local root. */
+  async initialize(): Promise<void> {
+    const root = await localCall(() =>
+      this.capabilities.host.ensureRoot(this.rootPath)
+    );
+    const identity = localRequireSafeRoot(root);
+    const pin = await localCall(() =>
+      this.capabilities.rootPins.pinOrVerify(this.rootKey, identity)
+    );
+    if (pin === "mismatch") {
+      throw localUnsafeError();
+    }
+    if (pin !== "pinned" && pin !== "verified") {
+      throw localCapabilityError();
+    }
+    this.rootIdentity = identity;
+  }
+
+  /** Ensures only provisionable or active test-local homes. */
+  async ensure(
+    identity: CredentialHomeIdentity
+  ): Promise<TestOnlyEnsureResult> {
+    const homeId = localDeriveHomeId(identity);
+    return this.coordinate(homeId, async (lease) => {
+      const state = localRequireState(lease.state);
+      if (state !== "provisionable" && state !== "active") {
+        throw new CredentialHomeError(
+          "credential_home_revoked",
+          "Credential home is not executable"
+        );
+      }
+      const rootIdentity = await this.verifyRoot();
+      const result = await localCall(() =>
+        this.capabilities.host.ensureHome({
+          rootPath: this.rootPath,
+          rootIdentity,
+          homeId,
+        })
+      );
+      if (
+        !result ||
+        result.status !== "ok" ||
+        result.homePath !== join(this.rootPath, homeId) ||
+        (result.state !== "created" && result.state !== "existing")
+      ) {
+        throw localUnsafeError();
+      }
+      await localPersist(() => lease.markActive());
+      return {
+        homeId,
+        state: result.state,
+        runtime: Object.freeze({
+          authority: "test-only" as const,
+          env: Object.freeze({ CODEX_HOME: result.homePath }),
+          sessionFlags: Object.freeze([FILE_CREDENTIAL_STORE_FLAG] as const),
+        }),
+      };
+    });
+  }
+
+  /** Commits revoking before callback/delete and advances only to revoked. */
+  async teardown(
+    identity: CredentialHomeIdentity,
+    options: TeardownOptions
+  ): Promise<CredentialHomeTeardown> {
+    const homeId = localDeriveHomeId(identity);
+    return this.coordinate(homeId, async (lease) => {
+      const state = localRequireState(lease.state);
+      if (state !== "revoked") {
+        if (state !== "revoking") {
+          await localPersist(() => lease.markRevoking());
+        }
+        try {
+          await options.revoke();
+        } catch {
+          throw new CredentialHomeError(
+            "credential_revocation_failed",
+            "Credential revocation did not complete"
+          );
+        }
+      }
+      const rootIdentity = await this.verifyRoot();
+      const deletion = await localCall(() =>
+        this.capabilities.host.deleteHome({
+          rootPath: this.rootPath,
+          rootIdentity,
+          homeId,
+        })
+      );
+      if (!deletion || deletion.status === "unsafe") {
+        throw localUnsafeError();
+      }
+      if (deletion.status !== "absent" && deletion.status !== "removed") {
+        throw localCapabilityError();
+      }
+      if (state !== "revoked") {
+        await localPersist(() => lease.markRevoked());
+      }
+      return { homeId, state: deletion.status };
+    });
+  }
+
+  /** Verifies the local external pin before each host operation. */
+  private async verifyRoot(): Promise<HostRootIdentity> {
+    if (!this.rootIdentity) {
+      throw localConfigurationError();
+    }
+    const inspected = localRequireSafeRoot(
+      await localCall(() => this.capabilities.host.inspectRoot(this.rootPath))
+    );
+    if (!localIdentityEquals(inspected, this.rootIdentity)) {
+      throw localUnsafeError();
+    }
+    const pin = await localCall(() =>
+      this.capabilities.rootPins.pinOrVerify(this.rootKey, inspected)
+    );
+    if (pin !== "verified") {
+      throw pin === "mismatch" ? localUnsafeError() : localCapabilityError();
+    }
+    return inspected;
+  }
+
+  /** Preserves only exact local callback errors across coordinator failures. */
+  private async coordinate<T>(
+    homeId: string,
+    operation: (lease: CredentialHomeLifecycleLease) => Promise<T>
+  ): Promise<T> {
+    let callbackError: unknown;
+    try {
+      return await this.capabilities.coordinator.runExclusive(
+        homeId,
+        async (lease) => {
+          try {
+            return await operation(lease);
+          } catch (error) {
+            callbackError = error;
+            throw error;
+          }
+        }
+      );
+    } catch (error) {
+      if (error === callbackError && error instanceof CredentialHomeError) {
+        throw error;
+      }
+      throw localCapabilityError();
+    }
+  }
+}
+
+/** Creates one test-local capability set; this function is not importable. */
+function createLocalCredentialHomeTestCapabilities(
+  hooks: LocalTestHostHooks = {}
+): LocalCredentialHomeTestCapabilities {
+  const coordinator = new LocalTestCoordinator();
+  return {
+    host: new LocalTestHost(hooks),
+    rootPins: new LocalTestRootPins(),
+    coordinator,
+    controls: {
+      failNextMarkRevoked: () => coordinator.failNextMarkRevoked(),
+      setNextLeaseState: (state) => coordinator.setNextLeaseState(state),
+    },
+  };
+}
+
+/** Builds a stable tuple hash for test-local root and home identifiers. */
+function localHash(namespace: string, value: string): string {
+  return createHash("sha256")
+    .update(namespace)
+    .update("\0")
+    .update(value)
+    .digest("hex");
+}
+
+/** Derives the same length-prefixed non-secret home ID used by production. */
+function localDeriveHomeId(identity: CredentialHomeIdentity): string {
+  for (const value of [identity.ownerId, identity.connectionId]) {
+    if (
+      typeof value !== "string" ||
+      value.length === 0 ||
+      value.length > 512 ||
+      !/^[A-Za-z0-9_-]+$/.test(value) ||
+      value === "." ||
+      value === ".." ||
+      isAbsolute(value)
+    ) {
+      throw new CredentialHomeError(
+        "credential_home_identifier_invalid",
+        "Credential home identity is invalid"
+      );
+    }
+  }
+  const digest = createHash("sha256")
+    .update(LOCAL_HOME_NAMESPACE)
+    .update("\0")
+    .update(String(Buffer.byteLength(identity.ownerId)))
+    .update(":")
+    .update(identity.ownerId)
+    .update("\0")
+    .update(String(Buffer.byteLength(identity.connectionId)))
+    .update(":")
+    .update(identity.connectionId)
+    .digest("hex");
+  return `codex-${digest}`;
+}
+
+/** Validates explicit lifecycle states in the test-local manager. */
+function localRequireState(value: unknown): CredentialHomeLifecycleState {
+  if (
+    value !== "active" &&
+    value !== "provisionable" &&
+    value !== "revoked" &&
+    value !== "revoking"
+  ) {
+    throw localCapabilityError();
+  }
+  return value;
+}
+
+/** Validates one local root result without reflecting host errors. */
+function localRequireSafeRoot(result: HostRootResult): HostRootIdentity {
+  if (!result || result.status !== "ok") {
+    throw localUnsafeError();
+  }
+  return result.identity;
+}
+
+/** Requires every local capability to share the test isolation domain. */
+function localRequireMatchingDomain(
+  capabilities: CredentialHomeCapabilities
+): void {
+  if (
+    capabilities.host.isolationDomain !== LOCAL_DOMAIN ||
+    capabilities.rootPins.isolationDomain !== LOCAL_DOMAIN ||
+    capabilities.coordinator.isolationDomain !== LOCAL_DOMAIN
+  ) {
+    throw localConfigurationError();
+  }
+}
+
+/** Rejects symlinks or non-directories in local root ancestors. */
+async function localAssertSafeAncestors(path: string): Promise<void> {
+  const filesystemRoot = parse(path).root;
+  const components = relative(filesystemRoot, path)
+    .split(/[/\\]/)
+    .filter(Boolean);
+  let current = filesystemRoot;
+  for (const component of components) {
+    current = join(current, component);
+    const metadata = await lstat(current, { bigint: true });
+    if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+      throw new Error("local ancestor unsafe");
+    }
+  }
+}
+
+/** Inspects an exact private local directory. */
+async function localInspectPrivateDirectory(
+  path: string
+): Promise<HostRootResult> {
+  let metadata;
+  try {
+    metadata = await lstat(path, { bigint: true });
+  } catch {
+    return { status: "unsafe" };
+  }
+  if (
+    metadata.isSymbolicLink() ||
+    !metadata.isDirectory() ||
+    Number(metadata.mode & BigInt(0o777)) !== PRIVATE_MODE ||
+    process.getuid === undefined ||
+    metadata.uid !== BigInt(process.getuid())
+  ) {
+    return { status: "unsafe" };
+  }
+  const resolved = await realpath(path);
+  const followed = await stat(resolved, { bigint: true });
+  if (
+    resolved !== path ||
+    followed.dev !== metadata.dev ||
+    followed.ino !== metadata.ino
+  ) {
+    return { status: "unsafe" };
+  }
+  return {
+    status: "ok",
+    identity: {
+      device: `dev:${metadata.dev.toString(10)}`,
+      inode: `ino:${metadata.ino.toString(10)}`,
+      generation: `birth:${metadata.birthtimeNs.toString(10)}`,
+    },
+  };
+}
+
+/** Distinguishes a missing local leaf from unsafe existing state. */
+async function localInspectOptionalDirectory(
+  path: string
+): Promise<HostRootResult | "absent"> {
+  try {
+    await lstat(path);
+  } catch (error) {
+    return isNodeError(error) && error.code === "ENOENT"
+      ? "absent"
+      : { status: "unsafe" };
+  }
+  return localInspectPrivateDirectory(path);
+}
+
+/** Checks the current local root against a pinned identity. */
+async function localRootMatches(
+  rootPath: string,
+  expected: HostRootIdentity
+): Promise<boolean> {
+  const inspected = await localInspectPrivateDirectory(rootPath);
+  return (
+    inspected.status === "ok" &&
+    localIdentityEquals(inspected.identity, expected)
+  );
+}
+
+/** Compares every local root/home identity component. */
+function localIdentityEquals(
+  left: HostRootIdentity,
+  right: HostRootIdentity
+): boolean {
+  return (
+    left.device === right.device &&
+    left.inode === right.inode &&
+    left.generation === right.generation
+  );
+}
+
+/** Maps local capability exceptions to one stable failure. */
+async function localCall<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch {
+    throw localCapabilityError();
+  }
+}
+
+/** Persists one local lifecycle transition without leaking backend errors. */
+async function localPersist(
+  operation: () => void | Promise<void>
+): Promise<void> {
+  try {
+    await operation();
+  } catch {
+    throw localCapabilityError();
+  }
+}
+
+/** Narrows local filesystem errors inside this test module. */
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
+/** Creates the stable local capability failure. */
+function localCapabilityError(): CredentialHomeError {
+  return new CredentialHomeError(
+    "credential_home_capability_unavailable",
+    "Credential home isolation capability is unavailable"
+  );
+}
+
+/** Creates the stable local configuration failure. */
+function localConfigurationError(): CredentialHomeError {
+  return new CredentialHomeError(
+    "credential_home_configuration_invalid",
+    "Credential home capabilities are invalid"
+  );
+}
+
+/** Creates the stable local unsafe-state failure. */
+function localUnsafeError(): CredentialHomeError {
+  return new CredentialHomeError(
+    "credential_home_unsafe",
+    "Credential home isolation state is unsafe"
+  );
+}
 
 type ManagerHarness = Readonly<{
   capabilities: LocalCredentialHomeTestCapabilities;
@@ -51,10 +679,7 @@ function buildTestManager(
   root: string,
   capabilities: LocalCredentialHomeTestCapabilities
 ): TestOnlyCodexCredentialHomeManager {
-  return new TestOnlyCodexCredentialHomeManager({
-    rootPath: root,
-    capabilities,
-  });
+  return new TestOnlyCodexCredentialHomeManager(root, capabilities);
 }
 
 /** Creates a pre-provisioned root and initializes one test-only manager. */
@@ -101,6 +726,46 @@ afterEach(async () => {
 });
 
 describe("production Codex credential-home authority", () => {
+  it("exports only production-safe runtime names", () => {
+    expect(Object.keys(credentialHomeModule).sort()).toEqual([
+      "CodexCredentialHomeManager",
+      "CredentialHomeError",
+      "FILE_CREDENTIAL_STORE_FLAG",
+      "assertTrustedCodexRuntimeAuthority",
+    ]);
+  });
+
+  it("forbids production source from importing test modules", async () => {
+    const productionRoots = ["services", "app", "lib"];
+    const violations: string[] = [];
+    for (const root of productionRoots) {
+      const entries = await readdir(join(process.cwd(), root), {
+        recursive: true,
+      });
+      for (const entry of entries) {
+        if (
+          !/\.[cm]?[jt]sx?$/.test(entry) ||
+          /(?:^|\.)test\.[cm]?[jt]sx?$/.test(entry) ||
+          /(?:^|\.)spec\.[cm]?[jt]sx?$/.test(entry)
+        ) {
+          continue;
+        }
+        const content = await readFile(
+          join(process.cwd(), root, entry),
+          "utf8"
+        );
+        if (
+          /\b(?:from|import\s*)\s*\(?["'][^"']*\.test(?:[.-]|["'])/.test(
+            content
+          )
+        ) {
+          violations.push(join(root, entry));
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
   it("fails closed because no production provisioner exists", async () => {
     const parent = await createTemporaryParent();
     const manager = new CodexCredentialHomeManager({
