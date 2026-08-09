@@ -9,6 +9,8 @@ const CEREMONY_ID_BYTES = 24;
 const MAX_CLEANUP_SESSION_REFS = 8;
 const MAX_IDENTIFIER_LENGTH = 160;
 const MAX_PROVIDER_SESSION_REF_LENGTH = 512;
+const MAX_RUNTIME_SNAPSHOT_DEPTH = 16;
+const MAX_RUNTIME_SNAPSHOT_NODES = 256;
 const USER_CODE_PATTERN = /^[A-Z0-9](?:[A-Z0-9-]{2,14}[A-Z0-9])$/;
 const OFFICIAL_CODEX_VERIFICATION_URLS = Object.freeze([
   "https://auth.openai.com/codex/device",
@@ -46,6 +48,7 @@ type CodexDeviceCeremonyRecord = Readonly<{
   nextPollAtMilliseconds: number;
   revision: number;
   providerBeginKey: string;
+  providerBeginPending: boolean;
   userCode?: string;
   providerSessionRef?: string;
   cleanupSessionRefs: readonly string[];
@@ -327,7 +330,8 @@ function createCodexDeviceFlow(
     scope: CodexDeviceScope,
     requestSignal?: AbortSignal
   ): Promise<CodexDeviceResult> {
-    if (!safelyValidate(() => isValidScope(scope))) return failure("not_found");
+    const durableScope = parseScopeSnapshot(scope);
+    if (!durableScope) return failure("not_found");
     const nowMilliseconds = readServerTime();
     if (nowMilliseconds === null) return failure("store_unavailable");
     const ceremonyId = safelyCreateOpaqueId(createCeremonyId);
@@ -340,7 +344,7 @@ function createCodexDeviceFlow(
           {
             ceremonyId,
             providerBeginKey,
-            scope,
+            scope: durableScope,
             nowMilliseconds,
             expiresAtMilliseconds:
               nowMilliseconds + options.ceremonyTtlMilliseconds,
@@ -353,13 +357,8 @@ function createCodexDeviceFlow(
       "store"
     );
     if (!reservation.ok) return reservation.result;
-    const reserved = safelyParse(() =>
-      parseReserveOutcome(
-        reservation.value,
-        scope,
-        ceremonyId,
-        providerBeginKey
-      )
+    const reserved = parseRuntimeSnapshot(reservation.value, (value) =>
+      parseReserveOutcome(value, durableScope, ceremonyId, providerBeginKey)
     );
     if (!reserved) return failure("store_unavailable");
     if (reserved.status === "active_other_request") {
@@ -372,11 +371,11 @@ function createCodexDeviceFlow(
 
     const record = reserved.record;
     if (record.status !== "starting") {
-      const cleaned = await drainCleanup(record, scope);
+      const cleaned = await drainCleanup(record, durableScope);
       if (!cleaned.ok) return cleaned.result;
       return resultFromRecord(
         cleaned.record,
-        scope,
+        durableScope,
         record.ceremonyId,
         verificationUrl
       );
@@ -385,12 +384,14 @@ function createCodexDeviceFlow(
     // Once the durable reservation commits, provider settlement and cleanup are
     // server-owned. Caller abort stops waiting but cannot discard a late ref.
     const lifecycleState: BeginLifecycleState = { abortRequested: false };
-    const lifecycle = settleProviderBegin(record, scope, lifecycleState).catch(
-      () => failure("provider_unavailable")
-    );
+    const lifecycle = settleProviderBegin(
+      record,
+      durableScope,
+      lifecycleState
+    ).catch(() => failure("provider_unavailable"));
     return awaitCallerLifecycle(lifecycle, requestSignal, () => {
       lifecycleState.abortRequested = true;
-      return terminalizeAfterCallerAbort(record, scope);
+      return terminalizeAfterCallerAbort(record, durableScope);
     });
   }
 
@@ -416,8 +417,8 @@ function createCodexDeviceFlow(
       "store"
     );
     if (!cancellation.ok) return;
-    const durable = safelyParse(() =>
-      parseCancelOutcome(cancellation.value, scope, record.ceremonyId)
+    const durable = parseRuntimeSnapshot(cancellation.value, (value) =>
+      parseCancelOutcome(value, scope, record.ceremonyId)
     );
     if (!durable || durable.status === "not_found") return;
     await drainCleanup(durable.record, scope);
@@ -429,21 +430,67 @@ function createCodexDeviceFlow(
     scope: CodexDeviceScope,
     lifecycleState: BeginLifecycleState
   ): Promise<CodexDeviceResult> {
-    const providerBegin = await awaitDependency(
-      (context) =>
+    const operationController = new AbortController();
+    const deadlineAtMilliseconds =
+      Date.now() + options.dependencyTimeoutMilliseconds;
+    return new Promise<CodexDeviceResult>((resolve) => {
+      let responseSettled = false;
+      const finishResponse = (result: CodexDeviceResult): void => {
+        if (responseSettled) return;
+        responseSettled = true;
+        clearTimeout(timeout);
+        resolve(result);
+      };
+      const timeout = setTimeout(() => {
+        operationController.abort();
+        finishResponse(failure("timed_out"));
+      }, options.dependencyTimeoutMilliseconds);
+      const rawBegin = Promise.resolve().then(() =>
         options.client.begin(
           {
             ceremonyId: record.ceremonyId,
             providerBeginKey: record.providerBeginKey,
           },
-          context
-        ),
-      options.dependencyTimeoutMilliseconds,
-      undefined,
-      "provider"
+          Object.freeze({
+            signal: operationController.signal,
+            deadlineAtMilliseconds,
+          })
+        )
+      );
+      const durableSettlement = rawBegin.then(
+        (value) => {
+          // A fulfillment owns reconciliation even after the response deadline.
+          clearTimeout(timeout);
+          return recordProviderBeginResult(
+            value,
+            record,
+            scope,
+            lifecycleState
+          );
+        },
+        () => {
+          clearTimeout(timeout);
+          return failure("provider_unavailable");
+        }
+      );
+      durableSettlement.then(finishResponse, () =>
+        finishResponse(failure("provider_unavailable"))
+      );
+    });
+  }
+
+  /** Persists and reconciles one provider begin result, including late success. */
+  async function recordProviderBeginResult(
+    rawProviderResult: unknown,
+    record: CodexDeviceCeremonyRecord,
+    scope: CodexDeviceScope,
+    lifecycleState: BeginLifecycleState
+  ): Promise<CodexDeviceResult> {
+    const providerResult = parseRuntimeSnapshot(
+      rawProviderResult,
+      parseProviderBeginOutcome
     );
-    if (!providerBegin.ok) return providerBegin.result;
-    if (!safelyValidate(() => isValidBeginOutcome(providerBegin.value))) {
+    if (!providerResult) {
       return failure("provider_unavailable");
     }
     const nowMilliseconds = readServerTime();
@@ -456,8 +503,8 @@ function createCodexDeviceFlow(
             providerBeginKey: record.providerBeginKey,
             scope,
             nowMilliseconds,
-            userCode: providerBegin.value.userCode,
-            providerSessionRef: providerBegin.value.providerSessionRef,
+            userCode: providerResult.userCode,
+            providerSessionRef: providerResult.providerSessionRef,
           },
           context
         ),
@@ -466,13 +513,13 @@ function createCodexDeviceFlow(
       "store"
     );
     if (!recordedBegin.ok) return recordedBegin.result;
-    const recorded = safelyParse(() =>
+    const recorded = parseRuntimeSnapshot(recordedBegin.value, (value) =>
       parseRecordBeginOutcome(
-        recordedBegin.value,
+        value,
         scope,
         record.ceremonyId,
         record.providerBeginKey,
-        providerBegin.value.providerSessionRef
+        providerResult.providerSessionRef
       )
     );
     if (!recorded) return failure("store_unavailable");
@@ -498,10 +545,8 @@ function createCodexDeviceFlow(
     ceremonyId: string,
     requestSignal?: AbortSignal
   ): Promise<CodexDeviceResult> {
-    if (
-      !safelyValidate(() => isValidScope(scope)) ||
-      !isValidCeremonyId(ceremonyId)
-    ) {
+    const durableScope = parseScopeSnapshot(scope);
+    if (!durableScope || !isValidCeremonyId(ceremonyId)) {
       return failure("not_found");
     }
     const prepareAtMilliseconds = readServerTime();
@@ -509,7 +554,11 @@ function createCodexDeviceFlow(
     const prepared = await awaitDependency(
       (context) =>
         options.store.preparePoll(
-          { ceremonyId, scope, nowMilliseconds: prepareAtMilliseconds },
+          {
+            ceremonyId,
+            scope: durableScope,
+            nowMilliseconds: prepareAtMilliseconds,
+          },
           context
         ),
       options.dependencyTimeoutMilliseconds,
@@ -517,17 +566,17 @@ function createCodexDeviceFlow(
       "store"
     );
     if (!prepared.ok) return prepared.result;
-    const preparedOutcome = safelyParse(() =>
-      parsePreparePollOutcome(prepared.value, scope, ceremonyId)
+    const preparedOutcome = parseRuntimeSnapshot(prepared.value, (value) =>
+      parsePreparePollOutcome(value, durableScope, ceremonyId)
     );
     if (!preparedOutcome) return failure("store_unavailable");
     if (preparedOutcome.status === "not_found") return failure("not_found");
     if (preparedOutcome.status === "current") {
-      const cleaned = await drainCleanup(preparedOutcome.record, scope);
+      const cleaned = await drainCleanup(preparedOutcome.record, durableScope);
       if (!cleaned.ok) return cleaned.result;
       return resultFromRecord(
         cleaned.record,
-        scope,
+        durableScope,
         ceremonyId,
         verificationUrl
       );
@@ -549,7 +598,11 @@ function createCodexDeviceFlow(
       "provider"
     );
     if (!providerPoll.ok) return providerPoll.result;
-    if (!safelyValidate(() => isValidPollCompletion(providerPoll.value))) {
+    const providerCompletion = parseRuntimeSnapshot(
+      providerPoll.value,
+      parseProviderPollOutcome
+    );
+    if (!providerCompletion) {
       return failure("provider_unavailable");
     }
     const completeAtMilliseconds = readServerTime();
@@ -560,10 +613,10 @@ function createCodexDeviceFlow(
         options.store.completePoll(
           {
             ceremonyId,
-            scope,
+            scope: durableScope,
             nowMilliseconds: completeAtMilliseconds,
             pollRevision: grantedPoll.pollRevision,
-            completion: providerPoll.value,
+            completion: providerCompletion,
           },
           context
         ),
@@ -572,14 +625,19 @@ function createCodexDeviceFlow(
       "store"
     );
     if (!completed.ok) return completed.result;
-    const completedOutcome = safelyParse(() =>
-      parseCompletePollOutcome(completed.value, scope, ceremonyId)
+    const completedOutcome = parseRuntimeSnapshot(completed.value, (value) =>
+      parseCompletePollOutcome(value, durableScope, ceremonyId)
     );
     if (!completedOutcome) return failure("store_unavailable");
     if (completedOutcome.status === "not_found") return failure("not_found");
-    const cleaned = await drainCleanup(completedOutcome.record, scope);
+    const cleaned = await drainCleanup(completedOutcome.record, durableScope);
     if (!cleaned.ok) return cleaned.result;
-    return resultFromRecord(cleaned.record, scope, ceremonyId, verificationUrl);
+    return resultFromRecord(
+      cleaned.record,
+      durableScope,
+      ceremonyId,
+      verificationUrl
+    );
   }
 
   /** Commits terminal cancellation before bounded provider cleanup. */
@@ -588,27 +646,45 @@ function createCodexDeviceFlow(
     ceremonyId: string,
     requestSignal?: AbortSignal
   ): Promise<CodexDeviceResult> {
-    if (
-      !safelyValidate(() => isValidScope(scope)) ||
-      !isValidCeremonyId(ceremonyId)
-    ) {
+    const durableScope = parseScopeSnapshot(scope);
+    if (!durableScope || !isValidCeremonyId(ceremonyId)) {
       return failure("not_found");
     }
+    const lifecycle = commitExplicitCancellation(
+      durableScope,
+      ceremonyId
+    ).catch(() => failure("store_unavailable"));
+    return awaitCallerLifecycle(lifecycle, requestSignal);
+  }
+
+  /** Owns terminal cancellation independently from the browser response signal. */
+  async function commitExplicitCancellation(
+    scope: CodexDeviceScope,
+    ceremonyId: string
+  ): Promise<CodexDeviceResult> {
     const nowMilliseconds = readServerTime();
     if (nowMilliseconds === null) return failure("store_unavailable");
     const cancellation = await awaitDependency(
       (context) =>
         options.store.cancel({ ceremonyId, scope, nowMilliseconds }, context),
       options.dependencyTimeoutMilliseconds,
-      requestSignal,
+      undefined,
       "store"
     );
     if (!cancellation.ok) return cancellation.result;
-    const durableCancellation = safelyParse(() =>
-      parseCancelOutcome(cancellation.value, scope, ceremonyId)
+    const durableCancellation = parseRuntimeSnapshot(
+      cancellation.value,
+      (value) => parseCancelOutcome(value, scope, ceremonyId)
     );
     if (!durableCancellation) return failure("store_unavailable");
     if (durableCancellation.status === "not_found") return failure("not_found");
+    if (durableCancellation.record.providerBeginPending) {
+      // Recovery continues independently; terminal cancellation is already
+      // durable and should not wait for a provider that may settle much later.
+      settleProviderBegin(durableCancellation.record, scope, {
+        abortRequested: true,
+      }).catch(() => failure("provider_unavailable"));
+    }
     const cleaned = await drainCleanup(durableCancellation.record, scope);
     if (!cleaned.ok) return cleaned.result;
     return resultFromRecord(cleaned.record, scope, ceremonyId, verificationUrl);
@@ -643,8 +719,8 @@ function createCodexDeviceFlow(
         "store"
       );
       if (!claimedCleanup.ok) return claimedCleanup;
-      const claimed = safelyParse(() =>
-        parseClaimCleanupOutcome(claimedCleanup.value, scope, record.ceremonyId)
+      const claimed = parseRuntimeSnapshot(claimedCleanup.value, (value) =>
+        parseClaimCleanupOutcome(value, scope, record.ceremonyId)
       );
       if (!claimed) {
         return { ok: false, result: failure("store_unavailable") };
@@ -694,9 +770,9 @@ function createCodexDeviceFlow(
         "store"
       );
       if (!completedCleanup.ok) return completedCleanup;
-      const completed = safelyParse(() =>
+      const completed = parseRuntimeSnapshot(completedCleanup.value, (value) =>
         parseCompleteCleanupOutcome(
-          completedCleanup.value,
+          value,
           scope,
           record.ceremonyId,
           claimed.providerSessionRef
@@ -744,22 +820,115 @@ function awaitCallerLifecycle(
   });
 }
 
-/** Converts hostile accessors or malformed runtime envelopes into null. */
-function safelyParse<T>(parser: () => T | null): T | null {
+type RuntimeSnapshotState = {
+  nodes: number;
+  seen: WeakSet<object>;
+};
+
+/** Copies one injected boundary into a closed, deeply frozen data snapshot. */
+function parseRuntimeSnapshot<T>(
+  source: unknown,
+  parser: (snapshot: unknown) => T | null
+): T | null {
   try {
-    return parser();
+    const state: RuntimeSnapshotState = {
+      nodes: 0,
+      seen: new WeakSet<object>(),
+    };
+    const snapshot = snapshotRuntimeValue(source, state, 0);
+    return parser(snapshot);
   } catch {
     return null;
   }
 }
 
-/** Converts hostile accessors in a runtime validator into a false result. */
-function safelyValidate(validator: () => boolean): boolean {
-  try {
-    return validator();
-  } catch {
-    return false;
+/** Recursively snapshots data properties without invoking source getters. */
+function snapshotRuntimeValue(
+  source: unknown,
+  state: RuntimeSnapshotState,
+  depth: number
+): unknown {
+  if (
+    source === null ||
+    typeof source === "string" ||
+    typeof source === "number" ||
+    typeof source === "boolean"
+  ) {
+    return source;
   }
+  if (
+    typeof source !== "object" ||
+    depth > MAX_RUNTIME_SNAPSHOT_DEPTH ||
+    state.nodes >= MAX_RUNTIME_SNAPSHOT_NODES ||
+    state.seen.has(source)
+  ) {
+    throw new TypeError("invalid runtime snapshot");
+  }
+  state.nodes += 1;
+  state.seen.add(source);
+  const prototype = Reflect.getPrototypeOf(source);
+  const keys = Reflect.ownKeys(source);
+  if (keys.some((key) => typeof key === "symbol")) {
+    throw new TypeError("symbol runtime keys are unavailable");
+  }
+
+  if (Array.isArray(source)) {
+    if (prototype !== Array.prototype) {
+      throw new TypeError("non-plain runtime array");
+    }
+    const lengthDescriptor = Reflect.getOwnPropertyDescriptor(source, "length");
+    const length = lengthDescriptor?.value;
+    if (
+      typeof length !== "number" ||
+      !Number.isSafeInteger(length) ||
+      length < 0
+    ) {
+      throw new TypeError("invalid runtime array length");
+    }
+    const expectedKeys: string[] = Array.from({ length }, (_value, index) =>
+      String(index)
+    );
+    if (
+      keys.length !== expectedKeys.length + 1 ||
+      !keys.includes("length") ||
+      !expectedKeys.every((key) => keys.includes(key))
+    ) {
+      throw new TypeError("sparse or extended runtime array");
+    }
+    const snapshot = expectedKeys.map((key) => {
+      const descriptor = Reflect.getOwnPropertyDescriptor(source, key);
+      if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+        throw new TypeError("runtime array accessors are unavailable");
+      }
+      return snapshotRuntimeValue(descriptor.value, state, depth + 1);
+    });
+    return Object.freeze(snapshot);
+  }
+
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError("non-plain runtime object");
+  }
+  const snapshot = Object.create(null) as Record<string, unknown>;
+  for (const key of keys as string[]) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(source, key);
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+      throw new TypeError("runtime accessors are unavailable");
+    }
+    Object.defineProperty(snapshot, key, {
+      configurable: false,
+      enumerable: true,
+      value: snapshotRuntimeValue(descriptor.value, state, depth + 1),
+      writable: false,
+    });
+  }
+  return Object.freeze(snapshot);
+}
+
+/** Normalizes caller scope once before it crosses any durable boundary. */
+function parseScopeSnapshot(source: unknown): CodexDeviceScope | null {
+  return parseRuntimeSnapshot(source, (snapshot) =>
+    isValidScope(snapshot) ? (snapshot as CodexDeviceScope) : null
+  );
 }
 
 /** Parses the exact atomic reserve envelope before any record dereference. */
@@ -819,6 +988,7 @@ function parseRecordBeginOutcome(
     !hasExactKeys(value, ["status", "record"]) ||
     !isValidRecord(value.record, scope, ceremonyId) ||
     value.record.providerBeginKey !== providerBeginKey ||
+    value.record.providerBeginPending !== false ||
     value.record.status === "starting" ||
     (value.record.providerSessionRef !== providerSessionRef &&
       !value.record.cleanupSessionRefs.includes(providerSessionRef))
@@ -1067,7 +1237,7 @@ function resultFromRecord(
   ceremonyId: string,
   verificationUrl: string
 ): CodexDeviceResult {
-  return safelyValidate(() => isValidRecord(record, scope, ceremonyId))
+  return isValidRecord(record, scope, ceremonyId)
     ? success(project(record, verificationUrl))
     : failure("store_unavailable");
 }
@@ -1079,6 +1249,36 @@ function isValidRecord(
   ceremonyId?: string
 ): value is CodexDeviceCeremonyRecord {
   if (!isPlainObject(value)) return false;
+  const requiredKeys = [
+    "ceremonyId",
+    "ownerId",
+    "connectionId",
+    "requestId",
+    "status",
+    "createdAtMilliseconds",
+    "expiresAtMilliseconds",
+    "pollIntervalMilliseconds",
+    "nextPollAtMilliseconds",
+    "revision",
+    "providerBeginKey",
+    "providerBeginPending",
+    "cleanupSessionRefs",
+  ];
+  const allowedKeys = new Set([
+    ...requiredKeys,
+    "userCode",
+    "providerSessionRef",
+    "account",
+  ]);
+  const recordKeys = Object.keys(value);
+  if (
+    !requiredKeys.every((key) =>
+      Object.prototype.hasOwnProperty.call(value, key)
+    ) ||
+    recordKeys.some((key) => !allowedKeys.has(key))
+  ) {
+    return false;
+  }
   if (
     !isValidCeremonyId(value.ceremonyId) ||
     (ceremonyId !== undefined && value.ceremonyId !== ceremonyId) ||
@@ -1098,6 +1298,7 @@ function isValidRecord(
   }
   if (
     !isValidCeremonyId(value.providerBeginKey) ||
+    typeof value.providerBeginPending !== "boolean" ||
     !Array.isArray(value.cleanupSessionRefs) ||
     value.cleanupSessionRefs.length > MAX_CLEANUP_SESSION_REFS ||
     !value.cleanupSessionRefs.every(isValidProviderSessionRef) ||
@@ -1110,7 +1311,8 @@ function isValidRecord(
     (value.userCode !== undefined ||
       value.providerSessionRef !== undefined ||
       value.account !== undefined ||
-      value.cleanupSessionRefs.length !== 0)
+      value.cleanupSessionRefs.length !== 0 ||
+      value.providerBeginPending !== true)
   ) {
     return false;
   }
@@ -1138,7 +1340,8 @@ function isValidRecord(
       USER_CODE_PATTERN.test(value.userCode) &&
       isValidProviderSessionRef(value.providerSessionRef) &&
       !value.cleanupSessionRefs.includes(value.providerSessionRef) &&
-      value.account === undefined
+      value.account === undefined &&
+      value.providerBeginPending === false
     );
   }
   if (
@@ -1169,6 +1372,15 @@ function isValidBeginOutcome(
   );
 }
 
+/** Returns only a pre-snapshotted, closed provider begin envelope. */
+function parseProviderBeginOutcome(
+  value: unknown
+): CodexDeviceClientBeginOutcome | null {
+  return isValidBeginOutcome(value)
+    ? (value as CodexDeviceClientBeginOutcome)
+    : null;
+}
+
 /** Accepts only the finite provider poll union used by the state machine. */
 function isValidPollCompletion(
   value: unknown
@@ -1180,6 +1392,15 @@ function isValidPollCompletion(
   }
   if (value.status !== "authorized" || keys.length !== 2) return false;
   return isValidAccount(value.account);
+}
+
+/** Returns only a pre-snapshotted, subscription-safe poll completion. */
+function parseProviderPollOutcome(
+  value: unknown
+): CodexDevicePollCompletion | null {
+  return isValidPollCompletion(value)
+    ? (value as CodexDevicePollCompletion)
+    : null;
 }
 
 /** Validates the only account presence shape permitted across the boundary. */

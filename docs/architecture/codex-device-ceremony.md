@@ -39,6 +39,14 @@ hosts, and internationalized lookalikes are rejected. The device completion
 accepts only an explicit `chatgpt` subscription presence result. Ambient API
 keys and every other credential type fail closed.
 
+Every injected scope, provider result, and store outcome is copied at the
+boundary into a bounded, closed, deeply frozen plain-data snapshot before the
+coordinator reads it. The copy uses property descriptors rather than invoking
+getters and rejects accessors, unexpected prototypes or fields, functions,
+cycles, and malformed nested values. Hostile mutation after validation cannot
+change coordinator decisions, and exceptions at either dependency boundary are
+normalized to stable, secret-free unavailable results.
+
 ## Durable-store contract
 
 The production store must make each method atomic and durable across process
@@ -72,12 +80,25 @@ idempotent by the same key and reference. Provider polling must be safe to
 repeat, and every implementation must honor the supplied abort signal and
 deadline.
 
+The record also persists whether provider begin authority remains unresolved.
+A response deadline aborts the adapter signal but does not discard a later
+fulfilled result: late settlement still enters the atomic `recordBegin` and
+cleanup path under server-owned deadlines. If reference persistence is
+ambiguous or did not commit, a fresh manager, explicit cancel, or cleanup worker
+can retry begin with the durable idempotency key and recover the same session
+authority rather than orphaning it.
+
 Caller abort ends only the browser wait. It atomically terminalizes the durable
 ceremony while provider settlement continues under an independent bounded
 server deadline. A late session reference is recorded before cleanup is tried.
 Timeout, rejection, process loss, or ambiguous cleanup completion leaves the
 reference durable so a later `cancel` call or worker using the same store
 contract can resume it. No original request signal controls cleanup.
+
+Likewise, once an explicit cancel request is authorized, its terminal store
+transition and cleanup fencing use a server-owned deadline. A pre-aborted or
+mid-flight browser signal may end that caller's response wait, but cannot skip,
+abort, or roll back durable cancellation.
 
 ## Deferred integration gates
 
