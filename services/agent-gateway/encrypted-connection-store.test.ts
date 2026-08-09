@@ -1,13 +1,14 @@
 import { createSecretKey } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   type CreateCredentialResult,
-  type CredentialEncryptionKey,
+  type CredentialCreateMutation,
   type CredentialIdentity,
-  type CredentialMutation,
+  type CredentialKeyEncryptionKey,
   type CredentialRandomSource,
+  type CredentialRotationMutation,
   CredentialStoreError,
   type DeleteCredentialResult,
   EncryptedConnectionStore,
@@ -21,8 +22,11 @@ const OWNER_ID = "user_0123456789ABCDEF";
 const OTHER_OWNER_ID = "user_FEDCBA9876543210";
 const CREDENTIAL_ID = "gwcred_v1_00000000-0000-4000-8000-000000000001";
 const OTHER_CREDENTIAL_ID = "gwcred_v1_00000000-0000-4000-8000-000000000002";
-const OPERATION_ID = "mutation_v1_00000000-0000-4000-8000-000000000001";
-const OTHER_OPERATION_ID = "mutation_v1_00000000-0000-4000-8000-000000000002";
+const CREATE_OPERATION_ID = "mutation_v1_00000000-0000-4000-8000-000000000001";
+const OTHER_CREATE_OPERATION_ID =
+  "mutation_v1_00000000-0000-4000-8000-000000000002";
+const ROTATION_OPERATION_ID =
+  "mutation_v1_00000000-0000-4000-8000-000000000003";
 const SECRET_CANARY = "sk-secret-never-reflect";
 
 const IDENTITY: CredentialIdentity = Object.freeze({
@@ -31,16 +35,20 @@ const IDENTITY: CredentialIdentity = Object.freeze({
   credentialId: CREDENTIAL_ID,
   credentialFormatVersion: 1,
 });
-const MUTATION: CredentialMutation = Object.freeze({
+const CREATE_MUTATION: CredentialCreateMutation = Object.freeze({
   ...IDENTITY,
-  operationId: OPERATION_ID,
+  creationOperationId: CREATE_OPERATION_ID,
+});
+const ROTATION_MUTATION: CredentialRotationMutation = Object.freeze({
+  ...IDENTITY,
+  rotationOperationId: ROTATION_OPERATION_ID,
 });
 
 /** Creates a 256-bit secret KeyObject, then clears its construction buffer. */
-function createEncryptionKey(
+function createKek(
   keyVersion: string,
   fill: number
-): CredentialEncryptionKey {
+): CredentialKeyEncryptionKey {
   const bytes = Buffer.alloc(32, fill);
   try {
     return Object.freeze({ keyVersion, key: createSecretKey(bytes) });
@@ -49,29 +57,112 @@ function createEncryptionKey(
   }
 }
 
-/** Produces unique valid nonces and revisions without ambient randomness. */
-function createRandomSource(seed = 1): CredentialRandomSource {
-  let sequence = seed;
+const CURRENT_KEK = createKek("encryption-v1-00000002", 2);
+const PREVIOUS_KEK = createKek("encryption-v1-00000001", 1);
+
+/** Controllable CSPRNG-shaped source whose transferred buffers remain observable. */
+class TestRandomSource implements CredentialRandomSource {
+  readonly transferred: Buffer[] = [];
+  duplicateDataKey = false;
+  duplicateWrapNonce = false;
+  duplicateLayerNonces = false;
+  zeroDataKey = false;
+  zeroPayloadNonce = false;
+  zeroWrapNonce = false;
+  private sequence: number;
+  private firstDataKey?: Buffer;
+  private firstWrapNonce?: Buffer;
+
+  constructor(seed = 1) {
+    this.sequence = seed;
+  }
+
+  dataKey(): Buffer {
+    let value: Buffer;
+    if (this.zeroDataKey) {
+      value = Buffer.alloc(32);
+    } else if (this.duplicateDataKey && this.firstDataKey !== undefined) {
+      value = Buffer.from(this.firstDataKey);
+    } else {
+      value = Buffer.alloc(32, this.nextByte());
+      this.firstDataKey = Buffer.from(value);
+    }
+    this.transferred.push(value);
+    return value;
+  }
+
+  payloadNonce(): Buffer {
+    const value = this.zeroPayloadNonce
+      ? Buffer.alloc(12)
+      : Buffer.alloc(12, this.nextByte());
+    this.transferred.push(value);
+    return value;
+  }
+
+  wrapNonce(): Buffer {
+    let value: Buffer;
+    if (this.zeroWrapNonce) {
+      value = Buffer.alloc(12);
+    } else if (this.duplicateLayerNonces) {
+      const payloadNonce = this.transferred.at(-1);
+      value = Buffer.from(payloadNonce ?? Buffer.alloc(12));
+    } else if (this.duplicateWrapNonce && this.firstWrapNonce !== undefined) {
+      value = Buffer.from(this.firstWrapNonce);
+    } else {
+      value = Buffer.alloc(12, this.nextByte());
+      this.firstWrapNonce = Buffer.from(value);
+    }
+    this.transferred.push(value);
+    return value;
+  }
+
+  recordRevision(): string {
+    const suffix = this.sequence.toString(16).padStart(12, "0");
+    this.sequence += 1;
+    return `revision_v1_00000000-0000-4000-8000-${suffix}`;
+  }
+
+  /** Returns a nonzero deterministic byte for test-only cryptographic input. */
+  private nextByte(): number {
+    const value = (this.sequence % 254) + 1;
+    this.sequence += 1;
+    return value;
+  }
+}
+
+/** Exposes a class-backed test source through the production plain-data shape. */
+function randomSourceContract(
+  randomSource: TestRandomSource
+): CredentialRandomSource {
   return Object.freeze({
-    nonce: () => {
-      const nonce = Buffer.alloc(12);
-      nonce.writeUInt32BE(sequence, 8);
-      sequence += 1;
-      return nonce;
-    },
-    recordRevision: () => {
-      const suffix = sequence.toString(16).padStart(12, "0");
-      sequence += 1;
-      return `revision_v1_00000000-0000-4000-8000-${suffix}`;
-    },
+    dataKey: randomSource.dataKey.bind(randomSource),
+    payloadNonce: randomSource.payloadNonce.bind(randomSource),
+    wrapNonce: randomSource.wrapNonce.bind(randomSource),
+    recordRevision: randomSource.recordRevision.bind(randomSource),
   });
 }
 
-/** Atomic in-memory adapter used only to prove the injected persistence contract. */
+/** One-shot promise controller used to hold an adapter await open. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+/** Atomic in-memory adapter used only to exercise the injected contract. */
 class MemoryPersistence implements EncryptedCredentialPersistence {
   record: StoredCredentialEnvelope | null = null;
   beforeReplace?: () => void;
   beforeDelete?: () => void;
+  createImplementation?: (
+    record: StoredCredentialEnvelope
+  ) => Promise<CreateCredentialResult>;
+  replaceImplementation?: (
+    record: StoredCredentialEnvelope,
+    expectedRecordRevision: string
+  ) => Promise<ReplaceCredentialResult>;
 
   async read(identity: CredentialIdentity) {
     return this.matches(identity) ? this.record : null;
@@ -80,6 +171,7 @@ class MemoryPersistence implements EncryptedCredentialPersistence {
   async create(
     record: StoredCredentialEnvelope
   ): Promise<CreateCredentialResult> {
+    if (this.createImplementation) return this.createImplementation(record);
     if (this.record !== null) return { status: "exists", record: this.record };
     this.record = record;
     return { status: "created" };
@@ -89,6 +181,9 @@ class MemoryPersistence implements EncryptedCredentialPersistence {
     record: StoredCredentialEnvelope,
     expectedRecordRevision: string
   ): Promise<ReplaceCredentialResult> {
+    if (this.replaceImplementation) {
+      return this.replaceImplementation(record, expectedRecordRevision);
+    }
     this.beforeReplace?.();
     this.beforeReplace = undefined;
     if (this.record === null) return { status: "missing" };
@@ -132,31 +227,33 @@ class MemoryPersistence implements EncryptedCredentialPersistence {
   }
 }
 
-const CURRENT_KEY = createEncryptionKey("encryption-v1-00000002", 2);
-const PREVIOUS_KEY = createEncryptionKey("encryption-v1-00000001", 1);
-
-/** Creates an isolated store fixture with deterministic randomness. */
+/** Creates an isolated envelope-store fixture. */
 function createFixture(
   options: Readonly<{
     persistence?: MemoryPersistence;
-    current?: CredentialEncryptionKey;
-    previous?: CredentialEncryptionKey;
+    current?: CredentialKeyEncryptionKey;
+    previous?: CredentialKeyEncryptionKey;
+    randomSource?: TestRandomSource;
     seed?: number;
+    maxKekEncryptions?: number;
   }> = {}
 ) {
   const persistence = options.persistence ?? new MemoryPersistence();
+  const randomSource =
+    options.randomSource ?? new TestRandomSource(options.seed ?? 1);
   const store = new EncryptedConnectionStore(
     persistence,
     {
-      current: options.current ?? CURRENT_KEY,
+      current: options.current ?? CURRENT_KEK,
       ...(options.previous ? { previous: options.previous } : {}),
     },
-    createRandomSource(options.seed)
+    randomSourceContract(randomSource),
+    options.maxKekEncryptions
   );
-  return { persistence, store };
+  return { persistence, randomSource, store };
 }
 
-/** Reads plaintext inside the store's bounded callback lifetime. */
+/** Reads a copy during the bounded callback lifetime. */
 async function readBytes(
   store: EncryptedConnectionStore,
   identity: CredentialIdentity = IDENTITY
@@ -164,35 +261,108 @@ async function readBytes(
   return store.use(identity, (payload) => Uint8Array.from(payload));
 }
 
-describe("EncryptedConnectionStore", () => {
-  it("encrypts an opaque Codex bundle and never persists plaintext", async () => {
-    const { persistence, store } = createFixture();
-    const payload = Buffer.from(`{"access_token":"${SECRET_CANARY}"}`);
+/** Stores one fresh Buffer and returns its pre-transfer bytes separately. */
+async function storeText(
+  store: EncryptedConnectionStore,
+  text = SECRET_CANARY,
+  mutation: CredentialCreateMutation = CREATE_MUTATION
+) {
+  return store.store(mutation, Buffer.from(text));
+}
 
-    const result = await store.store(MUTATION, payload);
+/** Returns a structurally valid replacement with controlled scalar changes. */
+function patchRecord(
+  record: StoredCredentialEnvelope,
+  patch: Partial<StoredCredentialEnvelope>
+): StoredCredentialEnvelope {
+  return Object.freeze({ ...record, ...patch });
+}
 
-    expect(result.status).toBe("created");
-    expect(persistence.record?.algorithm).toBe("aes-256-gcm");
-    expect(persistence.record?.envelopeVersion).toBe(1);
-    expect(JSON.stringify(persistence.record)).not.toContain(SECRET_CANARY);
-    expect(Buffer.from(await readBytes(store)).toString("utf8")).toBe(
-      payload.toString("utf8")
+describe("EncryptedConnectionStore envelope encryption", () => {
+  it("encrypts every credential with a fresh DEK and wraps only that DEK", async () => {
+    const first = createFixture({ seed: 10 });
+    const second = createFixture({ seed: 20 });
+    await storeText(first.store);
+    await storeText(second.store);
+    const firstRecord = first.persistence.record as StoredCredentialEnvelope;
+    const secondRecord = second.persistence.record as StoredCredentialEnvelope;
+
+    expect(firstRecord.payloadAlgorithm).toBe("aes-256-gcm");
+    expect(firstRecord.keyWrapAlgorithm).toBe("aes-256-gcm");
+    expect(Buffer.from(firstRecord.wrappedDataKey, "base64url")).toHaveLength(
+      32
     );
-    // The store copies caller-owned bytes and therefore never mutates its input.
-    expect(payload.toString("utf8")).toContain(SECRET_CANARY);
-    payload.fill(0);
+    expect(firstRecord.wrappedDataKey).not.toBe(secondRecord.wrappedDataKey);
+    expect(firstRecord.ciphertext).not.toBe(secondRecord.ciphertext);
+    expect(JSON.stringify(firstRecord)).not.toContain(SECRET_CANARY);
+    expect(Buffer.from(await readBytes(first.store)).toString()).toBe(
+      SECRET_CANARY
+    );
   });
 
-  it("supports arbitrary non-text provider-owned bytes", async () => {
-    const { store } = createFixture();
-    const payload = Uint8Array.from([0, 255, 1, 128, 2]);
-    await store.store(MUTATION, payload);
-    expect(await readBytes(store)).toEqual(payload);
+  it("clears transferred plaintext, DEK, and nonces before create awaits", async () => {
+    const gate = deferred<CreateCredentialResult>();
+    const persistence = new MemoryPersistence();
+    let persisted: StoredCredentialEnvelope | undefined;
+    persistence.createImplementation = async (record) => {
+      persisted = record;
+      return gate.promise;
+    };
+    const { randomSource, store } = createFixture({ persistence, seed: 30 });
+    const transferredPlaintext = Buffer.from(SECRET_CANARY);
+
+    const pending = store.store(CREATE_MUTATION, transferredPlaintext);
+    await vi.waitFor(() => expect(persisted).toBeDefined());
+
+    expect(Array.from(transferredPlaintext)).toEqual(
+      Array(SECRET_CANARY.length).fill(0)
+    );
+    expect(randomSource.transferred).toHaveLength(3);
+    for (const transferred of randomSource.transferred) {
+      expect(Array.from(transferred)).toEqual(
+        Array(transferred.length).fill(0)
+      );
+    }
+    expect(JSON.stringify(persisted)).not.toContain(SECRET_CANARY);
+    gate.resolve({ status: "created" });
+    await expect(pending).resolves.toMatchObject({ status: "created" });
+  });
+
+  it("clears rotation material before CAS persistence awaits", async () => {
+    const persistence = new MemoryPersistence();
+    await createFixture({
+      persistence,
+      current: PREVIOUS_KEK,
+      seed: 40,
+    }).store.store(CREATE_MUTATION, Buffer.from(SECRET_CANARY));
+    const gate = deferred<ReplaceCredentialResult>();
+    let replacement: StoredCredentialEnvelope | undefined;
+    persistence.replaceImplementation = async (record) => {
+      replacement = record;
+      return gate.promise;
+    };
+    const { randomSource, store } = createFixture({
+      persistence,
+      current: CURRENT_KEK,
+      previous: PREVIOUS_KEK,
+      seed: 50,
+    });
+
+    const pending = store.rotate(ROTATION_MUTATION);
+    await vi.waitFor(() => expect(replacement).toBeDefined());
+    for (const transferred of randomSource.transferred) {
+      expect(Array.from(transferred)).toEqual(
+        Array(transferred.length).fill(0)
+      );
+    }
+    expect(JSON.stringify(replacement)).not.toContain(SECRET_CANARY);
+    gate.resolve({ status: "replaced" });
+    await expect(pending).resolves.toMatchObject({ status: "rotated" });
   });
 
   it("clears callback-scoped plaintext after success and rejection", async () => {
     const { store } = createFixture();
-    await store.store(MUTATION, Buffer.from(SECRET_CANARY));
+    await storeText(store);
     let successfulAlias: Uint8Array | undefined;
     await store.use(IDENTITY, (payload) => {
       successfulAlias = payload;
@@ -213,66 +383,68 @@ describe("EncryptedConnectionStore", () => {
     );
   });
 
-  it("binds identity, format, key version, operation, and revision as AAD", async () => {
-    const tamperCases: ReadonlyArray<
+  it("binds identity, lineage, versions, and revisions to authenticated layers", async () => {
+    const cases: ReadonlyArray<
       Readonly<{
         patch: Partial<StoredCredentialEnvelope>;
         identity?: CredentialIdentity;
-        expectedCode: string;
+        previous?: CredentialKeyEncryptionKey;
       }>
     > = [
       {
         patch: { ownerId: OTHER_OWNER_ID },
         identity: { ...IDENTITY, ownerId: OTHER_OWNER_ID },
-        expectedCode: "decryption_failed",
       },
       {
         patch: { credentialId: OTHER_CREDENTIAL_ID },
         identity: { ...IDENTITY, credentialId: OTHER_CREDENTIAL_ID },
-        expectedCode: "decryption_failed",
       },
       {
         patch: { credentialFormatVersion: 2 },
         identity: { ...IDENTITY, credentialFormatVersion: 2 },
-        expectedCode: "decryption_failed",
       },
       {
-        patch: { keyVersion: PREVIOUS_KEY.keyVersion },
-        expectedCode: "key_unavailable",
+        patch: { keyVersion: PREVIOUS_KEK.keyVersion },
+        previous: PREVIOUS_KEK,
       },
-      {
-        patch: { operationId: OTHER_OPERATION_ID },
-        expectedCode: "decryption_failed",
-      },
+      { patch: { creationOperationId: OTHER_CREATE_OPERATION_ID } },
       {
         patch: {
           recordRevision: "revision_v1_00000000-0000-4000-8000-000000000099",
         },
-        expectedCode: "decryption_failed",
       },
     ];
 
-    for (const testCase of tamperCases) {
-      const { persistence, store } = createFixture();
-      await store.store(MUTATION, Buffer.from(SECRET_CANARY));
-      persistence.record = Object.freeze({
-        ...(persistence.record as StoredCredentialEnvelope),
-        ...testCase.patch,
+    for (const testCase of cases) {
+      const fixture = createFixture({
+        previous: testCase.previous,
+        seed: 60,
       });
+      await storeText(fixture.store);
+      fixture.persistence.record = patchRecord(
+        fixture.persistence.record as StoredCredentialEnvelope,
+        testCase.patch
+      );
       await expect(
-        store.use(testCase.identity ?? IDENTITY, () => undefined)
-      ).rejects.toMatchObject({ code: testCase.expectedCode });
+        fixture.store.use(testCase.identity ?? IDENTITY, () => undefined)
+      ).rejects.toMatchObject({ code: "decryption_failed" });
     }
   });
 
-  it("rejects tampered ciphertext, tag, and nonce with one stable error", async () => {
-    for (const field of ["ciphertext", "authTag", "nonce"] as const) {
-      const { persistence, store } = createFixture();
-      await store.store(MUTATION, Buffer.from(SECRET_CANARY));
+  it("fails closed when payload or wrapped-DEK fields are tampered", async () => {
+    for (const field of [
+      "payloadNonce",
+      "ciphertext",
+      "payloadAuthTag",
+      "wrappedDataKey",
+      "wrapNonce",
+      "wrapAuthTag",
+    ] as const) {
+      const { persistence, store } = createFixture({ seed: 70 });
+      await storeText(store);
       const record = persistence.record as StoredCredentialEnvelope;
       const value = record[field];
-      persistence.record = Object.freeze({
-        ...record,
+      persistence.record = patchRecord(record, {
         [field]: `${value.slice(0, -1)}${value.endsWith("A") ? "B" : "A"}`,
       });
       await expect(store.use(IDENTITY, () => undefined)).rejects.toMatchObject({
@@ -281,184 +453,292 @@ describe("EncryptedConnectionStore", () => {
       });
     }
   });
+});
 
-  it("accepts only a current and optional distinct previous 256-bit key", () => {
-    const persistence = new MemoryPersistence();
+describe("EncryptedConnectionStore key and nonce safety", () => {
+  it("rejects current and previous KEK labels backed by identical material", () => {
+    const sameMaterial = createKek("encryption-v1-00000003", 2);
     expect(
       () =>
-        new EncryptedConnectionStore(persistence, {
-          current: CURRENT_KEY,
-          previous: CURRENT_KEY,
+        new EncryptedConnectionStore(new MemoryPersistence(), {
+          current: CURRENT_KEK,
+          previous: sameMaterial,
         })
     ).toThrowError(
       expect.objectContaining({ code: "internal_configuration_invalid" })
     );
+  });
 
+  it("accepts only distinct 256-bit KEKs with distinct versions", () => {
     const shortBytes = Buffer.alloc(16, 7);
     const shortKey = createSecretKey(shortBytes);
     shortBytes.fill(0);
     expect(
       () =>
-        new EncryptedConnectionStore(persistence, {
-          current: { keyVersion: "encryption-v1-00000003", key: shortKey },
+        new EncryptedConnectionStore(new MemoryPersistence(), {
+          current: {
+            keyVersion: "encryption-v1-00000003",
+            key: shortKey,
+          },
         })
     ).toThrowError(
       expect.objectContaining({ code: "internal_configuration_invalid" })
     );
   });
 
-  it("reads current and previous keys but rejects versions outside the overlap", async () => {
+  it("fails closed when a record's KEK version is outside the overlap", async () => {
     const persistence = new MemoryPersistence();
-    const oldStore = createFixture({
+    await createFixture({
       persistence,
-      current: PREVIOUS_KEY,
-      seed: 10,
-    }).store;
-    await oldStore.store(MUTATION, Buffer.from(SECRET_CANARY));
-
-    const overlapping = createFixture({
-      persistence,
-      current: CURRENT_KEY,
-      previous: PREVIOUS_KEY,
-      seed: 20,
-    }).store;
-    expect(Buffer.from(await readBytes(overlapping)).toString()).toBe(
-      SECRET_CANARY
-    );
-
-    const withoutPrevious = createFixture({ persistence }).store;
+      current: PREVIOUS_KEK,
+      seed: 75,
+    }).store.store(CREATE_MUTATION, Buffer.from(SECRET_CANARY));
+    const withoutPrevious = createFixture({ persistence, seed: 76 }).store;
     await expect(
       withoutPrevious.use(IDENTITY, () => undefined)
     ).rejects.toMatchObject({ code: "key_unavailable" });
   });
 
-  it("re-encrypts previous-key records and makes current-key retries no-ops", async () => {
-    const persistence = new MemoryPersistence();
-    await createFixture({
-      persistence,
-      current: PREVIOUS_KEY,
-      seed: 30,
-    }).store.store(MUTATION, Buffer.from(SECRET_CANARY));
-    const originalCiphertext = persistence.record?.ciphertext;
-    const rotating = createFixture({
-      persistence,
-      current: CURRENT_KEY,
-      previous: PREVIOUS_KEY,
-      seed: 40,
-    }).store;
-
-    const rotated = await rotating.rotate({
-      ...MUTATION,
-      operationId: OTHER_OPERATION_ID,
-    });
-    expect(rotated.status).toBe("rotated");
-    expect(persistence.record?.keyVersion).toBe(CURRENT_KEY.keyVersion);
-    expect(persistence.record?.ciphertext).not.toBe(originalCiphertext);
-    expect(Buffer.from(await readBytes(rotating)).toString()).toBe(
-      SECRET_CANARY
-    );
-    await expect(rotating.rotate(MUTATION)).resolves.toMatchObject({
-      status: "already_current",
-      keyVersion: CURRENT_KEY.keyVersion,
-    });
+  it("rejects all-zero DEKs and nonces plus duplicate layer nonces", async () => {
+    for (const configure of [
+      (source: TestRandomSource) => (source.zeroDataKey = true),
+      (source: TestRandomSource) => (source.zeroPayloadNonce = true),
+      (source: TestRandomSource) => (source.zeroWrapNonce = true),
+      (source: TestRandomSource) => (source.duplicateLayerNonces = true),
+    ]) {
+      const randomSource = new TestRandomSource(80);
+      configure(randomSource);
+      const { store } = createFixture({ randomSource });
+      await expect(storeText(store)).rejects.toMatchObject({
+        code: "internal_configuration_invalid",
+      });
+      for (const transferred of randomSource.transferred) {
+        expect(Array.from(transferred)).toEqual(
+          Array(transferred.length).fill(0)
+        );
+      }
+    }
   });
 
-  it("makes same-operation creates idempotent and rejects a different operation", async () => {
-    const { persistence, store } = createFixture();
-    const first = await store.store(MUTATION, Buffer.from("first"));
-    const firstRecord = persistence.record;
-    const retry = await store.store(
-      MUTATION,
-      Buffer.from("ignored retry bytes")
-    );
+  it("rejects repeated DEKs and wrap nonces within one bounded instance", async () => {
+    for (const duplicateField of [
+      "duplicateDataKey",
+      "duplicateWrapNonce",
+    ] as const) {
+      const persistence = new MemoryPersistence();
+      const randomSource = new TestRandomSource(90);
+      const { store } = createFixture({ persistence, randomSource });
+      await storeText(store);
+      persistence.record = null;
+      randomSource[duplicateField] = true;
+      await expect(
+        store.store(
+          {
+            ...CREATE_MUTATION,
+            creationOperationId: OTHER_CREATE_OPERATION_ID,
+          },
+          Buffer.from(SECRET_CANARY)
+        )
+      ).rejects.toMatchObject({ code: "internal_configuration_invalid" });
+    }
+  });
 
-    expect(first.status).toBe("created");
+  it("caps KEK encryption invocations per store instance", async () => {
+    const { persistence, store } = createFixture({ maxKekEncryptions: 1 });
+    await storeText(store);
+    persistence.record = null;
+    const secondPayload = Buffer.from(SECRET_CANARY);
+    await expect(
+      store.store(
+        {
+          ...CREATE_MUTATION,
+          creationOperationId: OTHER_CREATE_OPERATION_ID,
+        },
+        secondPayload
+      )
+    ).rejects.toMatchObject({ code: "internal_configuration_invalid" });
+    expect(Array.from(secondPayload)).toEqual(
+      Array(SECRET_CANARY.length).fill(0)
+    );
+  });
+});
+
+describe("EncryptedConnectionStore idempotency, lineage, and concurrency", () => {
+  it("requires same-operation create retries to contain identical bytes", async () => {
+    const { persistence, store } = createFixture({ seed: 100 });
+    const first = await storeText(store, "first");
+    const firstRecord = persistence.record;
+    const retry = await storeText(store, "first");
     expect(retry).toMatchObject({
       status: "already_created",
       recordRevision: first.recordRevision,
     });
     expect(persistence.record).toBe(firstRecord);
-    await expect(
-      store.store(
-        { ...MUTATION, operationId: OTHER_OPERATION_ID },
-        Buffer.from("replacement")
-      )
-    ).rejects.toMatchObject({ code: "credential_already_exists" });
+
+    await expect(storeText(store, "different")).rejects.toMatchObject({
+      code: "credential_already_exists",
+      message: "Credential record already exists",
+    });
   });
 
-  it("atomically resolves concurrent same-operation creates to one record", async () => {
+  it("resolves concurrent same-operation creates only when payloads match", async () => {
     const persistence = new MemoryPersistence();
-    const first = createFixture({ persistence, seed: 50 }).store;
-    const second = createFixture({ persistence, seed: 60 }).store;
-
-    const results = await Promise.all([
-      first.store(MUTATION, Buffer.from("one")),
-      second.store(MUTATION, Buffer.from("two")),
+    const first = createFixture({ persistence, seed: 110 }).store;
+    const second = createFixture({ persistence, seed: 120 }).store;
+    const sameResults = await Promise.all([
+      storeText(first, "same"),
+      storeText(second, "same"),
     ]);
-    expect(results.map((result) => result.status).sort()).toEqual([
+    expect(sameResults.map((result) => result.status).sort()).toEqual([
       "already_created",
       "created",
     ]);
-    expect(results[0].recordRevision).toBe(results[1].recordRevision);
-  });
 
-  it("treats a concurrent successful rotation as an idempotent outcome", async () => {
-    const persistence = new MemoryPersistence();
-    await createFixture({
-      persistence,
-      current: PREVIOUS_KEY,
-      seed: 70,
-    }).store.store(MUTATION, Buffer.from(SECRET_CANARY));
+    const collisionPersistence = new MemoryPersistence();
     const winner = createFixture({
-      persistence: new MemoryPersistence(),
-      current: CURRENT_KEY,
-      seed: 80,
-    });
-    await winner.store.store(MUTATION, Buffer.from(SECRET_CANARY));
-    const winnerRecord = winner.persistence.record as StoredCredentialEnvelope;
-    persistence.beforeReplace = () =>
-      persistence.replaceOutOfBand(winnerRecord);
-    const rotating = createFixture({
-      persistence,
-      current: CURRENT_KEY,
-      previous: PREVIOUS_KEY,
-      seed: 90,
+      persistence: collisionPersistence,
+      seed: 130,
     }).store;
-
-    await expect(rotating.rotate(MUTATION)).resolves.toMatchObject({
-      status: "already_current",
-      recordRevision: winnerRecord.recordRevision,
-    });
+    const loser = createFixture({
+      persistence: collisionPersistence,
+      seed: 140,
+    }).store;
+    const collisions = await Promise.allSettled([
+      storeText(winner, "one"),
+      storeText(loser, "two"),
+    ]);
+    expect(
+      collisions.filter((result) => result.status === "fulfilled")
+    ).toHaveLength(1);
+    expect(
+      collisions.filter((result) => result.status === "rejected")
+    ).toHaveLength(1);
+    expect(
+      (
+        collisions.find(
+          (result) => result.status === "rejected"
+        ) as PromiseRejectedResult
+      ).reason
+    ).toMatchObject({ code: "credential_already_exists" });
   });
 
-  it("rejects a concurrent non-rotation replacement", async () => {
+  it("preserves immutable create lineage through rotation and restarts", async () => {
     const persistence = new MemoryPersistence();
     await createFixture({
       persistence,
-      current: PREVIOUS_KEY,
-      seed: 100,
-    }).store.store(MUTATION, Buffer.from(SECRET_CANARY));
-    const competingRecord = Object.freeze({
-      ...(persistence.record as StoredCredentialEnvelope),
-      recordRevision: "revision_v1_00000000-0000-4000-8000-000000000088",
-    });
-    persistence.beforeReplace = () =>
-      persistence.replaceOutOfBand(competingRecord);
+      current: PREVIOUS_KEK,
+      seed: 150,
+    }).store.store(CREATE_MUTATION, Buffer.from(SECRET_CANARY));
     const rotating = createFixture({
       persistence,
-      current: CURRENT_KEY,
-      previous: PREVIOUS_KEY,
-      seed: 110,
+      current: CURRENT_KEK,
+      previous: PREVIOUS_KEK,
+      seed: 160,
+    }).store;
+    await expect(rotating.rotate(ROTATION_MUTATION)).resolves.toMatchObject({
+      status: "rotated",
+    });
+    expect(persistence.record).toMatchObject({
+      creationOperationId: CREATE_OPERATION_ID,
+      lastRotationOperationId: ROTATION_OPERATION_ID,
+      rotationSequence: 1,
+      keyVersion: CURRENT_KEK.keyVersion,
+    });
+
+    const restarted = createFixture({
+      persistence,
+      current: CURRENT_KEK,
+      previous: PREVIOUS_KEK,
+      seed: 170,
+    }).store;
+    await expect(
+      restarted.store(CREATE_MUTATION, Buffer.from(SECRET_CANARY))
+    ).resolves.toMatchObject({ status: "already_created" });
+    await expect(
+      restarted.store(CREATE_MUTATION, Buffer.from("different"))
+    ).rejects.toMatchObject({ code: "credential_already_exists" });
+  });
+
+  it("rejects reuse of the creation identity as a rotation identity", async () => {
+    const persistence = new MemoryPersistence();
+    await createFixture({
+      persistence,
+      current: PREVIOUS_KEK,
+      seed: 175,
+    }).store.store(CREATE_MUTATION, Buffer.from(SECRET_CANARY));
+    const rotating = createFixture({
+      persistence,
+      current: CURRENT_KEK,
+      previous: PREVIOUS_KEK,
+      seed: 176,
     }).store;
 
-    await expect(rotating.rotate(MUTATION)).rejects.toMatchObject({
+    await expect(
+      rotating.rotate({
+        ...IDENTITY,
+        rotationOperationId: CREATE_OPERATION_ID,
+      })
+    ).rejects.toMatchObject({ code: "invalid_input" });
+  });
+
+  it("treats a concurrent equivalent rotation as idempotent", async () => {
+    const persistence = new MemoryPersistence();
+    await createFixture({
+      persistence,
+      current: PREVIOUS_KEK,
+      seed: 180,
+    }).store.store(CREATE_MUTATION, Buffer.from(SECRET_CANARY));
+    const winnerPersistence = new MemoryPersistence();
+    await createFixture({
+      persistence: winnerPersistence,
+      seed: 190,
+    }).store.store(CREATE_MUTATION, Buffer.from(SECRET_CANARY));
+    const winner = winnerPersistence.record as StoredCredentialEnvelope;
+    persistence.beforeReplace = () => persistence.replaceOutOfBand(winner);
+    const rotating = createFixture({
+      persistence,
+      current: CURRENT_KEK,
+      previous: PREVIOUS_KEK,
+      seed: 200,
+    }).store;
+
+    await expect(rotating.rotate(ROTATION_MUTATION)).resolves.toMatchObject({
+      status: "already_current",
+      recordRevision: winner.recordRevision,
+    });
+  });
+
+  it("rejects a concurrent current-key record with different payload", async () => {
+    const persistence = new MemoryPersistence();
+    await createFixture({
+      persistence,
+      current: PREVIOUS_KEK,
+      seed: 210,
+    }).store.store(CREATE_MUTATION, Buffer.from(SECRET_CANARY));
+    const competingPersistence = new MemoryPersistence();
+    await createFixture({
+      persistence: competingPersistence,
+      seed: 220,
+    }).store.store(CREATE_MUTATION, Buffer.from("different"));
+    persistence.beforeReplace = () =>
+      persistence.replaceOutOfBand(
+        competingPersistence.record as StoredCredentialEnvelope
+      );
+    const rotating = createFixture({
+      persistence,
+      current: CURRENT_KEK,
+      previous: PREVIOUS_KEK,
+      seed: 230,
+    }).store;
+
+    await expect(rotating.rotate(ROTATION_MUTATION)).rejects.toMatchObject({
       code: "concurrent_modification",
     });
   });
 
-  it("deletes idempotently and never deletes a concurrently replaced record", async () => {
-    const { persistence, store } = createFixture();
-    await store.store(MUTATION, Buffer.from(SECRET_CANARY));
+  it("deletes idempotently and never deletes a concurrent replacement", async () => {
+    const { persistence, store } = createFixture({ seed: 240 });
+    await storeText(store);
     await expect(store.delete(IDENTITY)).resolves.toEqual({
       status: "deleted",
     });
@@ -467,63 +747,172 @@ describe("EncryptedConnectionStore", () => {
     });
 
     await store.store(
-      { ...MUTATION, operationId: OTHER_OPERATION_ID },
+      {
+        ...CREATE_MUTATION,
+        creationOperationId: OTHER_CREATE_OPERATION_ID,
+      },
       Buffer.from(SECRET_CANARY)
     );
-    const replacement = Object.freeze({
-      ...(persistence.record as StoredCredentialEnvelope),
-      recordRevision: "revision_v1_00000000-0000-4000-8000-000000000077",
-    });
+    const replacement = patchRecord(
+      persistence.record as StoredCredentialEnvelope,
+      {
+        recordRevision: "revision_v1_00000000-0000-4000-8000-000000000077",
+      }
+    );
     persistence.beforeDelete = () => persistence.replaceOutOfBand(replacement);
     await expect(store.delete(IDENTITY)).rejects.toMatchObject({
       code: "concurrent_modification",
     });
     expect(persistence.record).toBe(replacement);
   });
+});
 
-  it("strictly rejects oversized, empty, extended, and malformed inputs", async () => {
+describe("EncryptedConnectionStore closed snapshots and errors", () => {
+  it("rejects accessors, proxies, symbols, hidden fields, and extensions", async () => {
+    let getterCalls = 0;
+    const accessor = { ...CREATE_MUTATION } as Record<string, unknown>;
+    Object.defineProperty(accessor, "creationOperationId", {
+      enumerable: true,
+      get: () => {
+        getterCalls += 1;
+        return getterCalls === 1 ? CREATE_OPERATION_ID : SECRET_CANARY;
+      },
+    });
+    const symbol = Object.assign(
+      { ...CREATE_MUTATION },
+      { [Symbol("secret")]: SECRET_CANARY }
+    );
+    const hidden = { ...CREATE_MUTATION };
+    Object.defineProperty(hidden, "hidden", {
+      enumerable: false,
+      value: SECRET_CANARY,
+    });
+    const inputs = [
+      accessor,
+      new Proxy({ ...CREATE_MUTATION }, {}),
+      symbol,
+      hidden,
+      { ...CREATE_MUTATION, token: SECRET_CANARY },
+      {
+        ...CREATE_MUTATION,
+        creationOperationId: `mutation_v1_${"a".repeat(4_096)}`,
+      },
+    ];
+
+    for (const input of inputs) {
+      const { store } = createFixture();
+      await expect(
+        store.store(input as CredentialCreateMutation, Buffer.from("x"))
+      ).rejects.toMatchObject({ code: "invalid_input" });
+    }
+    expect(getterCalls).toBe(0);
+  });
+
+  it("rejects non-Buffer, empty, and oversized transferred payloads", async () => {
     const { store } = createFixture();
-    await expect(store.store(MUTATION, new Uint8Array())).rejects.toMatchObject(
+    await expect(
+      store.store(CREATE_MUTATION, new Uint8Array([1]) as unknown as Buffer)
+    ).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(
+      store.store(CREATE_MUTATION, Buffer.alloc(0))
+    ).rejects.toMatchObject({
+      code: "invalid_input",
+    });
+    const oversized = Buffer.alloc(MAX_CREDENTIAL_BYTES + 1, 1);
+    await expect(store.store(CREATE_MUTATION, oversized)).rejects.toMatchObject(
       {
         code: "invalid_input",
       }
     );
-    await expect(
-      store.store(MUTATION, new Uint8Array(MAX_CREDENTIAL_BYTES + 1))
-    ).rejects.toMatchObject({ code: "invalid_input" });
-    await expect(
-      store.store(
-        { ...MUTATION, token: SECRET_CANARY } as CredentialMutation,
-        Buffer.from("x")
-      )
-    ).rejects.toMatchObject({ code: "invalid_input" });
-    await expect(
-      store.store({ ...MUTATION, ownerId: "user_short" }, Buffer.from("x"))
-    ).rejects.toMatchObject({ code: "invalid_input" });
   });
 
-  it("rejects malformed and extended persistence records before decryption", async () => {
-    for (const patch of [
-      { ciphertext: "not+padded=" },
-      { nonce: "A" },
-      { authTag: "A" },
-      { envelopeVersion: 2 },
-      { extra: SECRET_CANARY },
+  it("snapshots adapter records and rejects accessors, proxies, and extras", async () => {
+    let getterCalls = 0;
+    for (const mutate of [
+      (record: StoredCredentialEnvelope) => {
+        const accessor = { ...record } as Record<string, unknown>;
+        Object.defineProperty(accessor, "creationOperationId", {
+          enumerable: true,
+          get: () => {
+            getterCalls += 1;
+            return getterCalls === 1 ? CREATE_OPERATION_ID : SECRET_CANARY;
+          },
+        });
+        return accessor;
+      },
+      (record: StoredCredentialEnvelope) => new Proxy({ ...record }, {}),
+      (record: StoredCredentialEnvelope) => ({
+        ...record,
+        token: SECRET_CANARY,
+      }),
+      (record: StoredCredentialEnvelope) => {
+        const hidden = { ...record };
+        Object.defineProperty(hidden, "hidden", {
+          enumerable: false,
+          value: SECRET_CANARY,
+        });
+        return hidden;
+      },
     ]) {
-      const { persistence, store } = createFixture();
-      await store.store(MUTATION, Buffer.from(SECRET_CANARY));
-      persistence.record = {
-        ...persistence.record,
-        ...patch,
-      } as unknown as StoredCredentialEnvelope;
+      const { persistence, store } = createFixture({ seed: 250 });
+      await storeText(store);
+      persistence.record = mutate(
+        persistence.record as StoredCredentialEnvelope
+      ) as StoredCredentialEnvelope;
       await expect(store.use(IDENTITY, () => undefined)).rejects.toMatchObject({
         code: "invalid_record",
         message: "Credential record is invalid",
       });
     }
+    expect(getterCalls).toBe(0);
   });
 
-  it("normalizes persistence failures without reflecting secret data", async () => {
+  it("rejects malformed and over-bounds persisted fields", async () => {
+    for (const patch of [
+      { ciphertext: "not+padded=" },
+      { payloadNonce: "A" },
+      { wrappedDataKey: "A" },
+      { ciphertext: "A".repeat(1_398_103) },
+      { rotationSequence: 65_536 },
+      { envelopeVersion: 2 },
+    ]) {
+      const { persistence, store } = createFixture({ seed: 260 });
+      await storeText(store);
+      persistence.record = patchRecord(
+        persistence.record as StoredCredentialEnvelope,
+        patch as Partial<StoredCredentialEnvelope>
+      );
+      await expect(store.use(IDENTITY, () => undefined)).rejects.toMatchObject({
+        code: "invalid_record",
+      });
+    }
+  });
+
+  it("rejects proxy and accessor persistence outcomes without invoking getters", async () => {
+    let getterCalls = 0;
+    for (const result of [
+      new Proxy({ status: "created" }, {}),
+      Object.defineProperty({}, "status", {
+        enumerable: true,
+        get: () => {
+          getterCalls += 1;
+          return "created";
+        },
+      }),
+      { status: "created", extension: SECRET_CANARY },
+    ]) {
+      const persistence = new MemoryPersistence();
+      persistence.createImplementation = async () =>
+        result as unknown as CreateCredentialResult;
+      const { store } = createFixture({ persistence });
+      await expect(storeText(store)).rejects.toMatchObject({
+        code: "persistence_unavailable",
+      });
+    }
+    expect(getterCalls).toBe(0);
+  });
+
+  it("normalizes adapter and random-source failures without reflecting secrets", async () => {
     const persistence: EncryptedCredentialPersistence = {
       read: async () => {
         throw new Error(SECRET_CANARY);
@@ -540,14 +929,13 @@ describe("EncryptedConnectionStore", () => {
     };
     const store = new EncryptedConnectionStore(
       persistence,
-      { current: CURRENT_KEY },
-      createRandomSource()
+      { current: CURRENT_KEK },
+      randomSourceContract(new TestRandomSource())
     );
-
     for (const operation of [
-      () => store.store(MUTATION, Buffer.from(SECRET_CANARY)),
+      () => store.store(CREATE_MUTATION, Buffer.from(SECRET_CANARY)),
       () => store.use(IDENTITY, () => undefined),
-      () => store.rotate(MUTATION),
+      () => store.rotate(ROTATION_MUTATION),
       () => store.delete(IDENTITY),
     ]) {
       const error = await operation().catch((reason: unknown) => reason);
@@ -558,47 +946,27 @@ describe("EncryptedConnectionStore", () => {
       });
       expect(String(error)).not.toContain(SECRET_CANARY);
     }
-  });
 
-  it("normalizes invalid or failing randomness without reflecting details", async () => {
-    for (const randomSource of [
-      {
-        nonce: () => {
-          throw new Error(SECRET_CANARY);
-        },
-        recordRevision: () =>
-          "revision_v1_00000000-0000-4000-8000-000000000001",
+    const failingRandomSource: CredentialRandomSource = Object.freeze({
+      dataKey: () => {
+        throw new Error(SECRET_CANARY);
       },
-      {
-        nonce: () => new Uint8Array(11),
-        recordRevision: () => SECRET_CANARY,
-      },
-    ]) {
-      const store = new EncryptedConnectionStore(
-        new MemoryPersistence(),
-        { current: CURRENT_KEY },
-        randomSource
-      );
-      const error = await store
-        .store(MUTATION, Buffer.from(SECRET_CANARY))
-        .catch((reason: unknown) => reason);
-      expect(error).toMatchObject({
-        code: "internal_configuration_invalid",
-        message: "Credential store configuration is invalid",
-      });
-      expect(String(error)).not.toContain(SECRET_CANARY);
-    }
-  });
-
-  it("fails closed on malformed adapter results", async () => {
-    const { persistence, store } = createFixture();
-    persistence.create = async () =>
-      ({
-        status: "created",
-        extension: true,
-      }) as unknown as CreateCredentialResult;
-    await expect(
-      store.store(MUTATION, Buffer.from(SECRET_CANARY))
-    ).rejects.toMatchObject({ code: "persistence_unavailable" });
+      payloadNonce: () => Buffer.alloc(12, 1),
+      wrapNonce: () => Buffer.alloc(12, 2),
+      recordRevision: () => "revision_v1_00000000-0000-4000-8000-000000000001",
+    });
+    const randomStore = new EncryptedConnectionStore(
+      new MemoryPersistence(),
+      { current: CURRENT_KEK },
+      failingRandomSource
+    );
+    const error = await randomStore
+      .store(CREATE_MUTATION, Buffer.from(SECRET_CANARY))
+      .catch((reason: unknown) => reason);
+    expect(error).toMatchObject({
+      code: "internal_configuration_invalid",
+      message: "Credential store configuration is invalid",
+    });
+    expect(String(error)).not.toContain(SECRET_CANARY);
   });
 });

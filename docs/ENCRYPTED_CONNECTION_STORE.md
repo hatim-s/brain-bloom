@@ -10,51 +10,91 @@ connection, and does not acquire or use a real credential.
 ```text
 provider-owned bytes
         |
+        | transfer ownership
         v
- bounded temporary copy -- clear --> AES-256-GCM
-                                      |       ^
- canonical AAD -----------------------+       |
-                                              |
- encrypted v1 envelope -> atomic persistence-+
+ fresh random DEK -> AES-256-GCM payload -> ciphertext + tag
+        |                    ^
+        |                    +-- canonical payload AAD
+        v
+ current versioned KEK -> AES-256-GCM wrap -> wrapped DEK + tag
+                                      ^
+                                      +-- canonical wrap AAD
+        |
+        +-- clear payload, DEK, and random buffers before any await
+        v
+ encrypted v1 envelope -> atomic persistence
       create-if-absent / CAS replace / CAS delete
 
- read -> strict envelope validation -> current|previous key -> decrypt
-                                                          -> callback -> clear
+ read -> strict snapshot/validation -> current|previous KEK -> unwrap DEK
+                                                              -> decrypt
+                                                              -> callback
+                                                              -> clear
 ```
 
 `EncryptedConnectionStore` accepts three injected capabilities:
 
 1. An atomic `EncryptedCredentialPersistence` implementation.
-2. One current 256-bit Node secret `KeyObject` and, during rotation, at most one
-   previous key.
-3. A nonce/revision source. The default uses Node's cryptographic randomness;
-   deterministic sources exist only for tests.
+2. One current 256-bit Node secret key-encryption key (KEK) `KeyObject` and,
+   during rotation, at most one previous KEK.
+3. A DEK/nonce/revision source. The default uses Node's cryptographic
+   randomness. The injected form exists to test fail-closed randomness paths;
+   a production host must use the default and must not supply a deterministic
+   implementation.
 
-The contract never asks a key to export its bytes. Plaintext is copied into a
-bounded temporary buffer for encryption and cleared in `finally`. Decryption is
-available only inside `use`'s callback lifetime; that buffer is also cleared in
-`finally`. A callback must not retain an alias and must clear any copy it makes.
+The KEK never encrypts credential bytes directly and the contract never exports
+it. A fresh 256-bit data-encryption key (DEK) encrypts each credential; the KEK
+wraps only that DEK. Passing a credential `Buffer` to `store` transfers
+ownership: the caller must not retain or reuse it, and the same buffer is
+cleared synchronously after encryption and before persistence is called. The
+DEK and nonce buffers are cleared on the same boundary. Decryption is available
+only inside `use`'s callback lifetime and is cleared in `finally`; a callback
+must not retain an alias and must clear any copy it creates.
 
 ## Versioned envelope and authenticated metadata
 
-Envelope version 1 uses AES-256-GCM with a 96-bit nonce and 128-bit tag. It
-persists ciphertext plus closed scalar metadata. Canonical AAD authenticates:
+Envelope version 1 uses independent AES-256-GCM invocations with 96-bit nonces
+and 128-bit tags for the payload and DEK wrap. It persists ciphertext, the
+wrapped DEK, and closed scalar metadata. Both canonical AAD layers authenticate:
 
 - envelope and algorithm version;
 - exact owner id;
 - provider (`codex` only in this phase);
 - gateway credential id;
 - provider-owned credential format version;
-- encryption key version;
-- mutation id; and
+- KEK version;
+- immutable creation operation id;
+- rotation sequence and optional last rotation operation id; and
 - record revision.
+
+The wrap layer additionally authenticates the payload nonce, authentication
+tag, and ciphertext digest. This prevents a wrapped DEK from being spliced onto
+a different payload envelope.
 
 Every object is exact-key validated. IDs, versions, nonce, tag, ciphertext, and
 plaintext have fixed or explicit upper bounds. Equivalent padded or malformed
-base64url encodings, custom prototypes, symbols, omitted fields, and extension
-fields fail closed. Store-generated errors use a closed code/message set and do
-not include adapter failures, ciphertext, plaintext, identifiers, or provider
-details.
+base64url encodings, custom prototypes, proxies, accessors, symbols, hidden or
+omitted fields, and extension fields fail closed. Inputs, records, and adapter
+outcomes are read once from data descriptors into fresh frozen plain snapshots;
+untrusted objects are never spread or read again after validation.
+Store-generated errors use a closed code/message set and do not include adapter
+failures, ciphertext, plaintext, identifiers, or provider details.
+
+## Randomness and invocation bounds
+
+The production default uses Node's CSPRNG for every DEK and nonce. All-zero
+material and a duplicate payload/wrap nonce within one envelope are rejected.
+The store retains bounded in-memory fingerprints to reject a repeated DEK or a
+repeated wrap nonce under its current KEK, and permits at most 65,536 KEK-wrap
+encryptions per store instance. Failed attempts consume their material rather
+than making it reusable. A payload-nonce repeat across records is harmless only
+because every record has a unique DEK and therefore a separate nonce domain.
+
+The in-memory ledger cannot prove uniqueness across independent processes or a
+restart. A production host must allocate the fleet's invocation budget, prevent
+simultaneous uncoordinated use of one KEK, and rotate before any instance or
+fleet budget is exhausted. The final persistent topology and KEK policy are
+human gates; until they enforce this invariant, this contract must not be used
+with production credentials.
 
 ## Atomicity and idempotency
 
@@ -65,10 +105,12 @@ The persistence adapter owns the actual transaction mechanism. It must provide:
 - atomic delete only when `recordRevision` still matches.
 
 Create retries are idempotent only when the existing authenticated record has
-the same mutation id. A different mutation cannot overwrite a credential.
-Delete is idempotent when the record is absent, but refuses to delete a record
-that changed after the read. These rules prevent a stale operation from
-overwriting or deleting a concurrent winner.
+the same immutable creation operation id and exact credential bytes. Payloads
+are compared through short-lived SHA-256 digests using a constant-time compare;
+both decrypted payloads and digests are cleared synchronously. A same-id,
+different-payload collision is a stable conflict with no write. A different
+creation operation cannot overwrite a credential. Delete is idempotent when the
+record is absent, but refuses to delete a record that changed after the read.
 
 ## Rotation
 
@@ -76,15 +118,19 @@ Normal reads accept the current key and the explicitly configured previous key.
 No other key version is tried. Rotation follows this sequence:
 
 ```text
-read previous-key record -> authenticate/decrypt -> encrypt with current key
-                           -> CAS old revision -> clear plaintext
+read previous-KEK record -> unwrap/decrypt -> fresh DEK + current KEK wrap
+                          -> clear plaintext/DEK -> CAS old revision
 ```
 
-A current-key record is an authenticated no-op. If a concurrent writer already
-completed the same transition, its current-key envelope is authenticated and
-accepted as the idempotent outcome. Any other CAS conflict fails closed. The
-previous key can be removed only after every retained envelope has been
-re-encrypted and that fact has been independently verified.
+A record preserves `creationOperationId` forever. Rotation has a separate
+`lastRotationOperationId` and monotonic bounded sequence, so a delayed create
+retry remains valid after re-encryption or restart. Reusing the creation id as a
+rotation id is rejected. A current-KEK record is an
+authenticated no-op. If a concurrent writer completed the same payload
+transition, its current-KEK envelope is authenticated and accepted; a changed
+payload or other CAS conflict fails closed. Current and previous labels cannot
+refer to equal key material. The previous KEK can be removed only after every
+retained envelope has been re-encrypted and independently verified.
 
 ## Human-gated production work
 
