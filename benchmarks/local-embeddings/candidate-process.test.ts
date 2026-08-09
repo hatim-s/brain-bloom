@@ -114,4 +114,27 @@ describe("isolated candidate process lifecycle", () => {
     await expect(pending).resolves.toBe(result);
     expect(terminateTree).toHaveBeenCalledTimes(2);
   });
+
+  it("starts the candidate child with the constrained VM module boundary", async () => {
+    const child = createFakeChild();
+    const forkCandidate = vi.fn(() => child);
+    const pending = executeCandidateProcess(request, {
+      forkCandidate,
+      terminateTree: vi.fn(),
+    });
+    child.emit("message", { ok: true, result });
+    await pending;
+
+    expect(forkCandidate).toHaveBeenCalledWith(
+      expect.any(String),
+      [],
+      expect.objectContaining({
+        execArgv: [
+          "--experimental-strip-types",
+          "--experimental-vm-modules",
+          "--disallow-code-generation-from-strings",
+        ],
+      })
+    );
+  });
 });

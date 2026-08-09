@@ -32,9 +32,9 @@ configuration. Both files have reviewed SHA-256 pins and hard byte/file/depth
 limits. The harness rejects symlink roots, ancestors and entries, verifies the
 module bytes and manifest bytes before execution, parses the verified manifest
 buffer, derives adapter/runtime/preprocessing identity from it, then repeats
-verification inside the candidate child. The child imports an immutable data
-URL made from those exact verified module bytes instead of reopening the mutable
-pathname. A mismatch prevents both module import and factory creation.
+verification inside the candidate child. The child constructs its VM module
+directly from those exact verified bytes instead of reopening the mutable
+pathname. A mismatch prevents both module evaluation and factory creation.
 
 Adapter artifacts use the versioned `self-contained-esm-bundle/v1` contract.
 Produce exactly one JavaScript ESM `.mjs` bundle that includes the adapter,
@@ -51,19 +51,36 @@ bundle contract. For example:
 {
   "bundle": {
     "format": "self-contained-esm-bundle/v1",
+    "executionBoundary": "node-vm-source-text-module/v1",
     "allowedNodeBuiltins": ["node:crypto"]
   }
 }
 ```
 
-The verified bundle may use only static imports of the explicitly declared
-`node:` built-ins. Relative, absolute, `file:`, and bare-package imports,
-`require()`, and dynamic `import()` are rejected from the parsed verified bytes
-before factory creation. `node:module` is not supported because it could reopen
-unverified filesystem code. A bundle with no built-in imports should declare an
-empty list. This dependency check closes the verified module graph; it is not a
-sandbox for an otherwise untrusted adapter, so maintainers must still review the
-pinned bundle source and provenance.
+The candidate child evaluates the verified bundle in a fresh
+`vm.SourceTextModule` context with a custom linker. The context has no ambient
+`process`, `global`, `require`, filesystem, package loader, network, or host
+objects. String and WebAssembly code generation are disabled, so direct and
+computed `eval`, `Function` constructors, and constructor-chain evaluators
+cannot recreate those capabilities. Candidate/options and embedding results
+cross the context as JSON text, preventing their constructors from becoming a
+host escape. The existing finite child deadline and process-tree cleanup bound
+non-responsive bundle execution. The candidate subprocess also starts with
+Node's process-wide string-code-generation denial as defense in depth.
+
+The verified bundle may use only static imports of explicitly declared audited
+capabilities. Contract v1 supports `node:crypto` through a context-native,
+bounded facade that exposes SHA-256 `createHash()` for UTF-8 strings and hex
+digests; it does not expose Node's host crypto functions. Relative, absolute,
+`file:`, bare-package, other `node:` imports, `require()`, and dynamic `import()`
+are rejected before factory creation and again by custom linkage. In particular,
+`node:module`, `process.getBuiltinModule()`, and `createRequire()` are
+unavailable. A bundle with no capability imports should declare an empty list.
+Contract v1 intentionally provides no filesystem capability: model/cache bytes
+must not be opened by adapter code until a separately reviewed, confined cache
+capability is designed. Maintainers must still review the pinned bundle source
+and provenance; resource limits and semantic trust are distinct from module
+graph closure.
 
 The verified bundle must export a named `createEmbeddingAdapterFactory()`. Its
 adapter implements an explicit `load()` phase and accepts `"query"` or

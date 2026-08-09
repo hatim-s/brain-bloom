@@ -49,6 +49,8 @@ export default defineConfig({
   ],
   test: {
     environment: "node",
+    // Adapter security tests exercise the same Node VM boundary as candidate children.
+    execArgv: ["--experimental-vm-modules"],
     include: ["**/*.test.ts", "**/*.test.tsx"],
     exclude: [...configDefaults.exclude, "**/.next/**", "**/dist/**"],
     coverage: { provider: "v8", reporter: ["text", "html"] },

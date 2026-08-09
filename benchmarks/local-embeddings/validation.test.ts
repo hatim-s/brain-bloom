@@ -26,6 +26,7 @@ const validCandidate: EmbeddingCandidate = {
     manifestChecksum: `sha256:${"f".repeat(64)}`,
     bundle: {
       format: "self-contained-esm-bundle/v1",
+      executionBoundary: "node-vm-source-text-module/v1",
       allowedNodeBuiltins: [],
     },
   },
@@ -50,6 +51,7 @@ const validBudgets = {
 
 /** Creates a complete two-candidate configuration for focused schema tests. */
 function createConfiguration(): CandidateConfiguration {
+  const candidateA = structuredClone(validCandidate);
   return {
     schemaVersion: 1,
     budgets: validBudgets,
@@ -57,9 +59,9 @@ function createConfiguration(): CandidateConfiguration {
     adapterLimits: { maxBytes: 1_000, maxFiles: 4, maxDepth: 2 },
     measurement: { warmQueryPasses: 2, candidateTimeoutMs: 1000 },
     candidates: [
-      validCandidate,
+      candidateA,
       {
-        ...validCandidate,
+        ...structuredClone(validCandidate),
         key: "candidate-b",
         modelId: "local/candidate-b",
         revision: "e".repeat(40),
@@ -134,6 +136,15 @@ describe("embedding candidate runtime validation", () => {
     expect(() => validateCandidateConfiguration(moduleEscape)).toThrow(
       /unsupported/
     );
+  });
+
+  it("requires the versioned VM execution boundary", () => {
+    const configuration = createConfiguration();
+    const candidate = configuration.candidates[0] as unknown as {
+      adapter: { bundle: { executionBoundary: string } };
+    };
+    candidate.adapter.bundle.executionBoundary = "ambient-data-module/v0";
+    expect(() => validateCandidateConfiguration(configuration)).toThrow();
   });
 });
 

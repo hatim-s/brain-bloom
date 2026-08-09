@@ -1,8 +1,8 @@
-import { isBuiltin } from "node:module";
 import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
 
+import { isSupportedAdapterNodeBuiltin } from "./adapter-contract.ts";
 import { INTEGRITY_SCENARIOS } from "./integrity.ts";
 import { validateRelativePath } from "./paths.ts";
 import type {
@@ -44,6 +44,7 @@ const safePathSchema = nonEmptyString.refine(isSafeRelativePath, {
 });
 const adapterBundleSchema = z.strictObject({
   format: z.literal("self-contained-esm-bundle/v1"),
+  executionBoundary: z.literal("node-vm-source-text-module/v1"),
   allowedNodeBuiltins: z.array(z.string().regex(/^node:[a-z0-9_/-]+$/)).max(32),
 });
 const adapterIdentitySchema = z.strictObject({
@@ -319,7 +320,7 @@ function validateCandidateConfiguration(
         `Adapter bundle builtins must be unique for ${candidate.key}`
       );
     for (const specifier of builtins)
-      if (!isBuiltin(specifier) || specifier === "node:module")
+      if (!isSupportedAdapterNodeBuiltin(specifier))
         throw new Error(
           `Adapter bundle builtin is unsupported for ${candidate.key}: ${specifier}`
         );

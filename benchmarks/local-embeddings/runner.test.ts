@@ -55,6 +55,7 @@ const configuration: CandidateConfiguration = {
       manifestChecksum,
       bundle: {
         format: "self-contained-esm-bundle/v1",
+        executionBoundary: "node-vm-source-text-module/v1",
         allowedNodeBuiltins: [],
       },
     },
@@ -596,7 +597,9 @@ describe("local embedding benchmark runner", () => {
     const second = await runBenchmarkIsolated(options);
     expect(createJsonReport(first)).toBe(createJsonReport(second));
     expect(first.results.every((result) => result.integrity.passed)).toBe(true);
-    expect(createMarkdownReport(first)).toContain("Decision: **not selected**");
+    const markdown = createMarkdownReport(first);
+    expect(markdown).toContain("Decision: **not selected**");
+    expect(markdown).toContain("node-vm-source-text-module/v1");
     expect(() =>
       validateBenchmarkReport({
         ...first,

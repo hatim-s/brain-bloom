@@ -22,14 +22,37 @@ class EmbeddedTokenizer {
 const tokenizer = new EmbeddedTokenizer();
 const runtimeDigest = createHash("sha256").update("embedded-runtime-v1").digest("hex");
 export const createEmbeddingAdapterFactory = () => ({
-  marker: "verified",
-  runtimeDigest,
-  tokenize: (input) => tokenizer.tokenize(input),
+  async create() {
+    return {
+      identity: {
+        adapter: { id: "adapter", version: "1.0.0", revision: "${"a".repeat(40)}" },
+        runtime: { id: "runtime", version: "1.0.0" },
+        preprocessing: {
+          id: "prep", version: "1.0.0", pooling: "mean", normalize: true,
+          queryPrefix: "query: ", documentPrefix: "document: "
+        }
+      },
+      async load() {},
+      async embed(texts, role) {
+        return texts.map((text) => [
+          tokenizer.tokenize(text).length,
+          role === "query" ? 1 : 2,
+          Number.parseInt(runtimeDigest.slice(0, 2), 16)
+        ]);
+      }
+    };
+  }
 });
 `;
 const bundleContract = {
   format: "self-contained-esm-bundle/v1" as const,
+  executionBoundary: "node-vm-source-text-module/v1" as const,
   allowedNodeBuiltins: ["node:crypto"],
+};
+const emptyBundleContract = {
+  format: "self-contained-esm-bundle/v1" as const,
+  executionBoundary: "node-vm-source-text-module/v1" as const,
+  allowedNodeBuiltins: [],
 };
 
 /** Creates two candidates pinned to the same module and distinct signed manifests. */
@@ -150,16 +173,22 @@ describe("adapter artifact verification", () => {
       preflight.verified.bundle
     );
 
-    const bundledFactory = factory as unknown as {
-      marker: string;
-      runtimeDigest: string;
-      tokenize(input: string): string[];
-    };
-    expect(bundledFactory.marker).toBe("verified");
-    expect(bundledFactory.runtimeDigest).toBe(
-      createHash("sha256").update("embedded-runtime-v1").digest("hex")
+    const adapter = await factory.create(fixture.configuration.candidates[0], {
+      allowDownloads: false,
+      offlineCachePath: "/verified/cache",
+    });
+    await adapter.load();
+    const digestPrefix = Number.parseInt(
+      createHash("sha256")
+        .update("embedded-runtime-v1")
+        .digest("hex")
+        .slice(0, 2),
+      16
     );
-    expect(bundledFactory.tokenize("alpha  beta")).toEqual(["alpha", "beta"]);
+    expect(await adapter.embed(["alpha  beta"], "query")).toEqual([
+      [2, 1, digestPrefix],
+    ]);
+    expect(adapter.identity.adapter.id).toBe("adapter");
     await expect(
       preflightAdapterArtifacts({
         ...fixture,
@@ -178,6 +207,14 @@ describe("adapter artifact verification", () => {
       /import "\.\/tokenizer\.js" is forbidden/,
     ],
     [
+      'import runtime from "file:///tmp/runtime.mjs"; export const createEmbeddingAdapterFactory = () => ({ runtime });',
+      /import "file:\/\/\/tmp\/runtime\.mjs" is forbidden/,
+    ],
+    [
+      'import { readFile } from "node:fs"; export const createEmbeddingAdapterFactory = () => ({ readFile });',
+      /builtin "node:fs" is unsupported/,
+    ],
+    [
       'const runtime = require("onnxruntime-node"); export const createEmbeddingAdapterFactory = () => ({ runtime });',
       /require\(\) is forbidden/,
     ],
@@ -189,10 +226,11 @@ describe("adapter artifact verification", () => {
     "rejects an unbundled dependency before module execution",
     async (source, error) => {
       await expect(
-        loadVerifiedAdapterFactory(Buffer.from(source), sha256(source), {
-          format: "self-contained-esm-bundle/v1",
-          allowedNodeBuiltins: [],
-        })
+        loadVerifiedAdapterFactory(
+          Buffer.from(source),
+          sha256(source),
+          emptyBundleContract
+        )
       ).rejects.toThrow(error);
     }
   );
@@ -202,9 +240,100 @@ describe("adapter artifact verification", () => {
       loadVerifiedAdapterFactory(
         Buffer.from(moduleContents),
         sha256(moduleContents),
-        { format: "self-contained-esm-bundle/v1", allowedNodeBuiltins: [] }
+        emptyBundleContract
       )
     ).rejects.toThrow(/"node:crypto" is not declared/);
+  });
+
+  it.each([
+    `const escaped = process.getBuiltinModule("module").createRequire("/tmp/package.json");
+     export const createEmbeddingAdapterFactory = () => escaped("zod");`,
+    `const escaped = globalThis["pro" + "cess"].getBuiltinModule("module");
+     export const createEmbeddingAdapterFactory = () => escaped;`,
+    `const escaped = global["process"];
+     export const createEmbeddingAdapterFactory = () => escaped;`,
+    `const escaped = Function("return process")();
+     export const createEmbeddingAdapterFactory = () => escaped;`,
+    `const escaped = (0, eval)("process");
+     export const createEmbeddingAdapterFactory = () => escaped;`,
+    `const escaped = ({}).constructor.constructor("return process")();
+     export const createEmbeddingAdapterFactory = () => escaped;`,
+    `const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+     const escaped = AsyncFunction("return process")();
+     export const createEmbeddingAdapterFactory = () => escaped;`,
+    `const escaped = globalThis["Fun" + "ction"]("return process")();
+     export const createEmbeddingAdapterFactory = () => escaped;`,
+    `const escaped = Reflect.get(globalThis, "process").getBuiltinModule("module");
+     export const createEmbeddingAdapterFactory = () => escaped;`,
+    `const escaped = globalThis["fetch"]("https://example.invalid");
+     export const createEmbeddingAdapterFactory = () => escaped;`,
+    `const escaped = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
+     export const createEmbeddingAdapterFactory = () => escaped;`,
+  ])(
+    "denies ambient and evaluator escape routes at runtime",
+    async (source) => {
+      await expect(
+        loadVerifiedAdapterFactory(
+          Buffer.from(source),
+          sha256(source),
+          emptyBundleContract
+        )
+      ).rejects.toThrow(/sandbox initialization failed/);
+    }
+  );
+
+  it("does not expose host constructors through an allowed capability", async () => {
+    const source = `
+      import { createHash } from "node:crypto";
+      const escaped = createHash.constructor("return process")();
+      export const createEmbeddingAdapterFactory = () => escaped;
+    `;
+    await expect(
+      loadVerifiedAdapterFactory(
+        Buffer.from(source),
+        sha256(source),
+        bundleContract
+      )
+    ).rejects.toThrow(/sandbox initialization failed/);
+  });
+
+  it("awaits adapter thenables inside the locked context", async () => {
+    const source = `
+      export const createEmbeddingAdapterFactory = () => ({
+        then(resolve) {
+          resolve.constructor("return process")();
+        }
+      });
+    `;
+    await expect(
+      loadVerifiedAdapterFactory(
+        Buffer.from(source),
+        sha256(source),
+        emptyBundleContract
+      )
+    ).rejects.toThrow(/sandbox factory creation failed/);
+  });
+
+  it("JSON-clones factory inputs before invoking adapter code", async () => {
+    const fixture = await createFixture();
+    const source = `
+      export const createEmbeddingAdapterFactory = () => ({
+        async create(candidate) {
+          candidate.constructor.constructor("return process")();
+        }
+      });
+    `;
+    const factory = await loadVerifiedAdapterFactory(
+      Buffer.from(source),
+      sha256(source),
+      emptyBundleContract
+    );
+    await expect(
+      factory.create(fixture.configuration.candidates[0], {
+        allowDownloads: false,
+        offlineCachePath: "/verified/cache",
+      })
+    ).rejects.toThrow(/sandbox adapter creation failed/);
   });
 
   it("rejects symlinked adapter entries and hard byte limits", async () => {

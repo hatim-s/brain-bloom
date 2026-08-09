@@ -64,7 +64,11 @@ async function executeCandidateProcess(
   return new Promise((resolve, reject) => {
     const child = forkCandidate(childPath, [], {
       detached: process.platform !== "win32",
-      execArgv: ["--experimental-strip-types"],
+      execArgv: [
+        "--experimental-strip-types",
+        "--experimental-vm-modules",
+        "--disallow-code-generation-from-strings",
+      ],
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
     let stderr = "";

@@ -27,6 +27,7 @@ const adapterManifestSchema = z.strictObject({
   moduleChecksum: checksumSchema,
   bundle: z.strictObject({
     format: z.literal("self-contained-esm-bundle/v1"),
+    executionBoundary: z.literal("node-vm-source-text-module/v1"),
     allowedNodeBuiltins: z
       .array(z.string().regex(/^node:[a-z0-9_/-]+$/))
       .max(32),

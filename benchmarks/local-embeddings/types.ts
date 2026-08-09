@@ -1,6 +1,7 @@
 /** Versioned executable contract for one immutable adapter bundle. */
 type AdapterBundleContract = {
   format: "self-contained-esm-bundle/v1";
+  executionBoundary: "node-vm-source-text-module/v1";
   allowedNodeBuiltins: string[];
 };
 
