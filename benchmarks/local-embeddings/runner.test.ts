@@ -53,6 +53,10 @@ const configuration: CandidateConfiguration = {
       artifactChecksum: adapterChecksum,
       manifestPath: `bundle/${key}.json`,
       manifestChecksum,
+      bundle: {
+        format: "self-contained-esm-bundle/v1",
+        allowedNodeBuiltins: [],
+      },
     },
     runtime: { id: "fake-runtime", version: "1.0.0" },
     preprocessing: {
@@ -396,6 +400,7 @@ function verifiedFor(index: number): VerifiedAdapterArtifact {
       version: candidate.adapter.version,
       revision: candidate.adapter.revision,
     },
+    bundle: candidate.adapter.bundle,
     runtime: candidate.runtime,
     preprocessing: candidate.preprocessing,
   };

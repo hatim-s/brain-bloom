@@ -24,6 +24,10 @@ const validCandidate: EmbeddingCandidate = {
     artifactChecksum: `sha256:${"d".repeat(64)}`,
     manifestPath: "adapter/manifest.json",
     manifestChecksum: `sha256:${"f".repeat(64)}`,
+    bundle: {
+      format: "self-contained-esm-bundle/v1",
+      allowedNodeBuiltins: [],
+    },
   },
   runtime: { id: "test-runtime", version: "1.0.0" },
   preprocessing: {
@@ -111,6 +115,25 @@ describe("embedding candidate runtime validation", () => {
         },
       })
     ).toThrow();
+  });
+
+  it("rejects duplicate and dependency-escape bundle builtins", () => {
+    const configuration = createConfiguration();
+    configuration.candidates[0].adapter.bundle.allowedNodeBuiltins = [
+      "node:crypto",
+      "node:crypto",
+    ];
+    expect(() => validateCandidateConfiguration(configuration)).toThrow(
+      /must be unique/
+    );
+
+    const moduleEscape = createConfiguration();
+    moduleEscape.candidates[0].adapter.bundle.allowedNodeBuiltins = [
+      "node:module",
+    ];
+    expect(() => validateCandidateConfiguration(moduleEscape)).toThrow(
+      /unsupported/
+    );
   });
 });
 

@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
 
+import { validateSelfContainedAdapterBundle } from "./adapter-module.ts";
 import { readVerifiedBoundedFile } from "./cache.ts";
 import { inspectConfinedPath, validateRelativePath } from "./paths.ts";
 import type {
@@ -24,6 +25,12 @@ const versionSchema = z
 const adapterManifestSchema = z.strictObject({
   schemaVersion: z.literal(1),
   moduleChecksum: checksumSchema,
+  bundle: z.strictObject({
+    format: z.literal("self-contained-esm-bundle/v1"),
+    allowedNodeBuiltins: z
+      .array(z.string().regex(/^node:[a-z0-9_/-]+$/))
+      .max(32),
+  }),
   adapter: z.strictObject({
     id: z.string().trim().min(1),
     version: versionSchema,
@@ -98,8 +105,10 @@ async function preflightAdapterArtifacts(options: {
       version: candidate.adapter.version,
       revision: candidate.adapter.revision,
     };
+    validateSelfContainedAdapterBundle(moduleArtifact.bytes, manifest.bundle);
     if (
       manifest.moduleChecksum !== moduleArtifact.checksum ||
+      !isDeepStrictEqual(manifest.bundle, candidate.adapter.bundle) ||
       !isDeepStrictEqual(manifest.adapter, expectedAdapter) ||
       !isDeepStrictEqual(manifest.runtime, candidate.runtime) ||
       !isDeepStrictEqual(manifest.preprocessing, candidate.preprocessing)
@@ -119,6 +128,7 @@ async function preflightAdapterArtifacts(options: {
         manifestPath: candidate.adapter.manifestPath,
         manifestChecksum: manifestArtifact.checksum,
         adapter: manifest.adapter,
+        bundle: manifest.bundle,
         runtime: manifest.runtime,
         preprocessing: manifest.preprocessing,
       },

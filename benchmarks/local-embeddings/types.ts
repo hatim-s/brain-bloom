@@ -1,3 +1,9 @@
+/** Versioned executable contract for one immutable adapter bundle. */
+type AdapterBundleContract = {
+  format: "self-contained-esm-bundle/v1";
+  allowedNodeBuiltins: string[];
+};
+
 /** Pinned adapter artifact and manifest that bind executable behavior. */
 type AdapterIdentity = {
   id: string;
@@ -7,6 +13,7 @@ type AdapterIdentity = {
   artifactChecksum: string;
   manifestPath: string;
   manifestChecksum: string;
+  bundle: AdapterBundleContract;
 };
 
 /** Runtime identity is verified from the adapter's bounded manifest. */
@@ -33,6 +40,7 @@ type VerifiedAdapterArtifact = {
   manifestPath: string;
   manifestChecksum: string;
   adapter: Pick<AdapterIdentity, "id" | "version" | "revision">;
+  bundle: AdapterBundleContract;
   runtime: RuntimeIdentity;
   preprocessing: PreprocessingIdentity;
 };
@@ -321,6 +329,7 @@ type RuntimeProbe = {
 };
 
 export type {
+  AdapterBundleContract,
   AdapterCreateOptions,
   AdapterIdentity,
   BenchmarkBudgets,

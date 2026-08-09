@@ -26,7 +26,8 @@ async function executeRequest(request: CandidateProcessRequest): Promise<void> {
     ...request,
     adapterFactory: await loadVerifiedAdapterFactory(
       preflight.moduleBytes,
-      preflight.verified.moduleChecksum
+      preflight.verified.moduleChecksum,
+      preflight.verified.bundle
     ),
     memoryMode: "isolated",
   });

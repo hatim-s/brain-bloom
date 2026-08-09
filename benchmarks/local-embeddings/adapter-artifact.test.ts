@@ -14,8 +14,23 @@ import type { CandidateConfiguration } from "./types.ts";
 
 const sha256 = (contents: string) =>
   `sha256:${createHash("sha256").update(contents).digest("hex")}`;
-const moduleContents =
-  'export const createEmbeddingAdapterFactory = () => ({ marker: "verified" });\n';
+const moduleContents = `
+import { createHash } from "node:crypto";
+class EmbeddedTokenizer {
+  tokenize(input) { return input.trim().split(/\\s+/u); }
+}
+const tokenizer = new EmbeddedTokenizer();
+const runtimeDigest = createHash("sha256").update("embedded-runtime-v1").digest("hex");
+export const createEmbeddingAdapterFactory = () => ({
+  marker: "verified",
+  runtimeDigest,
+  tokenize: (input) => tokenizer.tokenize(input),
+});
+`;
+const bundleContract = {
+  format: "self-contained-esm-bundle/v1" as const,
+  allowedNodeBuiltins: ["node:crypto"],
+};
 
 /** Creates two candidates pinned to the same module and distinct signed manifests. */
 async function createFixture() {
@@ -23,9 +38,13 @@ async function createFixture() {
     path.join(os.tmpdir(), "adapter-preflight-")
   );
   const adapterRootRelative = "adapters";
-  const bundle = path.join(workspaceRoot, adapterRootRelative, "bundle");
-  await mkdir(bundle, { recursive: true });
-  await writeFile(path.join(bundle, "adapter.mjs"), moduleContents);
+  const bundleDirectory = path.join(
+    workspaceRoot,
+    adapterRootRelative,
+    "bundle"
+  );
+  await mkdir(bundleDirectory, { recursive: true });
+  await writeFile(path.join(bundleDirectory, "adapter.mjs"), moduleContents);
   const moduleChecksum = sha256(moduleContents);
   const common = {
     adapter: { id: "adapter", version: "1.0.0", revision: "a".repeat(40) },
@@ -40,11 +59,16 @@ async function createFixture() {
     },
   };
   const manifests = Array.from({ length: 2 }, () =>
-    JSON.stringify({ schemaVersion: 1, moduleChecksum, ...common })
+    JSON.stringify({
+      schemaVersion: 1,
+      moduleChecksum,
+      bundle: bundleContract,
+      ...common,
+    })
   );
   await Promise.all(
     manifests.map((contents, index) =>
-      writeFile(path.join(bundle, `${index}.json`), contents)
+      writeFile(path.join(bundleDirectory, `${index}.json`), contents)
     )
   );
   const configuration: CandidateConfiguration = {
@@ -72,6 +96,7 @@ async function createFixture() {
         artifactChecksum: moduleChecksum,
         manifestPath: `bundle/${index}.json`,
         manifestChecksum: sha256(manifests[index]),
+        bundle: bundleContract,
       },
       runtime: common.runtime,
       preprocessing: common.preprocessing,
@@ -121,16 +146,65 @@ describe("adapter artifact verification", () => {
 
     const factory = await loadVerifiedAdapterFactory(
       preflight.moduleBytes,
-      preflight.verified.moduleChecksum
+      preflight.verified.moduleChecksum,
+      preflight.verified.bundle
     );
 
-    expect((factory as unknown as { marker: string }).marker).toBe("verified");
+    const bundledFactory = factory as unknown as {
+      marker: string;
+      runtimeDigest: string;
+      tokenize(input: string): string[];
+    };
+    expect(bundledFactory.marker).toBe("verified");
+    expect(bundledFactory.runtimeDigest).toBe(
+      createHash("sha256").update("embedded-runtime-v1").digest("hex")
+    );
+    expect(bundledFactory.tokenize("alpha  beta")).toEqual(["alpha", "beta"]);
     await expect(
       preflightAdapterArtifacts({
         ...fixture,
         suppliedModulePath: "bundle/adapter.mjs",
       })
     ).rejects.toThrow(/checksum mismatch/);
+  });
+
+  it.each([
+    [
+      'import { pipeline } from "@xenova/transformers"; export const createEmbeddingAdapterFactory = () => ({});',
+      /import "@xenova\/transformers" is forbidden/,
+    ],
+    [
+      'import { tokenize } from "./tokenizer.js"; export const createEmbeddingAdapterFactory = () => ({ tokenize });',
+      /import "\.\/tokenizer\.js" is forbidden/,
+    ],
+    [
+      'const runtime = require("onnxruntime-node"); export const createEmbeddingAdapterFactory = () => ({ runtime });',
+      /require\(\) is forbidden/,
+    ],
+    [
+      'export const createEmbeddingAdapterFactory = async () => import("file:///tmp/runtime.mjs");',
+      /dynamic import\(\) is forbidden/,
+    ],
+  ])(
+    "rejects an unbundled dependency before module execution",
+    async (source, error) => {
+      await expect(
+        loadVerifiedAdapterFactory(Buffer.from(source), sha256(source), {
+          format: "self-contained-esm-bundle/v1",
+          allowedNodeBuiltins: [],
+        })
+      ).rejects.toThrow(error);
+    }
+  );
+
+  it("requires every supported Node builtin import to be declared", async () => {
+    await expect(
+      loadVerifiedAdapterFactory(
+        Buffer.from(moduleContents),
+        sha256(moduleContents),
+        { format: "self-contained-esm-bundle/v1", allowedNodeBuiltins: [] }
+      )
+    ).rejects.toThrow(/"node:crypto" is not declared/);
   });
 
   it("rejects symlinked adapter entries and hard byte limits", async () => {

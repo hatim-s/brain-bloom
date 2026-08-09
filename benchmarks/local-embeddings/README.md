@@ -36,7 +36,36 @@ verification inside the candidate child. The child imports an immutable data
 URL made from those exact verified module bytes instead of reopening the mutable
 pathname. A mismatch prevents both module import and factory creation.
 
-The verified module must named-export `createEmbeddingAdapterFactory()`. Its
+Adapter artifacts use the versioned `self-contained-esm-bundle/v1` contract.
+Produce exactly one JavaScript ESM `.mjs` bundle that includes the adapter,
+runtime wrapper, preprocessing, and tokenizer-like JavaScript helpers, then
+SHA-256 digest that final bundle. Do not digest or configure an arbitrary raw
+source module that still depends on sibling files, packages, ONNX runtime source
+modules, or tokenizer source modules. Model and tokenizer data remain separate
+artifacts beneath the verified `offlineCachePath`.
+
+The candidate configuration and its verified manifest must declare the same
+bundle contract. For example:
+
+```json
+{
+  "bundle": {
+    "format": "self-contained-esm-bundle/v1",
+    "allowedNodeBuiltins": ["node:crypto"]
+  }
+}
+```
+
+The verified bundle may use only static imports of the explicitly declared
+`node:` built-ins. Relative, absolute, `file:`, and bare-package imports,
+`require()`, and dynamic `import()` are rejected from the parsed verified bytes
+before factory creation. `node:module` is not supported because it could reopen
+unverified filesystem code. A bundle with no built-in imports should declare an
+empty list. This dependency check closes the verified module graph; it is not a
+sandbox for an otherwise untrusted adapter, so maintainers must still review the
+pinned bundle source and provenance.
+
+The verified bundle must export a named `createEmbeddingAdapterFactory()`. Its
 adapter implements an explicit `load()` phase and accepts `"query"` or
 `"document"` on every `embed()` call. Runtime identity claims must match the
 verified manifest. Adapter implementations must also respect the passed

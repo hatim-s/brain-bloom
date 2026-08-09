@@ -36,7 +36,11 @@
         "modulePath": "sprig-local-embedding-adapter-1.0.0/adapter.mjs",
         "artifactChecksum": "sha256:a6be51dd880e7da398f9060202f3c1cb3ffc20188c77b3beab1d6d5317a14314",
         "manifestPath": "sprig-local-embedding-adapter-1.0.0/minilm.manifest.json",
-        "manifestChecksum": "sha256:3de8dd2207a3ef133c25331dc9f317dc39049551ed517ff4537b4cc87f5f0a88"
+        "manifestChecksum": "sha256:29a8bed03ff11913f364d1686c932c5711c7e91c23642d89fa0feb05104eba91",
+        "bundle": {
+          "format": "self-contained-esm-bundle/v1",
+          "allowedNodeBuiltins": []
+        }
       },
       "runtime": {
         "id": "onnxruntime",
@@ -65,7 +69,11 @@
         "modulePath": "sprig-local-embedding-adapter-1.0.0/adapter.mjs",
         "artifactChecksum": "sha256:a6be51dd880e7da398f9060202f3c1cb3ffc20188c77b3beab1d6d5317a14314",
         "manifestPath": "sprig-local-embedding-adapter-1.0.0/bge.manifest.json",
-        "manifestChecksum": "sha256:0eed1d03a8e1975fb811c319f426ead384888ca366d54ad263b03fc27a13a343"
+        "manifestChecksum": "sha256:ac6916d3bce85c35b9a2ff94795573b17de3376b5cd016213d66addf1d73eb1e",
+        "bundle": {
+          "format": "self-contained-esm-bundle/v1",
+          "allowedNodeBuiltins": []
+        }
       },
       "runtime": {
         "id": "onnxruntime",

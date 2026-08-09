@@ -1,3 +1,4 @@
+import { isBuiltin } from "node:module";
 import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
@@ -41,6 +42,10 @@ function isSafeRelativePath(value: string): boolean {
 const safePathSchema = nonEmptyString.refine(isSafeRelativePath, {
   message: "path must remain relative to its dedicated cache root",
 });
+const adapterBundleSchema = z.strictObject({
+  format: z.literal("self-contained-esm-bundle/v1"),
+  allowedNodeBuiltins: z.array(z.string().regex(/^node:[a-z0-9_/-]+$/)).max(32),
+});
 const adapterIdentitySchema = z.strictObject({
   id: nonEmptyString,
   version: versionSchema,
@@ -49,6 +54,7 @@ const adapterIdentitySchema = z.strictObject({
   artifactChecksum: checksumSchema,
   manifestPath: safePathSchema,
   manifestChecksum: checksumSchema,
+  bundle: adapterBundleSchema,
 });
 const runtimeIdentitySchema = z.strictObject({
   id: nonEmptyString,
@@ -191,6 +197,7 @@ const verifiedAdapterSchema = z.strictObject({
     version: versionSchema,
     revision: revisionSchema,
   }),
+  bundle: adapterBundleSchema,
   runtime: runtimeIdentitySchema,
   preprocessing: preprocessingIdentitySchema,
 });
@@ -306,6 +313,16 @@ function validateCandidateConfiguration(
     if (keys.has(candidate.key))
       throw new Error(`Duplicate candidate key: ${candidate.key}`);
     keys.add(candidate.key);
+    const builtins = candidate.adapter.bundle.allowedNodeBuiltins;
+    if (new Set(builtins).size !== builtins.length)
+      throw new Error(
+        `Adapter bundle builtins must be unique for ${candidate.key}`
+      );
+    for (const specifier of builtins)
+      if (!isBuiltin(specifier) || specifier === "node:module")
+        throw new Error(
+          `Adapter bundle builtin is unsupported for ${candidate.key}: ${specifier}`
+        );
   }
   if (
     configuration.cacheLimits.maxBytes > configuration.budgets.maxCacheBytes
@@ -534,6 +551,10 @@ function validateBenchmarkReport(input: unknown): BenchmarkReport {
         version: result.candidate.adapter.version,
         revision: result.candidate.adapter.revision,
       }) ||
+      !isDeepStrictEqual(
+        result.verifiedAdapter.bundle,
+        result.candidate.adapter.bundle
+      ) ||
       !isDeepStrictEqual(
         result.verifiedAdapter.runtime,
         result.candidate.runtime

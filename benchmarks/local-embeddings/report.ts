@@ -27,7 +27,8 @@ function createMarkdownReport(reportInput: BenchmarkReport): string {
   const rows = report.results.map((result) => {
     const recall = result.recall.overall.recall;
     const peakMiB = result.resources.residentMemoryPeakBytes / (1024 * 1024);
-    return `| ${result.candidate.key} | ${result.candidate.modelId} | ${result.candidate.revision} | ${result.verifiedAdapter.adapter.id}@${result.verifiedAdapter.adapter.version} (${result.verifiedAdapter.adapter.revision}; ${result.verifiedAdapter.moduleChecksum}) | ${result.verifiedAdapter.runtime.id}@${result.verifiedAdapter.runtime.version} | ${result.verifiedAdapter.preprocessing.id}@${result.verifiedAdapter.preprocessing.version} | ${result.candidate.dimensions} | ${result.offlineCache.status} (${result.offlineCache.bytes} B) | ${result.offlineCache.checksum} | ${recall["5"].toFixed(3)} | ${recall["10"].toFixed(3)} | ${recall["20"].toFixed(3)} | ${result.integrity.passed ? "pass" : "fail"} (${result.integrity.forbiddenHitRate.toFixed(3)}) | ${result.latency.coldLoadMs.toFixed(2)} | ${result.latency.coldQueryMs.toFixed(2)} | ${result.latency.warmQuery.p95Ms.toFixed(2)} | ${result.ingestion.segmentsPerSecond.toFixed(2)} | ${result.resources.residentMemoryBeforeBytes} / ${result.resources.residentMemoryPeakBytes} / ${result.resources.residentMemoryAfterBytes} (${peakMiB.toFixed(2)} MiB absolute peak; ${result.resources.residentMemoryMeasurement}) |`;
+    const bundleIdentity = `${result.verifiedAdapter.bundle.format}; builtins ${result.verifiedAdapter.bundle.allowedNodeBuiltins.join(", ") || "none"}`;
+    return `| ${result.candidate.key} | ${result.candidate.modelId} | ${result.candidate.revision} | ${result.verifiedAdapter.adapter.id}@${result.verifiedAdapter.adapter.version} (${result.verifiedAdapter.adapter.revision}; ${result.verifiedAdapter.moduleChecksum}) | ${bundleIdentity} | ${result.verifiedAdapter.runtime.id}@${result.verifiedAdapter.runtime.version} | ${result.verifiedAdapter.preprocessing.id}@${result.verifiedAdapter.preprocessing.version} | ${result.candidate.dimensions} | ${result.offlineCache.status} (${result.offlineCache.bytes} B) | ${result.offlineCache.checksum} | ${recall["5"].toFixed(3)} | ${recall["10"].toFixed(3)} | ${recall["20"].toFixed(3)} | ${result.integrity.passed ? "pass" : "fail"} (${result.integrity.forbiddenHitRate.toFixed(3)}) | ${result.latency.coldLoadMs.toFixed(2)} | ${result.latency.coldQueryMs.toFixed(2)} | ${result.latency.warmQuery.p95Ms.toFixed(2)} | ${result.ingestion.segmentsPerSecond.toFixed(2)} | ${result.resources.residentMemoryBeforeBytes} / ${result.resources.residentMemoryPeakBytes} / ${result.resources.residentMemoryAfterBytes} (${peakMiB.toFixed(2)} MiB absolute peak; ${result.resources.residentMemoryMeasurement}) |`;
   });
   const detailSections = report.results.flatMap((result) => {
     const languageRows = Object.entries(result.multilingual.languages).map(
@@ -81,8 +82,8 @@ function createMarkdownReport(reportInput: BenchmarkReport): string {
     "",
     "## Candidate measurements",
     "",
-    "| Candidate | Model | Exact revision | Verified adapter identity/digest | Runtime identity | Preprocessing identity | Dimensions | Offline cache | Artifact checksum | R@5 | R@10 | R@20 | Integrity / forbidden rate | Cold load ms | Cold query ms | Warm p95 ms | Segments/s | RSS before / peak / after |",
-    "| --- | --- | --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- |",
+    "| Candidate | Model | Exact revision | Verified adapter identity/digest | Bundle contract | Runtime identity | Preprocessing identity | Dimensions | Offline cache | Artifact checksum | R@5 | R@10 | R@20 | Integrity / forbidden rate | Cold load ms | Cold query ms | Warm p95 ms | Segments/s | RSS before / peak / after |",
+    "| --- | --- | --- | --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- |",
     ...rows,
     "",
     "Budget status is observational and does not select a winner.",
