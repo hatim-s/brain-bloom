@@ -4,12 +4,19 @@ import {
   verify as verifyBytes,
 } from "node:crypto";
 
+import {
+  awaitControlPlaneOperation,
+  type ControlPlaneOperationContext,
+} from "./control-plane.ts";
+
 const ASSERTION_ALGORITHM = "EdDSA";
 const ASSERTION_TYPE = "sprig-internal-assertion";
 const ASSERTION_VERSION = 1;
 const MAX_ASSERTION_LIFETIME_SECONDS = 60;
 const MAX_ASSERTION_LENGTH = 8_192;
 const MAX_CLAIM_LENGTH = 256;
+const DEFAULT_REPLAY_DEFENSE_TIMEOUT_MS = 1_000;
+const MAX_REPLAY_DEFENSE_TIMEOUT_MS = 10_000;
 
 const GATEWAY_OPERATIONS = [
   "chat",
@@ -106,6 +113,22 @@ type VerifyAssertionOptions = Readonly<{
   expected: ExpectedAssertionContext;
   replayDefense: ReplayDefense;
   verificationKeys: VerificationKeys;
+  replayDefenseTimeoutMs?: number;
+}>;
+
+type VerifyAuthenticatedAssertionOptions = Omit<
+  VerifyAssertionOptions,
+  "verificationKeys"
+>;
+
+const AUTHENTICATED_ASSERTION_BRAND = Symbol("authenticated assertion");
+const AUTHENTICATED_ASSERTIONS = new WeakSet<object>();
+
+type AuthenticatedInternalAssertion = Readonly<{
+  [AUTHENTICATED_ASSERTION_BRAND]: true;
+  encodedHeader: string;
+  encodedClaims: string;
+  authenticatedKeyIds: readonly string[];
 }>;
 
 type ReplayEntry = Readonly<{
@@ -115,7 +138,11 @@ type ReplayEntry = Readonly<{
 }>;
 
 interface ReplayDefense {
-  consume(entry: ReplayEntry, nowSeconds: number): void | Promise<void>;
+  consume(
+    entry: ReplayEntry,
+    nowSeconds: number,
+    context?: ControlPlaneOperationContext
+  ): void | Promise<void>;
 }
 
 type ReplayDefenseErrorCode = "replay_defense_unavailable" | "replay_detected";
@@ -271,6 +298,23 @@ async function verifyInternalAssertion(
   token: string | null | undefined,
   options: VerifyAssertionOptions
 ): Promise<InternalAssertionClaims> {
+  const authenticated = authenticateInternalAssertion(
+    token,
+    options.verificationKeys
+  );
+  return verifyAuthenticatedInternalAssertion(authenticated, options);
+}
+
+/**
+ * Proves that the raw assertion bytes were signed by a configured key.
+ *
+ * Parsing is deliberately deferred. A trusted dispatcher may charge its
+ * server-resolved owner after this stage without trusting any unparsed claim.
+ */
+function authenticateInternalAssertion(
+  token: string | null | undefined,
+  verificationKeys: VerificationKeys
+): AuthenticatedInternalAssertion {
   if (!token) {
     throw new InternalAssertionError(
       "missing_assertion",
@@ -295,8 +339,34 @@ async function verifyInternalAssertion(
   const authenticatedKeyIds = authenticateSignature(
     signingInput,
     signature,
-    options.verificationKeys
+    verificationKeys
   );
+
+  const authenticated = Object.freeze({
+    [AUTHENTICATED_ASSERTION_BRAND]: true as const,
+    encodedHeader,
+    encodedClaims,
+    authenticatedKeyIds: Object.freeze([...authenticatedKeyIds]),
+  });
+  AUTHENTICATED_ASSERTIONS.add(authenticated);
+  return authenticated;
+}
+
+/**
+ * Validates authenticated bytes, consumes replay state, then matches context.
+ * Replay consumption remains before every expected-context comparison.
+ */
+async function verifyAuthenticatedInternalAssertion(
+  authenticated: AuthenticatedInternalAssertion,
+  options: VerifyAuthenticatedAssertionOptions
+): Promise<InternalAssertionClaims> {
+  if (
+    authenticated[AUTHENTICATED_ASSERTION_BRAND] !== true ||
+    !AUTHENTICATED_ASSERTIONS.has(authenticated)
+  ) {
+    throw invalidAssertion();
+  }
+  const { authenticatedKeyIds, encodedClaims, encodedHeader } = authenticated;
 
   const header = parseHeader(encodedHeader);
   const claims = parseClaims(encodedClaims);
@@ -312,21 +382,44 @@ async function verifyInternalAssertion(
   const nowSeconds = readClock(options.clock);
   assertTemporalValidity(claims, nowSeconds);
 
+  const replayDefenseTimeoutMs =
+    options.replayDefenseTimeoutMs ?? DEFAULT_REPLAY_DEFENSE_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(replayDefenseTimeoutMs) ||
+    replayDefenseTimeoutMs <= 0 ||
+    replayDefenseTimeoutMs > MAX_REPLAY_DEFENSE_TIMEOUT_MS
+  ) {
+    throw new InternalAssertionError(
+      "internal_auth_configuration_invalid",
+      "Replay defense timeout is invalid"
+    );
+  }
+
   // State errors are normalized so unavailable custom stores cannot accidentally
   // degrade into accepting a request without replay protection.
-  try {
-    await options.replayDefense.consume(
-      {
-        requestId: claims.requestId,
-        nonce: claims.nonce,
-        expiresAt: claims.exp,
-      },
-      nowSeconds
-    );
-  } catch (error) {
+  const replayOutcome = await awaitControlPlaneOperation(
+    (context) =>
+      options.replayDefense.consume(
+        {
+          requestId: claims.requestId,
+          nonce: claims.nonce,
+          expiresAt: claims.exp,
+        },
+        nowSeconds,
+        context
+      ),
+    replayDefenseTimeoutMs
+  );
+  if (replayOutcome.status === "aborted") {
+    throw replayEnforcementError("replay_defense_unavailable");
+  }
+  if (replayOutcome.status === "timed_out") {
+    throw replayEnforcementError("replay_defense_unavailable");
+  }
+  if (replayOutcome.status === "rejected") {
     const code =
-      error instanceof ReplayDefenseError
-        ? error.code
+      replayOutcome.error instanceof ReplayDefenseError
+        ? replayOutcome.error.code
         : "replay_defense_unavailable";
     throw replayEnforcementError(code);
   }
@@ -646,8 +739,11 @@ function invalidAssertion(): InternalAssertionError {
 export {
   ASSERTION_VERSION,
   type AssertionErrorCode,
+  type AuthenticatedInternalAssertion,
+  authenticateInternalAssertion,
   BoundedReplayCache,
   type Clock,
+  DEFAULT_REPLAY_DEFENSE_TIMEOUT_MS,
   type ExpectedAssertionContext,
   GATEWAY_OPERATIONS,
   type GatewayOperation,
@@ -656,6 +752,7 @@ export {
   type IssueAssertionInput,
   issueInternalAssertion,
   MAX_ASSERTION_LIFETIME_SECONDS,
+  MAX_REPLAY_DEFENSE_TIMEOUT_MS,
   type ReplayDefense,
   ReplayDefenseError,
   type ReplayDefenseErrorCode,
@@ -664,5 +761,7 @@ export {
   type VerificationKey,
   type VerificationKeys,
   type VerifyAssertionOptions,
+  type VerifyAuthenticatedAssertionOptions,
+  verifyAuthenticatedInternalAssertion,
   verifyInternalAssertion,
 };
