@@ -97,6 +97,15 @@ errors, and fail closed when the rate-limit state is unavailable. Polling may
 have a different finite budget from credential submission or execution, but no
 connection endpoint is unlimited.
 
+The initial Convex metadata API applies this rule to safe `list` and `getStatus`
+reads as well as lifecycle mutations. Because a Convex query cannot persist
+budget consumption, those owner-facing reads are exposed as actions that first
+commit a server-only rate-budget mutation and then run an internal owner-scoped
+query. They remain display-only and available after de-allowlisting, but they
+are not unlimited. Lifecycle actions use the same two-step boundary so a
+known-owner attempt stays charged when a later argument, allowlist, state, or
+ownership check rejects the request.
+
 ### Internal request authentication
 
 Next.js will authenticate each gateway request with a versioned signed internal

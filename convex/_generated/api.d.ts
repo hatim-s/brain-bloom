@@ -8,8 +8,13 @@
  * @module
  */
 
+import type * as aiConnections from "../aiConnections.js";
+import type * as aiConnectionsInternal from "../aiConnectionsInternal.js";
+import type * as connectionRateBudget from "../connectionRateBudget.js";
 import type * as lib_access from "../lib/access.js";
+import type * as lib_connectionRateBudget from "../lib/connectionRateBudget.js";
 import type * as lib_nodeOps from "../lib/nodeOps.js";
+import type * as lib_personalBeta from "../lib/personalBeta.js";
 import type * as migration from "../migration.js";
 import type * as mindmaps from "../mindmaps.js";
 import type * as ops from "../ops.js";
@@ -22,8 +27,13 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  aiConnections: typeof aiConnections;
+  aiConnectionsInternal: typeof aiConnectionsInternal;
+  connectionRateBudget: typeof connectionRateBudget;
   "lib/access": typeof lib_access;
+  "lib/connectionRateBudget": typeof lib_connectionRateBudget;
   "lib/nodeOps": typeof lib_nodeOps;
+  "lib/personalBeta": typeof lib_personalBeta;
   migration: typeof migration;
   mindmaps: typeof mindmaps;
   ops: typeof ops;

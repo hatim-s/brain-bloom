@@ -2,6 +2,45 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  aiConnections: defineTable({
+    ownerId: v.string(),
+    provider: v.literal("codex"),
+    label: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("connected"),
+      v.literal("error"),
+      v.literal("expired"),
+      v.literal("revoked")
+    ),
+    authenticationMethod: v.literal("device_code"),
+    gatewayCredentialId: v.optional(v.string()),
+    accountHint: v.optional(v.string()),
+    planLabel: v.optional(v.string()),
+    isDefault: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastValidationAt: v.optional(v.number()),
+    lastErrorCode: v.optional(v.string()),
+  })
+    .index("by_owner", ["ownerId"])
+    .index("by_owner_provider_status", ["ownerId", "provider", "status"]),
+
+  aiConnectionRateBudgets: defineTable({
+    scope: v.union(v.literal("owner"), v.literal("global")),
+    scopeKey: v.string(),
+    endpoint: v.union(
+      v.literal("createPendingCodex"),
+      v.literal("selectDefaultCodex"),
+      v.literal("list"),
+      v.literal("getStatus")
+    ),
+    windowStartedAt: v.number(),
+    windowMs: v.number(),
+    limit: v.number(),
+    consumed: v.number(),
+  }).index("by_scope_endpoint", ["scope", "scopeKey", "endpoint"]),
+
   mindmaps: defineTable({
     publicId: v.string(),
     name: v.string(),

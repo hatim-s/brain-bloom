@@ -1,9 +1,10 @@
 import { ConvexError } from "convex/values";
 
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "../_generated/server";
+import type { ActionCtx, MutationCtx, QueryCtx } from "../_generated/server";
 
-type AuthenticatedCtx = QueryCtx | MutationCtx;
+type AuthenticatedCtx = ActionCtx | MutationCtx | QueryCtx;
+type DatabaseCtx = MutationCtx | QueryCtx;
 
 type AuthorizedMindmap = {
   mindmap: Doc<"mindmaps">;
@@ -27,7 +28,7 @@ export async function requireUser(ctx: AuthenticatedCtx): Promise<string> {
  * Loads a mindmap after verifying that the current user owns it.
  */
 export async function requireOwner(
-  ctx: AuthenticatedCtx,
+  ctx: DatabaseCtx,
   mindmapId: Id<"mindmaps">,
   authenticatedSubject?: string
 ): Promise<AuthorizedMindmap> {
@@ -49,7 +50,7 @@ export async function requireOwner(
  * Loads a mindmap that is owned by the user or shared with authenticated users.
  */
 export async function requireReadable(
-  ctx: AuthenticatedCtx,
+  ctx: DatabaseCtx,
   mindmapId: Id<"mindmaps">,
   authenticatedSubject?: string
 ): Promise<AuthorizedMindmap> {
