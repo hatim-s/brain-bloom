@@ -24,6 +24,7 @@ import {
   type GatewayOperation,
   issueInternalAssertion,
   type ReplayDefense,
+  ReplayDefenseError,
   type SigningKey,
   type VerificationKeys,
 } from "./internal-auth.ts";
@@ -646,8 +647,42 @@ describe("gateway dispatcher", () => {
     }
   });
 
-  it("aborts a stalled rate store through its cooperative signal", async () => {
+  it("fences a same-tick post-auth abort before returning 499", async () => {
+    const execute = vi.fn();
+    const body = createObservedBody();
+    const fixture = createFixture({ execute });
+    const token = issueToken(fixture);
+    const controller = new AbortController();
+
+    // Dispatch authenticates synchronously before its first awaited store call.
+    const pending = fixture.dispatch(
+      createRequest(fixture, {
+        body: body.body,
+        signal: controller.signal,
+        token,
+      })
+    );
+    controller.abort(SECRET_CANARY);
+
+    const response = await pending;
+    const retryBody = createObservedBody();
+    const retry = await fixture.dispatch(
+      createRequest(fixture, { body: retryBody.body, token })
+    );
+    expect([response.status, responseCode(response)]).toEqual([
+      499,
+      "request_aborted",
+    ]);
+    expect([retry.status, responseCode(retry)]).toEqual([401, "unauthorized"]);
+    expect(fixture.rateBudget.attempts).toHaveLength(2);
+    expect(body.wasRead()).toBe(false);
+    expect(retryBody.wasRead()).toBe(false);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("allows rate accounting to commit after caller abort before returning 499", async () => {
     vi.useFakeTimers();
+    const deferred = createDeferred();
     let storeContext: ControlPlaneOperationContext | undefined;
     const execute = vi.fn();
     const body = createObservedBody();
@@ -656,16 +691,24 @@ describe("gateway dispatcher", () => {
         execute,
         rateConsume: (context) => {
           storeContext = context;
-          return new Promise<void>(() => undefined);
+          return deferred.promise;
         },
       });
+      const token = issueToken(fixture);
       const controller = new AbortController();
       const pending = fixture.dispatch(
-        createRequest(fixture, { body: body.body, signal: controller.signal })
+        createRequest(fixture, {
+          body: body.body,
+          signal: controller.signal,
+          token,
+        })
       );
       await vi.advanceTimersByTimeAsync(0);
       expect(storeContext).toBeDefined();
       controller.abort(SECRET_CANARY);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(storeContext?.signal.aborted).toBe(false);
+      deferred.resolve();
       await vi.advanceTimersByTimeAsync(0);
 
       const response = await pending;
@@ -673,8 +716,16 @@ describe("gateway dispatcher", () => {
         499,
         "request_aborted",
       ]);
-      expect(storeContext?.signal.aborted).toBe(true);
+      const retryBody = createObservedBody();
+      const retry = await fixture.dispatch(
+        createRequest(fixture, { body: retryBody.body, token })
+      );
+      expect([retry.status, responseCode(retry)]).toEqual([
+        401,
+        "unauthorized",
+      ]);
       expect(body.wasRead()).toBe(false);
+      expect(retryBody.wasRead()).toBe(false);
       expect(execute).not.toHaveBeenCalled();
       expect(vi.getTimerCount()).toBe(0);
     } finally {
@@ -724,26 +775,39 @@ describe("gateway dispatcher", () => {
     }
   });
 
-  it("aborts a stalled replay store through its cooperative signal", async () => {
+  it("allows replay accounting to commit after caller abort before returning 499", async () => {
     vi.useFakeTimers();
+    const deferred = createDeferred();
     let replayContext: ControlPlaneOperationContext | undefined;
+    let consumed = false;
     const replayDefense: ReplayDefense = {
       consume(_entry, _nowSeconds, context) {
         replayContext = context;
-        return new Promise<void>(() => undefined);
+        if (consumed) throw new ReplayDefenseError("replay_detected");
+        return deferred.promise.then(() => {
+          consumed = true;
+        });
       },
     };
     const execute = vi.fn();
     const body = createObservedBody();
     try {
       const fixture = createFixture({ execute, replayDefense });
+      const token = issueToken(fixture);
       const controller = new AbortController();
       const pending = fixture.dispatch(
-        createRequest(fixture, { body: body.body, signal: controller.signal })
+        createRequest(fixture, {
+          body: body.body,
+          signal: controller.signal,
+          token,
+        })
       );
       await vi.advanceTimersByTimeAsync(0);
       expect(replayContext).toBeDefined();
       controller.abort(SECRET_CANARY);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(replayContext?.signal.aborted).toBe(false);
+      deferred.resolve();
       await vi.advanceTimersByTimeAsync(0);
 
       const response = await pending;
@@ -751,9 +815,154 @@ describe("gateway dispatcher", () => {
         499,
         "request_aborted",
       ]);
+      const retryBody = createObservedBody();
+      const retry = await fixture.dispatch(
+        createRequest(fixture, { body: retryBody.body, token })
+      );
+      expect([retry.status, responseCode(retry)]).toEqual([
+        401,
+        "unauthorized",
+      ]);
+      expect(body.wasRead()).toBe(false);
+      expect(retryBody.wasRead()).toBe(false);
+      expect(execute).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("completes replay after an ambiguous rate timeout despite caller abort", async () => {
+    vi.useFakeTimers();
+    const replayCommit = createDeferred();
+    let replayContext: ControlPlaneOperationContext | undefined;
+    let consumed = false;
+    const replayDefense: ReplayDefense = {
+      consume(_entry, _nowSeconds, context) {
+        replayContext = context;
+        if (consumed) throw new ReplayDefenseError("replay_detected");
+        return replayCommit.promise.then(() => {
+          consumed = true;
+        });
+      },
+    };
+    const execute = vi.fn();
+    const body = createObservedBody();
+    try {
+      const fixture = createFixture({
+        execute,
+        rateBudgetTimeoutMs: 25,
+        rateConsume: () => new Promise<void>(() => undefined),
+        replayDefense,
+        replayDefenseTimeoutMs: 100,
+      });
+      const token = issueToken(fixture);
+      const controller = new AbortController();
+      const pending = fixture.dispatch(
+        createRequest(fixture, {
+          body: body.body,
+          signal: controller.signal,
+          token,
+        })
+      );
+
+      await vi.advanceTimersByTimeAsync(25);
+      expect(replayContext).toBeDefined();
+      controller.abort(SECRET_CANARY);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(replayContext?.signal.aborted).toBe(false);
+      replayCommit.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+
+      const response = await pending;
+      expect([response.status, responseCode(response)]).toEqual([
+        503,
+        "rate_limit_unavailable",
+      ]);
+      expect(body.wasRead()).toBe(false);
+      expect(execute).not.toHaveBeenCalled();
+
+      const retryBody = createObservedBody();
+      const retryPending = fixture.dispatch(
+        createRequest(fixture, { body: retryBody.body, token })
+      );
+      await vi.advanceTimersByTimeAsync(25);
+      const retry = await retryPending;
+      expect([retry.status, responseCode(retry)]).toEqual([
+        401,
+        "unauthorized",
+      ]);
+      expect(retryBody.wasRead()).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives replay unavailability precedence and honors a durable late commit", async () => {
+    vi.useFakeTimers();
+    const replayCommit = createDeferred();
+    let replayContext: ControlPlaneOperationContext | undefined;
+    let consumed = false;
+    const replayDefense: ReplayDefense = {
+      consume(_entry, _nowSeconds, context) {
+        replayContext = context;
+        if (consumed) throw new ReplayDefenseError("replay_detected");
+        return replayCommit.promise.then(() => {
+          consumed = true;
+        });
+      },
+    };
+    const execute = vi.fn();
+    const body = createObservedBody();
+    try {
+      const fixture = createFixture({
+        execute,
+        rateBudgetTimeoutMs: 25,
+        rateConsume: () => new Promise<void>(() => undefined),
+        replayDefense,
+        replayDefenseTimeoutMs: 25,
+      });
+      const token = issueToken(fixture);
+      const controller = new AbortController();
+      const pending = fixture.dispatch(
+        createRequest(fixture, {
+          body: body.body,
+          signal: controller.signal,
+          token,
+        })
+      );
+
+      await vi.advanceTimersByTimeAsync(25);
+      expect(replayContext).toBeDefined();
+      controller.abort(SECRET_CANARY);
+      expect(replayContext?.signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(25);
+
+      const response = await pending;
+      expect([response.status, responseCode(response)]).toEqual([
+        503,
+        "replay_defense_unavailable",
+      ]);
       expect(replayContext?.signal.aborted).toBe(true);
       expect(body.wasRead()).toBe(false);
       expect(execute).not.toHaveBeenCalled();
+
+      // A durable store may commit after its response deadline. The attached
+      // observer records that completion, and recovery rejects the exact token.
+      replayCommit.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      const retryBody = createObservedBody();
+      const retryPending = fixture.dispatch(
+        createRequest(fixture, { body: retryBody.body, token })
+      );
+      await vi.advanceTimersByTimeAsync(25);
+      const retry = await retryPending;
+      expect([retry.status, responseCode(retry)]).toEqual([
+        401,
+        "unauthorized",
+      ]);
+      expect(retryBody.wasRead()).toBe(false);
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();

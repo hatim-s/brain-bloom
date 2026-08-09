@@ -50,20 +50,34 @@ atomically. Exhaustion maps to `rate_limited`; unavailable or unknown store
 failures and deadline expiry map to `rate_limit_unavailable`. Replay-store
 failure or deadline expiry maps to `replay_defense_unavailable`. Each store call
 has a finite server-owned deadline and receives a reason-free cancellation
-signal plus the absolute deadline for cooperative cancellation. Caller abort
-maps to `request_aborted`. No store message, abort reason, or deadline detail is
-returned.
+signal plus the absolute deadline for cooperative cancellation. Before signature
+authentication, caller abort returns immediately without attributing work. After
+signature authentication, caller disconnect is recorded separately and cannot
+cancel rate or replay accounting. The dispatcher returns `request_aborted` only
+after both bounded accounting fences succeed. No store message, abort reason, or
+deadline detail is returned.
 
 A deadline is an ambiguous control-plane outcome: the store may have committed
 before its response was lost. The dispatcher therefore fails closed, continues
-bounded replay verification after a rate-budget timeout, and never proceeds to
-body ingestion or execution. A retry with the same valid assertion is rejected
-by replay defense. Durable budget and replay implementations must use the
+replay verification under a separate server-owned deadline after a rate-budget
+timeout, and never proceeds to body ingestion or execution. Caller abort during
+that fence does not cancel it. If replay commits, a retry with the same valid
+assertion is rejected. Durable budget and replay implementations must use the
 request/nonce identifiers atomically and idempotently; they must never interpret
 timeout as proof that no write occurred. Late promise resolution or rejection is
 observed, while request listeners and timers are removed through one settlement
 path. Store methods are trusted adapters and must return without synchronously
 blocking the event loop; only their asynchronous result is deadline-preemptible.
+
+If replay enforcement itself is unavailable or reaches its deadline, the
+dispatcher returns `replay_defense_unavailable`, taking precedence over a prior
+rate failure or caller abort. It cannot truthfully guarantee non-retryability
+without a durable atomic replay store: the first request did not execute, and a
+later retry may be accepted once if no deny record committed. Production
+enablement therefore requires durable replay persistence whose write can finish
+independently of the caller connection and whose recovery path detects a late
+commit. When replay succeeds, error precedence is signed-assertion/replay denial,
+then rate failure, then recorded caller abort.
 
 Only an exact `{ "input": ... }` body reaches the selected operation parser.
 Provider, operation, model, command, environment, path, and tool policy cannot

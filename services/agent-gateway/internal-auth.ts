@@ -30,7 +30,6 @@ type AssertionErrorCode =
   | "assertion_expired"
   | "assertion_from_future"
   | "assertion_lifetime_invalid"
-  | "assertion_verification_aborted"
   | "audience_mismatch"
   | "connection_mismatch"
   | "internal_auth_configuration_invalid"
@@ -115,7 +114,6 @@ type VerifyAssertionOptions = Readonly<{
   replayDefense: ReplayDefense;
   verificationKeys: VerificationKeys;
   replayDefenseTimeoutMs?: number;
-  signal?: AbortSignal;
 }>;
 
 type VerifyAuthenticatedAssertionOptions = Omit<
@@ -410,14 +408,10 @@ async function verifyAuthenticatedInternalAssertion(
         nowSeconds,
         context
       ),
-    replayDefenseTimeoutMs,
-    options.signal
+    replayDefenseTimeoutMs
   );
   if (replayOutcome.status === "aborted") {
-    throw new InternalAssertionError(
-      "assertion_verification_aborted",
-      "Internal assertion verification was aborted"
-    );
+    throw replayEnforcementError("replay_defense_unavailable");
   }
   if (replayOutcome.status === "timed_out") {
     throw replayEnforcementError("replay_defense_unavailable");

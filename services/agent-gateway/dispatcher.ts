@@ -244,10 +244,12 @@ function createGatewayDispatcher(
       return errorResponse("unauthorized");
     }
 
+    // Signature authentication is the point of no cancellation for accounting.
+    // Caller disconnect is recorded on the request signal and checked only after
+    // independent bounded rate and replay mutations finish.
     const rateFailure = await consumeRateBudget(
       configuredOptions,
-      rateBudgetTimeoutMs,
-      request.signal
+      rateBudgetTimeoutMs
     );
 
     let claims: InternalAssertionClaims;
@@ -259,15 +261,8 @@ function createGatewayDispatcher(
         expected: configuredOptions.expected,
         replayDefense: configuredOptions.replayDefense,
         replayDefenseTimeoutMs,
-        signal: request.signal,
       });
     } catch (error) {
-      if (
-        error instanceof InternalAssertionError &&
-        error.code === "assertion_verification_aborted"
-      ) {
-        return errorResponse("request_aborted");
-      }
       if (
         error instanceof InternalAssertionError &&
         error.code === "replay_defense_unavailable"
@@ -284,6 +279,9 @@ function createGatewayDispatcher(
     }
     if (rateFailure) {
       return errorResponse(rateFailure);
+    }
+    if (request.signal?.aborted) {
+      return errorResponse("request_aborted");
     }
 
     try {
@@ -606,17 +604,13 @@ function readOperationInput(body: unknown): unknown {
 /** Attempts the endpoint's atomic owner/global budget and fails closed. */
 async function consumeRateBudget(
   options: GatewayDispatcherOptions,
-  timeoutMs: number,
-  requestSignal: AbortSignal | undefined
-): Promise<
-  "rate_limited" | "rate_limit_unavailable" | "request_aborted" | undefined
-> {
+  timeoutMs: number
+): Promise<"rate_limited" | "rate_limit_unavailable" | undefined> {
   const outcome = await awaitControlPlaneOperation(
     (context) => options.rateBudget.consume(rateAttempt(options), context),
-    timeoutMs,
-    requestSignal
+    timeoutMs
   );
-  if (outcome.status === "aborted") return "request_aborted";
+  if (outcome.status === "aborted") return "rate_limit_unavailable";
   if (outcome.status === "timed_out") return "rate_limit_unavailable";
   if (outcome.status === "rejected") {
     return outcome.error instanceof RateBudgetError &&
