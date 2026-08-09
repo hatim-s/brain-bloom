@@ -44,11 +44,15 @@ provider-owned bytes
 The KEK never encrypts credential bytes directly and the contract never exports
 it. A fresh 256-bit data-encryption key (DEK) encrypts each credential; the KEK
 wraps only that DEK. Passing a credential `Buffer` to `store` transfers
-ownership: the caller must not retain or reuse it, and the same buffer is
-cleared synchronously after encryption and before persistence is called. The
-DEK and nonce buffers are cleared on the same boundary. Decryption is available
-only inside `use`'s callback lifetime and is cleared in `finally`; a callback
-must not retain an alias and must clear any copy it creates.
+ownership immediately after the Buffer type check and before payload bounds or
+hostile metadata are inspected. The caller must not retain or reuse it. One
+outer clearing scope covers invalid metadata, empty/oversized input, randomness
+failure, collision, encryption failure, adapter error, and success. Valid input
+is therefore cleared synchronously after encryption and before persistence is
+called. Buffers returned by the injected randomness source transfer ownership
+under the same rule and are cleared on wrong size, rejection, or later failure.
+Decryption is available only inside `use`'s callback lifetime and is cleared in
+`finally`; a callback must not retain an alias and must clear any copy it creates.
 
 ## Versioned envelope and authenticated metadata
 
@@ -111,6 +115,26 @@ both decrypted payloads and digests are cleared synchronously. A same-id,
 different-payload collision is a stable conflict with no write. A different
 creation operation cannot overwrite a credential. Delete is idempotent when the
 record is absent, but refuses to delete a record that changed after the read.
+
+A create response can be lost after the adapter commits. The store retains only
+the prepared encrypted candidate across that await. On a rejected or malformed
+create outcome, it performs one read using the immutable identity, snapshots
+and authenticates the winning envelope, and compares its creation id and exact
+payload with the encrypted candidate. An exact committed write returns
+`already_created`; a different lineage or payload is a stable conflict. A
+missing, malformed, or unavailable reconciliation returns
+`persistence_unavailable` rather than guessing.
+
+The adapter must therefore provide read-after-write consistency for a create
+that committed before returning an ambiguous outcome. This is part of the
+persistent-adapter human gate and must be verified against the selected store.
+
+The transferred Buffer is zeroed regardless of that outcome. If the process
+terminates or reconciliation is unavailable, a later process must reacquire a
+fresh provider-owned credential Buffer for an idempotent retry; it must never
+reuse the zeroed Buffer or retain a plaintext recovery copy. The immutable
+creation id and payload binding make that fresh retry safe, including after key
+rotation.
 
 ## Rotation
 

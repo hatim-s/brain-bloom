@@ -101,7 +101,9 @@ type DeleteCredentialResult =
  *
  * Implementations must key every method by the complete credential identity.
  * `create`, `replace`, and `delete` must each be one atomic storage operation;
- * replace and delete compare exactly against `expectedRecordRevision`.
+ * replace and delete compare exactly against `expectedRecordRevision`. A read
+ * after an ambiguous create outcome must be strongly consistent with any create
+ * that committed before that outcome; otherwise reconciliation fails closed.
  */
 interface EncryptedCredentialPersistence {
   read(
@@ -245,10 +247,27 @@ class EncryptedConnectionStore {
     credentialPayload: Buffer,
     context?: ControlPlaneOperationContext
   ): Promise<StoreCredentialResult> {
-    const validatedMutation = validateCreateMutation(mutation);
-    const plaintext = takeCredentialPayload(credentialPayload);
+    if (!Buffer.isBuffer(credentialPayload)) {
+      throw new CredentialStoreError("invalid_input");
+    }
+    return this.storeOwnedCredentialBuffer(
+      credentialPayload,
+      mutation,
+      context
+    );
+  }
+
+  /** Owns and clears the Buffer before inspecting any hostile metadata or size. */
+  private async storeOwnedCredentialBuffer(
+    plaintext: Buffer,
+    mutation: CredentialCreateMutation,
+    context?: ControlPlaneOperationContext
+  ): Promise<StoreCredentialResult> {
     let candidate: StoredCredentialEnvelope;
+    let validatedMutation: CredentialCreateMutation;
     try {
+      assertCredentialPayloadBounds(plaintext);
+      validatedMutation = validateCreateMutation(mutation);
       candidate = this.encryptEnvelope(
         validatedMutation,
         {
@@ -260,13 +279,20 @@ class EncryptedConnectionStore {
       );
     } finally {
       // This executes before the first persistence/dependency await.
-      plaintext.fill(0);
+      clearBuffer(plaintext);
     }
 
-    const result = validateCreateResult(
-      await callPersistence(() => this.persistence.create(candidate, context)),
-      validatedMutation
-    );
+    let result: CreateCredentialResult;
+    try {
+      const rawResult = await this.persistence.create(candidate, context);
+      result = validateCreateResult(rawResult, validatedMutation);
+    } catch {
+      return this.reconcileAmbiguousCreate(
+        candidate,
+        validatedMutation,
+        context
+      );
+    }
     if (result.status === "created") {
       return {
         status: "created",
@@ -275,9 +301,46 @@ class EncryptedConnectionStore {
       };
     }
 
-    const existing = result.record;
+    return this.resolveExistingCreate(
+      candidate,
+      result.record,
+      validatedMutation
+    );
+  }
+
+  /** Resolves a lost or malformed create response from encrypted state only. */
+  private async reconcileAmbiguousCreate(
+    candidate: StoredCredentialEnvelope,
+    mutation: CredentialCreateMutation,
+    context?: ControlPlaneOperationContext
+  ): Promise<StoreCredentialResult> {
+    let stored: StoredCredentialEnvelope | null;
+    try {
+      stored = await this.persistence.read(mutation, context);
+    } catch {
+      throw new CredentialStoreError("persistence_unavailable");
+    }
+    if (stored === null) {
+      throw new CredentialStoreError("persistence_unavailable");
+    }
+
+    let existing: StoredCredentialEnvelope;
+    try {
+      existing = validateStoredRecord(stored, mutation);
+    } catch {
+      throw new CredentialStoreError("persistence_unavailable");
+    }
+    return this.resolveExistingCreate(candidate, existing, mutation);
+  }
+
+  /** Accepts an existing create only when lineage and payload both match. */
+  private resolveExistingCreate(
+    candidate: StoredCredentialEnvelope,
+    existing: StoredCredentialEnvelope,
+    mutation: CredentialCreateMutation
+  ): StoreCredentialResult {
     if (
-      existing.creationOperationId !== validatedMutation.creationOperationId ||
+      existing.creationOperationId !== mutation.creationOperationId ||
       !this.recordsContainSamePayload(candidate, existing)
     ) {
       throw new CredentialStoreError("credential_already_exists");
@@ -311,7 +374,7 @@ class EncryptedConnectionStore {
     try {
       return await consume(plaintext);
     } finally {
-      plaintext.fill(0);
+      clearBuffer(plaintext);
     }
   }
 
@@ -360,7 +423,7 @@ class EncryptedConnectionStore {
       );
     } finally {
       // Re-encryption owns no mutable plaintext when the CAS begins.
-      plaintext.fill(0);
+      clearBuffer(plaintext);
     }
 
     const result = validateReplaceResult(
@@ -439,9 +502,9 @@ class EncryptedConnectionStore {
         material
       );
     } finally {
-      material.dataKey.fill(0);
-      material.payloadNonce.fill(0);
-      material.wrapNonce.fill(0);
+      clearBuffer(material.dataKey);
+      clearBuffer(material.payloadNonce);
+      clearBuffer(material.wrapNonce);
     }
   }
 
@@ -453,7 +516,7 @@ class EncryptedConnectionStore {
   /** Authenticates an envelope without retaining its plaintext. */
   private authenticateRecord(record: StoredCredentialEnvelope): void {
     const plaintext = this.decryptEnvelope(record);
-    plaintext.fill(0);
+    clearBuffer(plaintext);
   }
 
   /** Constant-time compares credential contents while clearing both plaintexts. */
@@ -471,10 +534,10 @@ class EncryptedConnectionStore {
       secondDigest = createHash("sha256").update(secondPlaintext).digest();
       return timingSafeEqual(firstDigest, secondDigest);
     } finally {
-      firstPlaintext.fill(0);
-      secondPlaintext?.fill(0);
-      firstDigest?.fill(0);
-      secondDigest?.fill(0);
+      clearBuffer(firstPlaintext);
+      clearBuffer(secondPlaintext);
+      clearBuffer(firstDigest);
+      clearBuffer(secondDigest);
     }
   }
 
@@ -508,7 +571,7 @@ class EncryptedConnectionStore {
 
       const fingerprintBytes = createHash("sha256").update(dataKey).digest();
       const dataKeyFingerprint = fingerprintBytes.toString("base64url");
-      fingerprintBytes.fill(0);
+      clearBuffer(fingerprintBytes);
       const wrapNonceText = wrapNonce.toString("base64url");
       const keyNonces =
         this.wrapNoncesByKeyVersion.get(this.keys.current.keyVersion) ??
@@ -526,9 +589,9 @@ class EncryptedConnectionStore {
       this.kekEncryptionCount += 1;
       return { dataKey, payloadNonce, wrapNonce, recordRevision };
     } catch {
-      dataKey?.fill(0);
-      payloadNonce?.fill(0);
-      wrapNonce?.fill(0);
+      clearBuffer(dataKey);
+      clearBuffer(payloadNonce);
+      clearBuffer(wrapNonce);
       throw new CredentialStoreError("internal_configuration_invalid");
     }
   }
@@ -582,7 +645,7 @@ function encryptCredential(
         ciphertextDigest: payloadDigest.toString("base64url"),
       });
     } finally {
-      payloadDigest.fill(0);
+      clearBuffer(payloadDigest);
     }
 
     const wrapCipher = createCipheriv(
@@ -611,12 +674,12 @@ function encryptCredential(
     if (error instanceof CredentialStoreError) throw error;
     throw new CredentialStoreError("internal_configuration_invalid");
   } finally {
-    payloadAad.fill(0);
-    wrapAad?.fill(0);
-    ciphertext?.fill(0);
-    payloadAuthTag?.fill(0);
-    wrappedDataKey?.fill(0);
-    wrapAuthTag?.fill(0);
+    clearBuffer(payloadAad);
+    clearBuffer(wrapAad);
+    clearBuffer(ciphertext);
+    clearBuffer(payloadAuthTag);
+    clearBuffer(wrappedDataKey);
+    clearBuffer(wrapAuthTag);
   }
 }
 
@@ -640,7 +703,7 @@ function decryptCredential(
     payloadAuthTag: record.payloadAuthTag,
     ciphertextDigest: payloadDigest.toString("base64url"),
   });
-  payloadDigest.fill(0);
+  clearBuffer(payloadDigest);
   let dataKey: Buffer | undefined;
   let plaintextFirst: Buffer | undefined;
 
@@ -679,28 +742,28 @@ function decryptCredential(
           plaintext.byteLength === 0 ||
           plaintext.byteLength > MAX_CREDENTIAL_BYTES
         ) {
-          plaintext.fill(0);
+          clearBuffer(plaintext);
           throw new Error("invalid plaintext length");
         }
         return plaintext;
       } finally {
-        plaintextFinal.fill(0);
+        clearBuffer(plaintextFinal);
       }
     } finally {
-      payloadAad.fill(0);
+      clearBuffer(payloadAad);
     }
   } catch {
     throw new CredentialStoreError("decryption_failed");
   } finally {
-    dataKey?.fill(0);
-    plaintextFirst?.fill(0);
-    payloadNonce.fill(0);
-    ciphertext.fill(0);
-    payloadAuthTag.fill(0);
-    wrappedDataKey.fill(0);
-    wrapNonce.fill(0);
-    wrapAuthTag.fill(0);
-    wrapAad.fill(0);
+    clearBuffer(dataKey);
+    clearBuffer(plaintextFirst);
+    clearBuffer(payloadNonce);
+    clearBuffer(ciphertext);
+    clearBuffer(payloadAuthTag);
+    clearBuffer(wrappedDataKey);
+    clearBuffer(wrapNonce);
+    clearBuffer(wrapAuthTag);
+    clearBuffer(wrapAad);
   }
 }
 
@@ -752,23 +815,28 @@ function findDecryptionKey(
   throw new CredentialStoreError("key_unavailable");
 }
 
-/** Accepts ownership of one bounded mutable Buffer for synchronous encryption. */
-function takeCredentialPayload(payload: Buffer): Buffer {
-  if (!Buffer.isBuffer(payload)) {
-    throw new CredentialStoreError("invalid_input");
-  }
+/** Bounds a Buffer after ownership has entered an unconditional clearing scope. */
+function assertCredentialPayloadBounds(payload: Buffer): void {
   if (payload.byteLength === 0 || payload.byteLength > MAX_CREDENTIAL_BYTES) {
     throw new CredentialStoreError("invalid_input");
   }
-  return payload;
 }
 
 /** Accepts ownership of one exact-sized random Buffer for immediate clearing. */
 function takeRandomBytes(value: unknown, expectedBytes: number): Buffer {
-  if (!Buffer.isBuffer(value) || value.byteLength !== expectedBytes) {
+  if (!Buffer.isBuffer(value)) {
+    throw new Error("invalid random bytes");
+  }
+  if (value.byteLength !== expectedBytes) {
+    clearBuffer(value);
     throw new Error("invalid random bytes");
   }
   return value;
+}
+
+/** Clears a Buffer through the native method even if an instance shadows it. */
+function clearBuffer(value: Buffer | undefined): void {
+  if (value !== undefined) Buffer.prototype.fill.call(value, 0);
 }
 
 /** Checks an owned random buffer without allocating secret-derived text. */
@@ -958,12 +1026,12 @@ function validateStoredRecord(
       throw new CredentialStoreError("invalid_record");
     }
   } finally {
-    payloadNonce.fill(0);
-    payloadAuthTag.fill(0);
-    wrapNonce.fill(0);
-    wrapAuthTag.fill(0);
-    wrappedDataKey.fill(0);
-    ciphertext.fill(0);
+    clearBuffer(payloadNonce);
+    clearBuffer(payloadAuthTag);
+    clearBuffer(wrapNonce);
+    clearBuffer(wrapAuthTag);
+    clearBuffer(wrappedDataKey);
+    clearBuffer(ciphertext);
   }
 
   return Object.freeze({
@@ -1163,7 +1231,7 @@ function decodeBase64Url(value: string, expectedBytes?: number): Buffer {
     decoded.toString("base64url") !== value ||
     (expectedBytes !== undefined && decoded.byteLength !== expectedBytes)
   ) {
-    decoded.fill(0);
+    clearBuffer(decoded);
     throw new CredentialStoreError("invalid_record");
   }
   return decoded;

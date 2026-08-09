@@ -154,6 +154,7 @@ function deferred<T>() {
 /** Atomic in-memory adapter used only to exercise the injected contract. */
 class MemoryPersistence implements EncryptedCredentialPersistence {
   record: StoredCredentialEnvelope | null = null;
+  readFailure?: Error;
   beforeReplace?: () => void;
   beforeDelete?: () => void;
   createImplementation?: (
@@ -165,6 +166,7 @@ class MemoryPersistence implements EncryptedCredentialPersistence {
   ) => Promise<ReplaceCredentialResult>;
 
   async read(identity: CredentialIdentity) {
+    if (this.readFailure) throw this.readFailure;
     return this.matches(identity) ? this.record : null;
   }
 
@@ -261,7 +263,7 @@ async function readBytes(
   return store.use(identity, (payload) => Uint8Array.from(payload));
 }
 
-/** Stores one fresh Buffer and returns its pre-transfer bytes separately. */
+/** Stores one fresh Buffer whose ownership transfers to the store. */
 async function storeText(
   store: EncryptedConnectionStore,
   text = SECRET_CANARY,
@@ -581,6 +583,83 @@ describe("EncryptedConnectionStore idempotency, lineage, and concurrency", () =>
     });
   });
 
+  it("reconciles commit-then-throw and malformed-after-commit outcomes", async () => {
+    for (const outcome of ["throw", "malformed"] as const) {
+      const persistence = new MemoryPersistence();
+      persistence.createImplementation = async (record) => {
+        persistence.record = record;
+        if (outcome === "throw") throw new Error(SECRET_CANARY);
+        return {
+          status: "created",
+          extension: SECRET_CANARY,
+        } as unknown as CreateCredentialResult;
+      };
+      const { store } = createFixture({ persistence, seed: 105 });
+      const transferred = Buffer.from(SECRET_CANARY);
+
+      await expect(
+        store.store(CREATE_MUTATION, transferred)
+      ).resolves.toMatchObject({
+        status: "already_created",
+        recordRevision: persistence.record?.recordRevision,
+      });
+      expect(Array.from(transferred)).toEqual(
+        Array(SECRET_CANARY.length).fill(0)
+      );
+    }
+  });
+
+  it("denies ambiguous-create collisions against a different payload", async () => {
+    const persistence = new MemoryPersistence();
+    await createFixture({ persistence, seed: 106 }).store.store(
+      CREATE_MUTATION,
+      Buffer.from("existing")
+    );
+    persistence.createImplementation = async () => {
+      throw new Error(SECRET_CANARY);
+    };
+    const retrying = createFixture({ persistence, seed: 107 }).store;
+    const transferred = Buffer.from("different");
+
+    await expect(
+      retrying.store(CREATE_MUTATION, transferred)
+    ).rejects.toMatchObject({ code: "credential_already_exists" });
+    expect(Array.from(transferred)).toEqual(Array("different".length).fill(0));
+  });
+
+  it("fails honestly when reconciliation is unavailable, then accepts a fresh restarted retry", async () => {
+    const persistence = new MemoryPersistence();
+    persistence.createImplementation = async (record) => {
+      persistence.record = record;
+      throw new Error(SECRET_CANARY);
+    };
+    persistence.readFailure = new Error(SECRET_CANARY);
+    const firstProcess = createFixture({ persistence, seed: 108 }).store;
+    const transferred = Buffer.from(SECRET_CANARY);
+
+    await expect(
+      firstProcess.store(CREATE_MUTATION, transferred)
+    ).rejects.toMatchObject({
+      code: "persistence_unavailable",
+      message: "Credential persistence is unavailable",
+    });
+    expect(Array.from(transferred)).toEqual(
+      Array(SECRET_CANARY.length).fill(0)
+    );
+
+    // A restarted process must obtain fresh provider bytes; it never reuses the
+    // transferred and zeroed Buffer from the ambiguous attempt.
+    persistence.readFailure = undefined;
+    persistence.createImplementation = undefined;
+    const restarted = createFixture({ persistence, seed: 109 }).store;
+    await expect(
+      restarted.store(CREATE_MUTATION, Buffer.from(SECRET_CANARY))
+    ).resolves.toMatchObject({ status: "already_created" });
+    await expect(
+      restarted.store(CREATE_MUTATION, Buffer.from("collision"))
+    ).rejects.toMatchObject({ code: "credential_already_exists" });
+  });
+
   it("resolves concurrent same-operation creates only when payloads match", async () => {
     const persistence = new MemoryPersistence();
     const first = createFixture({ persistence, seed: 110 }).store;
@@ -657,6 +736,34 @@ describe("EncryptedConnectionStore idempotency, lineage, and concurrency", () =>
     await expect(
       restarted.store(CREATE_MUTATION, Buffer.from("different"))
     ).rejects.toMatchObject({ code: "credential_already_exists" });
+  });
+
+  it("reads previous-KEK records and authenticates direct current rotations", async () => {
+    const persistence = new MemoryPersistence();
+    const previousStore = createFixture({
+      persistence,
+      current: PREVIOUS_KEK,
+      seed: 172,
+    }).store;
+    await previousStore.store(CREATE_MUTATION, Buffer.from(SECRET_CANARY));
+    const overlapStore = createFixture({
+      persistence,
+      current: CURRENT_KEK,
+      previous: PREVIOUS_KEK,
+      seed: 173,
+    }).store;
+    expect(Buffer.from(await readBytes(overlapStore)).toString()).toBe(
+      SECRET_CANARY
+    );
+
+    const currentStore = createFixture({ seed: 174 }).store;
+    await currentStore.store(CREATE_MUTATION, Buffer.from(SECRET_CANARY));
+    await expect(currentStore.rotate(ROTATION_MUTATION)).resolves.toMatchObject(
+      {
+        status: "already_current",
+        keyVersion: CURRENT_KEK.keyVersion,
+      }
+    );
   });
 
   it("rejects reuse of the creation identity as a rotation identity", async () => {
@@ -768,7 +875,7 @@ describe("EncryptedConnectionStore idempotency, lineage, and concurrency", () =>
 });
 
 describe("EncryptedConnectionStore closed snapshots and errors", () => {
-  it("rejects accessors, proxies, symbols, hidden fields, and extensions", async () => {
+  it("clears canaries before rejecting hostile or invalid metadata", async () => {
     let getterCalls = 0;
     const accessor = { ...CREATE_MUTATION } as Record<string, unknown>;
     Object.defineProperty(accessor, "creationOperationId", {
@@ -797,13 +904,18 @@ describe("EncryptedConnectionStore closed snapshots and errors", () => {
         ...CREATE_MUTATION,
         creationOperationId: `mutation_v1_${"a".repeat(4_096)}`,
       },
+      { ...CREATE_MUTATION, provider: "claude" },
     ];
 
     for (const input of inputs) {
       const { store } = createFixture();
+      const transferred = Buffer.from(SECRET_CANARY);
       await expect(
-        store.store(input as CredentialCreateMutation, Buffer.from("x"))
+        store.store(input as CredentialCreateMutation, transferred)
       ).rejects.toMatchObject({ code: "invalid_input" });
+      expect(Array.from(transferred)).toEqual(
+        Array(SECRET_CANARY.length).fill(0)
+      );
     }
     expect(getterCalls).toBe(0);
   });
@@ -813,17 +925,95 @@ describe("EncryptedConnectionStore closed snapshots and errors", () => {
     await expect(
       store.store(CREATE_MUTATION, new Uint8Array([1]) as unknown as Buffer)
     ).rejects.toMatchObject({ code: "invalid_input" });
-    await expect(
-      store.store(CREATE_MUTATION, Buffer.alloc(0))
-    ).rejects.toMatchObject({
+    const empty = Buffer.alloc(0);
+    await expect(store.store(CREATE_MUTATION, empty)).rejects.toMatchObject({
       code: "invalid_input",
     });
-    const oversized = Buffer.alloc(MAX_CREDENTIAL_BYTES + 1, 1);
+    expect(empty).toHaveLength(0);
+    const oversized = Buffer.alloc(MAX_CREDENTIAL_BYTES + 1, 7);
     await expect(store.store(CREATE_MUTATION, oversized)).rejects.toMatchObject(
       {
         code: "invalid_input",
       }
     );
+    expect(oversized.every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("clears every Buffer returned with a wrong random-source size", async () => {
+    for (const badField of ["dataKey", "payloadNonce", "wrapNonce"] as const) {
+      const returned: Buffer[] = [];
+      const make = (length: number, fill: number) => {
+        const value = Buffer.alloc(length, fill);
+        returned.push(value);
+        return value;
+      };
+      const source: CredentialRandomSource = Object.freeze({
+        dataKey: () =>
+          make(
+            badField === "dataKey" ? 31 : 32,
+            badField === "dataKey" ? 7 : 1
+          ),
+        payloadNonce: () =>
+          make(
+            badField === "payloadNonce" ? 11 : 12,
+            badField === "payloadNonce" ? 7 : 2
+          ),
+        wrapNonce: () =>
+          make(
+            badField === "wrapNonce" ? 11 : 12,
+            badField === "wrapNonce" ? 7 : 3
+          ),
+        recordRevision: () =>
+          "revision_v1_00000000-0000-4000-8000-000000000001",
+      });
+      const store = new EncryptedConnectionStore(
+        new MemoryPersistence(),
+        { current: CURRENT_KEK },
+        source
+      );
+      const transferred = Buffer.from(SECRET_CANARY);
+      await expect(
+        store.store(CREATE_MUTATION, transferred)
+      ).rejects.toMatchObject({ code: "internal_configuration_invalid" });
+      expect(Array.from(transferred)).toEqual(
+        Array(SECRET_CANARY.length).fill(0)
+      );
+      for (const buffer of returned) {
+        expect(buffer.every((byte) => byte === 0)).toBe(true);
+      }
+    }
+  });
+
+  it("clears all returned random Buffers when a later source step fails", async () => {
+    const returned = [
+      Buffer.alloc(32, 1),
+      Buffer.alloc(12, 2),
+      Buffer.alloc(12, 3),
+    ];
+    const source: CredentialRandomSource = Object.freeze({
+      dataKey: () => returned[0],
+      payloadNonce: () => returned[1],
+      wrapNonce: () => returned[2],
+      recordRevision: () => {
+        throw new Error(SECRET_CANARY);
+      },
+    });
+    const store = new EncryptedConnectionStore(
+      new MemoryPersistence(),
+      { current: CURRENT_KEK },
+      source
+    );
+    const transferred = Buffer.from(SECRET_CANARY);
+
+    await expect(
+      store.store(CREATE_MUTATION, transferred)
+    ).rejects.toMatchObject({ code: "internal_configuration_invalid" });
+    expect(Array.from(transferred)).toEqual(
+      Array(SECRET_CANARY.length).fill(0)
+    );
+    for (const buffer of returned) {
+      expect(buffer.every((byte) => byte === 0)).toBe(true);
+    }
   });
 
   it("snapshots adapter records and rejects accessors, proxies, and extras", async () => {

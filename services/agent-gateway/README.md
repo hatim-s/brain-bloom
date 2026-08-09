@@ -7,7 +7,7 @@ dependency-free contracts include:
 - Ed25519-signed, versioned, Codex-only assertions with a maximum 60-second
   lifetime;
 - exact issuer, audience, owner, connection, provider, and operation matching;
-- explicit current/previous verification-key overlap; and
+- explicit current/previous verification-key overlap;
 - bounded, fail-closed replay defense that consumes signed requests before
   expected-context validation;
 - a strict AES-256-GCM envelope with a fresh per-credential DEK, a versioned KEK
@@ -27,6 +27,8 @@ Codex Buffer -- ownership transfer --> fresh DEK -> encrypted payload
                               clear sensitive buffers before await
                                           |
                               encrypted envelope -> atomic adapter
+                                          |
+                          lost response -> read/authenticate/reconcile
 ```
 
 There is no HTTP listener, concrete credential database, provider execution,
