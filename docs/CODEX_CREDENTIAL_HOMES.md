@@ -1,21 +1,33 @@
 # Codex credential homes
 
-This Phase 1 slice defines the fail-closed host boundary for future
-subscription-backed Codex connections. It does not log in to Codex, accept or
-store credentials, start a provider process, write application data, or deploy
-the gateway.
+This Phase 1 slice defines a fail-closed contract for future
+subscription-backed Codex credential homes. It does not log in to Codex, accept
+or store credentials, start a provider process, create a production home, write
+application data, or deploy the gateway.
 
-## Production boundary
+## No production authority yet
 
 Portable Node filesystem operations cannot prove the isolation required by
-[ADR 0002](./adr/0002-subscription-connection-gateway.md). In particular,
-same-UID `0700` directories do not stop a future provider child from reading a
-sibling home, path validation cannot close deletion time-of-check/time-of-use
-races, and a pin stored inside a managed root disappears with that root.
+[ADR 0002](./adr/0002-subscription-connection-gateway.md). Same-UID `0700`
+directories do not stop a future provider child from reading sibling homes,
+path validation cannot close recursive-deletion time-of-check/time-of-use
+races, and a pin stored inside the managed root disappears with that root.
 
-`CodexCredentialHomeManager` therefore has no filesystem default. Production
-initialization fails closed unless the deployment injects all three capabilities
-in one attested isolation domain:
+Structural TypeScript interfaces and returned booleans are not security
+attestations. The production `CodexCredentialHomeManager` therefore accepts only
+an opaque capability registered in a module-private runtime root of trust. A
+cast, object spread, wrapper, proxy, or exported test helper cannot register an
+object in that root of trust. Returned production runtime authority is protected
+by a separate module-private runtime brand and can be checked before a future
+launcher uses it.
+
+There is intentionally no exported or portable production provisioner in this
+change. Until maintainers select a host and implement its reviewed adapter
+inside the trusted module boundary, every attempt to initialize the production
+manager fails before touching the configured root.
+
+The future trusted authority must encapsulate all three capabilities below in
+one isolation domain:
 
 ```text
                         external durable root-pin registry
@@ -24,79 +36,82 @@ in one attested isolation domain:
 authorized owner + connection -> lifecycle coordinator -> host isolation layer
        |                              |                       |
        v                              v                       v
- SHA-256 home ID             active/revoked tombstone  bound home/root handles
-                                      |                       |
-                                      +----------+------------+
-                                                 v
-                           CODEX_HOME + file credential-store flag
+ SHA-256 home ID            provisionable/active/      bound home/root handles
+                              revoking/revoked                   |
+                                      |                          |
+                                      +------------+-------------+
+                                                   v
+                              branded production runtime authority
 ```
 
-1. **Host isolation capability.** It must attest that a provider child cannot
-   access sibling homes and that recursive deletion is bound to verified root
-   and leaf identities (descriptor-bound or an equivalent non-path-racy host
-   primitive). It creates/opens homes and performs deletion; the manager does
-   not implement recursive deletion with portable path calls.
-2. **External root-pin registry.** It atomically pins or verifies the opaque
-   root device, inode, and generation under a non-path root key. The pin is
-   stored outside the managed root and survives gateway restart. A replacement
-   at the configured path is a mismatch, never a new root to adopt.
-3. **Durable lifecycle coordinator.** It serializes each derived home across
-   processes/managers and persists `active` or `revoked` state. Revocation is
-   committed before local deletion. Queued or restarted `ensure` calls cannot
-   recreate a revoked home, and cleanup can be retried under its tombstone.
+1. The host adapter must reject nonexistent or substituted roots, isolate each
+   provider child from sibling homes, and perform descriptor/identity-bound (or
+   equivalently non-path-racy) deletion.
+2. The external root registry must atomically compare-and-set an opaque root
+   device, inode, and generation outside the managed root and retain it across
+   gateway restart.
+3. The lifecycle coordinator must serialize each home across processes and
+   durably preserve terminal `revoking` and `revoked` states.
 
-The manager requires matching isolation-domain identifiers across these
-capabilities. Each capability supplies a positive production attestation for
-its guarantees; names and TypeScript shapes alone are not treated as proof.
-Missing, unavailable, inconsistent, or negative capabilities produce stable
-secret-free failures.
+## Revocation state machine
+
+Only explicit `provisionable` and `active` states may ensure a home. `revoking`,
+`revoked`, absent, malformed, invented, or unavailable state fails closed.
+
+```text
+provisionable ----ensure----> active
+      |                         |
+      +---------teardown--------+
+                    |
+                    v
+                revoking  -- successful cleanup -->  revoked
+                    ^                                  |
+                    |------- idempotent retry ---------+
+```
+
+Teardown acquires the cross-process lease and durably commits `revoking` before
+calling external provider revocation or host deletion. Callback, deletion, or
+final-tombstone failure leaves the lifecycle terminal at `revoking`. A queued or
+fresh-manager ensure cannot reactivate it. Cleanup retries may repeat the
+idempotent provider revoke/delete operations and may only advance
+`revoking -> revoked`; they cannot transition back to an executable state.
 
 ## Identity and runtime policy
 
 The manager hashes an already-authorized Clerk owner subject and opaque
-connection ID using a length-prefixed, domain-separated SHA-256 tuple. The
-result is one flat `codex-<64 lowercase hex characters>` name. Raw owner and
-connection identifiers never become path segments. There is no list, search,
-fallback, merge, or shared-home API.
+connection ID using a length-prefixed, domain-separated SHA-256 tuple. Raw
+identifiers never become path segments, and there is no list, search, fallback,
+merge, or shared-home API.
 
-The process environment returned for a future Codex child contains only
-`CODEX_HOME`; it never merges the ambient environment. The accompanying Codex
-session flag pins `cli_auth_credentials_store="file"`. The future launcher must
-consume this exact contract and must not add API-key or other-provider
-credentials.
+A future branded production result contains only `CODEX_HOME` plus the Codex
+session flag `cli_auth_credentials_store="file"`. It never merges ambient API
+keys or other-provider credentials. This change cannot mint that result.
 
-Disconnect and owner deletion acquire the durable lifecycle lease, revoke the
-provider connection once, persist the revoked tombstone, and then ask the host
-capability to delete the exact identity-bound home. Failed provider revocation
-preserves both lifecycle and local state. Failed local cleanup retains the
-tombstone so later cleanup is safe while execution remains closed.
+## Separate test-only support
 
-## Test-only adapter
-
-`codex-credential-homes.test-support.ts` is an explicitly non-production,
-single-process behavior emulator. It uses local path operations and in-memory
-maps so adversarial tests can reproduce root/leaf swaps, manager races, and
-restart behavior. Its attestation is labeled `test-only`; initialization rejects
-it unless the caller sets the explicit test-only-capabilities switch. Its host, root-pin, and
-coordinator attestations truthfully report the production guarantees they do
-not provide. It does **not** satisfy ADR 0002, does not establish same-UID
-sibling isolation, and must never be wired into a deployed gateway.
+`TestOnlyCodexCredentialHomeManager` and
+`codex-credential-homes.test-support.ts` form an explicit non-production API.
+Its runtime result is permanently labeled `test-only` and is never registered
+with either production root of trust. The local path adapter and in-memory
+coordinator/root pins exist only to reproduce lifecycle races and filesystem
+attacks. They do **not** satisfy ADR 0002 and cannot be wrapped, cast, or proxied
+into production authority.
 
 ## Human gates before real credentials
 
-No production host implementation is selected or included. Before real
-credentials, maintainers must:
+Before production authority can be minted, maintainers must:
 
-1. Select the persistent gateway host and durable volume, then implement and
-   independently review its descriptor/identity-bound home operations.
-2. Prove provider children run under an OS/sandbox identity that cannot access
-   sibling homes, including escape and same-host adversarial tests.
-3. Provision an external durable root-pin registry and cross-process lifecycle
-   coordinator with atomic compare-and-set, locking, and tombstone durability.
-4. Approve encryption-key custody, rotation, backup, restore, and deletion from
+1. Select the persistent gateway host and durable volume.
+2. Implement and independently review the host adapter inside the module's
+   trusted authority boundary.
+3. Prove provider-child sibling isolation and descriptor/identity-bound cleanup
+   with same-host escape and race tests.
+4. Provision durable external root pins and a cross-process coordinator with
+   atomic leases and terminal tombstones.
+5. Approve encryption-key custody, rotation, backup, restore, and deletion from
    backups before storing any real credential material.
-5. Approve the Codex login ceremony and allowlisted test owner, then validate
-   host durability, restore, and incident-revocation procedures.
+6. Approve the Codex ceremony and allowlisted owner, then validate durability,
+   restore, and incident-revocation procedures.
 
 Claude connection work remains deferred. No production database mutation,
 credential ceremony, provider execution, persistent home creation, or

@@ -21,22 +21,19 @@ import {
   type LocalTestHostHooks,
 } from "./codex-credential-homes.test-support.ts";
 import {
+  assertTrustedCodexRuntimeAuthority,
   CodexCredentialHomeManager,
   CredentialHomeError,
-  type CredentialHomeHostCapability,
   type DurableCredentialHomeCoordinator,
-  type DurableRootIdentityPins,
   FILE_CREDENTIAL_STORE_FLAG,
-  type HostIsolationAttestation,
-  type LifecycleDurabilityAttestation,
-  type RootPinDurabilityAttestation,
+  TestOnlyCodexCredentialHomeManager,
 } from "./codex-credential-homes.ts";
 
 const temporaryDirectories: string[] = [];
 
 type ManagerHarness = Readonly<{
   capabilities: LocalCredentialHomeTestCapabilities;
-  manager: CodexCredentialHomeManager;
+  manager: TestOnlyCodexCredentialHomeManager;
   parent: string;
   root: string;
 }>;
@@ -49,24 +46,24 @@ async function createTemporaryParent(): Promise<string> {
   return parent;
 }
 
-/** Builds a manager with explicitly non-production shared test capabilities. */
+/** Builds an explicitly non-production manager from shared local capabilities. */
 function buildTestManager(
   root: string,
   capabilities: LocalCredentialHomeTestCapabilities
-): CodexCredentialHomeManager {
-  return new CodexCredentialHomeManager({
+): TestOnlyCodexCredentialHomeManager {
+  return new TestOnlyCodexCredentialHomeManager({
     rootPath: root,
-    ...capabilities,
-    allowTestOnlyCapabilities: true,
+    capabilities,
   });
 }
 
-/** Creates and initializes one manager with a not-yet-created durable root. */
+/** Creates a pre-provisioned root and initializes one test-only manager. */
 async function createManager(
   hooks: LocalTestHostHooks = {}
 ): Promise<ManagerHarness> {
   const parent = await createTemporaryParent();
   const root = join(parent, "durable-codex-homes");
+  await mkdir(root, { mode: 0o700 });
   const capabilities = createLocalCredentialHomeTestCapabilities(hooks);
   const manager = buildTestManager(root, capabilities);
   await manager.initialize();
@@ -86,23 +83,6 @@ async function captureCredentialHomeError(
   }
 }
 
-/** Wraps a host while preserving every bound capability method. */
-function proxyHost(
-  host: CredentialHomeHostCapability,
-  attestIsolation: (rootPath: string) => Promise<HostIsolationAttestation> = (
-    rootPath
-  ) => host.attestIsolation(rootPath)
-): CredentialHomeHostCapability {
-  return {
-    isolationDomain: host.isolationDomain,
-    attestIsolation,
-    ensureRoot: (rootPath) => host.ensureRoot(rootPath),
-    inspectRoot: (rootPath) => host.inspectRoot(rootPath),
-    ensureHome: (input) => host.ensureHome(input),
-    deleteHome: (input) => host.deleteHome(input),
-  };
-}
-
 /** Restores one ambient environment key after credential-canary tests. */
 function restoreEnvironment(name: string, value: string | undefined): void {
   if (value === undefined) {
@@ -120,140 +100,123 @@ afterEach(async () => {
   );
 });
 
-describe("CodexCredentialHomeManager capability boundary", () => {
-  it("fails closed without injected production capabilities", async () => {
+describe("production Codex credential-home authority", () => {
+  it("fails closed because no production provisioner exists", async () => {
     const parent = await createTemporaryParent();
     const manager = new CodexCredentialHomeManager({
-      rootPath: join(parent, "homes"),
+      rootPath: join(parent, "nonexistent-root"),
     });
 
     const error = await captureCredentialHomeError(() => manager.initialize());
     expect(error.code).toBe("credential_home_capability_unavailable");
   });
 
-  it("rejects the portable test host unless test-only use is explicit", async () => {
+  it.each(["cast", "wrapper", "proxy"] as const)(
+    "rejects a structurally forged %s authority before root access",
+    async (variant) => {
+      const parent = await createTemporaryParent();
+      const root = join(parent, "nonexistent-root");
+      const capabilities = createLocalCredentialHomeTestCapabilities();
+      const fakeAuthority = {
+        capabilities,
+        environment: "production",
+        siblingHomesInaccessible: true,
+        identityBoundDeletion: true,
+        persistentRevokedTombstones: true,
+      };
+      const authority =
+        variant === "proxy"
+          ? new Proxy(fakeAuthority, {})
+          : variant === "wrapper"
+            ? { ...fakeAuthority }
+            : (fakeAuthority as unknown);
+      const manager = new CodexCredentialHomeManager({
+        rootPath: root,
+        authority,
+      });
+
+      const error = await captureCredentialHomeError(() =>
+        manager.initialize()
+      );
+      expect(error.code).toBe("credential_home_capability_unavailable");
+      await expect(lstat(root)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  );
+
+  it("rejects the exported test capability set as production authority", async () => {
     const parent = await createTemporaryParent();
-    const root = join(parent, "homes");
+    const root = join(parent, "nonexistent-root");
     const capabilities = createLocalCredentialHomeTestCapabilities();
     const manager = new CodexCredentialHomeManager({
       rootPath: root,
-      ...capabilities,
+      authority: capabilities,
     });
+
+    const error = await captureCredentialHomeError(() => manager.initialize());
+    expect(error.code).toBe("credential_home_capability_unavailable");
+    await expect(lstat(root)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects nonexistent roots in the separate test-only API", async () => {
+    const parent = await createTemporaryParent();
+    const root = join(parent, "nonexistent-root");
+    const manager = buildTestManager(
+      root,
+      createLocalCredentialHomeTestCapabilities()
+    );
 
     const error = await captureCredentialHomeError(() => manager.initialize());
     expect(error.code).toBe("credential_home_unsafe");
     await expect(lstat(root)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.each(["sibling", "deletion"] as const)(
-    "rejects a false %s isolation attestation",
-    async (failure) => {
-      const parent = await createTemporaryParent();
-      const root = join(parent, "homes");
-      const capabilities = createLocalCredentialHomeTestCapabilities();
-      const host = proxyHost(capabilities.host, async (rootPath) => ({
-        ...(await capabilities.host.attestIsolation(rootPath)),
-        environment: "production",
-        siblingHomesInaccessible: failure !== "sibling",
-        identityBoundDeletion: failure !== "deletion",
-      }));
-      const manager = buildTestManager(root, { ...capabilities, host });
+  it("never upgrades test runtime values, casts, or proxies to production", async () => {
+    const { manager } = await createManager();
+    const runtime = (
+      await manager.ensure({
+        ownerId: "user_test_runtime",
+        connectionId: "conn_test_runtime",
+      })
+    ).runtime;
 
+    const productionLookingRuntime = {
+      authority: "production",
+      env: runtime.env,
+      sessionFlags: runtime.sessionFlags,
+    };
+    for (const candidate of [
+      runtime,
+      { ...runtime },
+      new Proxy(runtime, {}),
+      productionLookingRuntime,
+    ]) {
       const error = await captureCredentialHomeError(() =>
-        manager.initialize()
+        assertTrustedCodexRuntimeAuthority(candidate)
       );
-      expect(error.code).toBe("credential_home_unsafe");
+      expect(error.code).toBe("credential_home_capability_unavailable");
     }
-  );
-
-  it("maps unavailable attestations to a stable secret-free error", async () => {
-    const parent = await createTemporaryParent();
-    const root = join(parent, "homes");
-    const canary = "attestation-provider-secret-84f3";
-    const capabilities = createLocalCredentialHomeTestCapabilities();
-    const host = proxyHost(capabilities.host, async () => {
-      throw new CredentialHomeError(
-        "credential_home_unsafe",
-        `forged public error ${canary}`
-      );
-    });
-    const manager = buildTestManager(root, { ...capabilities, host });
-
-    const error = await captureCredentialHomeError(() => manager.initialize());
-    expect(error.code).toBe("credential_home_capability_unavailable");
-    expect(error.message).not.toContain(canary);
+    expect(runtime.authority).toBe("test-only");
   });
 
-  it("requires the host, root pins, and coordinator to share one domain", async () => {
+  it("rejects mismatched test capability domains", async () => {
     const parent = await createTemporaryParent();
+    const root = join(parent, "homes");
+    await mkdir(root, { mode: 0o700 });
     const capabilities = createLocalCredentialHomeTestCapabilities();
     const coordinator: DurableCredentialHomeCoordinator = {
       isolationDomain: "wrong-domain",
-      attestDurability: () => capabilities.coordinator.attestDurability(),
       runExclusive: (homeId, operation) =>
         capabilities.coordinator.runExclusive(homeId, operation),
     };
-    const manager = new CodexCredentialHomeManager({
-      rootPath: join(parent, "homes"),
-      ...capabilities,
-      coordinator,
-      allowTestOnlyCapabilities: true,
-    });
 
-    const error = await captureCredentialHomeError(() => manager.initialize());
+    const error = await captureCredentialHomeError(() =>
+      buildTestManager(root, { ...capabilities, coordinator })
+    );
     expect(error.code).toBe("credential_home_configuration_invalid");
-  });
-
-  it("rejects a production root-pin capability without every durability proof", async () => {
-    const parent = await createTemporaryParent();
-    const capabilities = createLocalCredentialHomeTestCapabilities();
-    const rootPins: DurableRootIdentityPins = {
-      isolationDomain: capabilities.rootPins.isolationDomain,
-      attestDurability: async (): Promise<RootPinDurabilityAttestation> => ({
-        isolationDomain: capabilities.rootPins.isolationDomain,
-        environment: "production",
-        storedOutsideManagedRoot: true,
-        atomicCompareAndSet: true,
-        survivesRestart: false,
-      }),
-      pinOrVerify: (rootKey, identity) =>
-        capabilities.rootPins.pinOrVerify(rootKey, identity),
-    };
-    const manager = buildTestManager(join(parent, "homes"), {
-      ...capabilities,
-      rootPins,
-    });
-
-    const error = await captureCredentialHomeError(() => manager.initialize());
-    expect(error.code).toBe("credential_home_unsafe");
-  });
-
-  it("rejects a production coordinator without durable terminal tombstones", async () => {
-    const parent = await createTemporaryParent();
-    const capabilities = createLocalCredentialHomeTestCapabilities();
-    const coordinator: DurableCredentialHomeCoordinator = {
-      isolationDomain: capabilities.coordinator.isolationDomain,
-      attestDurability: async (): Promise<LifecycleDurabilityAttestation> => ({
-        isolationDomain: capabilities.coordinator.isolationDomain,
-        environment: "production",
-        crossProcessExclusive: true,
-        persistentRevokedTombstones: false,
-        revokedIsTerminal: true,
-      }),
-      runExclusive: (homeId, operation) =>
-        capabilities.coordinator.runExclusive(homeId, operation),
-    };
-    const manager = buildTestManager(join(parent, "homes"), {
-      ...capabilities,
-      coordinator,
-    });
-
-    const error = await captureCredentialHomeError(() => manager.initialize());
-    expect(error.code).toBe("credential_home_unsafe");
   });
 });
 
-describe("CodexCredentialHomeManager lifecycle", () => {
+describe("test-only Codex credential-home lifecycle", () => {
   it("isolates owners and connections without exposing either identifier", async () => {
     const { manager } = await createManager();
     const first = await manager.ensure({
@@ -276,6 +239,7 @@ describe("CodexCredentialHomeManager lifecycle", () => {
       expect(result.homeId).toMatch(/^codex-[a-f0-9]{64}$/);
       expect(result.homeId).not.toContain("owner");
       expect(result.homeId).not.toContain("connection");
+      expect(result.runtime.authority).toBe("test-only");
     }
   });
 
@@ -303,9 +267,6 @@ describe("CodexCredentialHomeManager lifecycle", () => {
       expect(Object.keys(result.runtime.env)).toEqual(["CODEX_HOME"]);
       expect(JSON.stringify(result.runtime)).not.toContain(canary);
       expect(result.runtime.sessionFlags).toEqual([FILE_CREDENTIAL_STORE_FLAG]);
-      expect(result.runtime.sessionFlags).toEqual([
-        'cli_auth_credentials_store="file"',
-      ]);
     } finally {
       for (const name of names) {
         restoreEnvironment(name, previous[name]);
@@ -337,26 +298,7 @@ describe("CodexCredentialHomeManager lifecycle", () => {
     ).toHaveLength(3);
   });
 
-  it("atomically establishes one external root pin during concurrent startup", async () => {
-    const parent = await createTemporaryParent();
-    const root = join(parent, "homes");
-    const capabilities = createLocalCredentialHomeTestCapabilities();
-    const first = buildTestManager(root, capabilities);
-    const second = buildTestManager(root, capabilities);
-
-    await Promise.all([first.initialize(), second.initialize()]);
-    const identity = {
-      ownerId: "user_startup",
-      connectionId: "conn_startup",
-    };
-    const results = await Promise.all([
-      first.ensure(identity),
-      second.ensure(identity),
-    ]);
-    expect(results[0].homeId).toBe(results[1].homeId);
-  });
-
-  it("survives manager restart only through the shared external root pin", async () => {
+  it("uses one external root pin across manager restart", async () => {
     const { capabilities, manager, root } = await createManager();
     const identity = { ownerId: "user_restart", connectionId: "conn_restart" };
     const first = await manager.ensure(identity);
@@ -368,7 +310,6 @@ describe("CodexCredentialHomeManager lifecycle", () => {
     const restarted = buildTestManager(root, capabilities);
     await restarted.initialize();
     const second = await restarted.ensure(identity);
-
     expect(second).toMatchObject({ homeId: first.homeId, state: "existing" });
     expect(
       await readFile(
@@ -378,7 +319,7 @@ describe("CodexCredentialHomeManager lifecycle", () => {
     ).toBe("durable");
   });
 
-  it("rejects root substitution when a fresh manager verifies the external pin", async () => {
+  it("rejects root substitution when a fresh manager verifies the pin", async () => {
     const { capabilities, root } = await createManager();
     const displacedRoot = `${root}-original`;
     await rename(root, displacedRoot);
@@ -388,12 +329,11 @@ describe("CodexCredentialHomeManager lifecycle", () => {
     const error = await captureCredentialHomeError(() =>
       restarted.initialize()
     );
-
     expect(error.code).toBe("credential_home_unsafe");
     expect((await lstat(displacedRoot)).isDirectory()).toBe(true);
   });
 
-  it("prevents queued ensure from overlapping or recreating after revoke", async () => {
+  it("persists revoking before callback and denies queued ensure", async () => {
     const { capabilities, manager, root } = await createManager();
     const secondManager = buildTestManager(root, capabilities);
     await secondManager.initialize();
@@ -419,62 +359,136 @@ describe("CodexCredentialHomeManager lifecycle", () => {
     releaseRevocation?.();
 
     await expect(teardown).resolves.toMatchObject({ state: "removed" });
-    const error = await captureCredentialHomeError(() => queuedEnsure);
-    expect(error.code).toBe("credential_home_revoked");
+    expect((await captureCredentialHomeError(() => queuedEnsure)).code).toBe(
+      "credential_home_revoked"
+    );
   });
 
-  it("preserves a revoked tombstone for a fresh manager after teardown", async () => {
+  it("keeps revoking terminal when provider callback fails and retries safely", async () => {
     const { capabilities, manager, root } = await createManager();
     const identity = {
-      ownerId: "user_tombstone",
-      connectionId: "conn_tombstone",
+      ownerId: "user_callback_failure",
+      connectionId: "conn_callback_failure",
     };
-    await manager.ensure(identity);
-    await manager.teardown(identity, { revoke: () => undefined });
-
-    const freshManager = buildTestManager(root, capabilities);
-    await freshManager.initialize();
-    const error = await captureCredentialHomeError(() =>
-      freshManager.ensure(identity)
-    );
-    expect(error.code).toBe("credential_home_revoked");
-  });
-
-  it("revokes once and retries idempotent cleanup under the tombstone", async () => {
-    const { manager } = await createManager();
-    const identity = { ownerId: "user_absent", connectionId: "conn_absent" };
-    let revocationCount = 0;
-    const revoke = () => {
-      revocationCount += 1;
-    };
-
-    const first = await manager.teardown(identity, { revoke });
-    const second = await manager.teardown(identity, { revoke });
-
-    expect(first).toEqual({ homeId: second.homeId, state: "absent" });
-    expect(revocationCount).toBe(1);
-  });
-
-  it("preserves local state when provider revocation fails", async () => {
-    const { manager } = await createManager();
-    const identity = { ownerId: "user_revoke", connectionId: "conn_revoke" };
     const ensured = await manager.ensure(identity);
-    const error = await captureCredentialHomeError(() =>
+    let callbackCount = 0;
+    const firstError = await captureCredentialHomeError(() =>
       manager.teardown(identity, {
         revoke: () => {
-          throw new Error(`provider leak ${identity.ownerId}`);
+          callbackCount += 1;
+          throw new Error("provider-secret-canary");
         },
       })
     );
-
-    expect(error.code).toBe("credential_revocation_failed");
-    expect(error.message).not.toContain(identity.ownerId);
+    expect(firstError.code).toBe("credential_revocation_failed");
     expect((await lstat(ensured.runtime.env.CODEX_HOME)).isDirectory()).toBe(
       true
     );
+
+    const freshManager = buildTestManager(root, capabilities);
+    await freshManager.initialize();
+    expect(
+      (await captureCredentialHomeError(() => freshManager.ensure(identity)))
+        .code
+    ).toBe("credential_home_revoked");
+
+    const result = await freshManager.teardown(identity, {
+      revoke: () => {
+        callbackCount += 1;
+      },
+    });
+    expect(result.state).toBe("removed");
+    expect(callbackCount).toBe(2);
   });
 
-  it("removes nested state while preserving root sentinels and sibling homes", async () => {
+  it("stays revoking when final tombstone persistence fails", async () => {
+    const { capabilities, manager, root } = await createManager();
+    const identity = {
+      ownerId: "user_mark_failure",
+      connectionId: "conn_mark_failure",
+    };
+    await manager.ensure(identity);
+    capabilities.controls.failNextMarkRevoked();
+    let callbackCount = 0;
+
+    const error = await captureCredentialHomeError(() =>
+      manager.teardown(identity, {
+        revoke: () => {
+          callbackCount += 1;
+        },
+      })
+    );
+    expect(error.code).toBe("credential_home_capability_unavailable");
+
+    const freshManager = buildTestManager(root, capabilities);
+    await freshManager.initialize();
+    expect(
+      (await captureCredentialHomeError(() => freshManager.ensure(identity)))
+        .code
+    ).toBe("credential_home_revoked");
+    const retry = await freshManager.teardown(identity, {
+      revoke: () => {
+        callbackCount += 1;
+      },
+    });
+    expect(retry.state).toBe("absent");
+    expect(callbackCount).toBe(2);
+  });
+
+  it.each([undefined, null, "unknown", 0, {}, []])(
+    "denies malformed lifecycle state %j",
+    async (state) => {
+      const { capabilities, manager } = await createManager();
+      capabilities.controls.setNextLeaseState(state);
+      const error = await captureCredentialHomeError(() =>
+        manager.ensure({
+          ownerId: "user_malformed_state",
+          connectionId: "conn_malformed_state",
+        })
+      );
+      expect(error.code).toBe("credential_home_capability_unavailable");
+    }
+  );
+
+  it("fails closed when lifecycle coordination is unavailable", async () => {
+    const parent = await createTemporaryParent();
+    const root = join(parent, "homes");
+    await mkdir(root, { mode: 0o700 });
+    const capabilities = createLocalCredentialHomeTestCapabilities();
+    const canary = "coordinator-secret-canary-319c";
+    const coordinator: DurableCredentialHomeCoordinator = {
+      isolationDomain: capabilities.coordinator.isolationDomain,
+      runExclusive: async () => {
+        throw new Error(canary);
+      },
+    };
+    const manager = buildTestManager(root, {
+      ...capabilities,
+      coordinator,
+    });
+    await manager.initialize();
+
+    const error = await captureCredentialHomeError(() =>
+      manager.ensure({ ownerId: "user_safe", connectionId: "conn_safe" })
+    );
+    expect(error.code).toBe("credential_home_capability_unavailable");
+    expect(error.message).not.toContain(canary);
+  });
+
+  it("keeps final teardown idempotent without invoking revoke again", async () => {
+    const { manager } = await createManager();
+    const identity = { ownerId: "user_absent", connectionId: "conn_absent" };
+    let callbackCount = 0;
+    const revoke = () => {
+      callbackCount += 1;
+    };
+    const first = await manager.teardown(identity, { revoke });
+    const second = await manager.teardown(identity, { revoke });
+    expect(first).toEqual({ homeId: second.homeId, state: "absent" });
+    expect(callbackCount).toBe(1);
+  });
+
+  it("removes nested state while preserving root and sibling homes", async () => {
     const { manager, root } = await createManager();
     const removedIdentity = {
       ownerId: "user_remove",
@@ -492,7 +506,6 @@ describe("CodexCredentialHomeManager lifecycle", () => {
     const result = await manager.teardown(removedIdentity, {
       revoke: () => undefined,
     });
-
     expect(result).toEqual({ homeId: removed.homeId, state: "removed" });
     await expect(lstat(removed.runtime.env.CODEX_HOME)).rejects.toMatchObject({
       code: "ENOENT",
@@ -504,7 +517,7 @@ describe("CodexCredentialHomeManager lifecycle", () => {
   });
 });
 
-describe("CodexCredentialHomeManager adversarial host behavior", () => {
+describe("test-only adversarial host behavior", () => {
   it("fails identity-bound deletion when the home leaf is swapped", async () => {
     let displacedHome = "";
     const harness = await createManager({
@@ -523,13 +536,12 @@ describe("CodexCredentialHomeManager adversarial host behavior", () => {
     const error = await captureCredentialHomeError(() =>
       harness.manager.teardown(identity, { revoke: () => undefined })
     );
-
     expect(error.code).toBe("credential_home_unsafe");
     expect((await lstat(displacedHome)).isDirectory()).toBe(true);
-    const revoked = await captureCredentialHomeError(() =>
-      harness.manager.ensure(identity)
-    );
-    expect(revoked.code).toBe("credential_home_revoked");
+    expect(
+      (await captureCredentialHomeError(() => harness.manager.ensure(identity)))
+        .code
+    ).toBe("credential_home_revoked");
   });
 
   it("fails deletion when the durable root is swapped during the host call", async () => {
@@ -550,34 +562,8 @@ describe("CodexCredentialHomeManager adversarial host behavior", () => {
     const error = await captureCredentialHomeError(() =>
       harness.manager.teardown(identity, { revoke: () => undefined })
     );
-
     expect(error.code).toBe("credential_home_unsafe");
     expect((await lstat(displacedRoot)).isDirectory()).toBe(true);
-  });
-
-  it("fails closed with a stable error when the coordinator is unavailable", async () => {
-    const parent = await createTemporaryParent();
-    const root = join(parent, "homes");
-    const canary = "coordinator-secret-canary-319c";
-    const capabilities = createLocalCredentialHomeTestCapabilities();
-    const coordinator: DurableCredentialHomeCoordinator = {
-      isolationDomain: capabilities.coordinator.isolationDomain,
-      attestDurability: () => capabilities.coordinator.attestDurability(),
-      runExclusive: async () => {
-        throw new CredentialHomeError(
-          "credential_home_unsafe",
-          `forged public error ${canary}`
-        );
-      },
-    };
-    const manager = buildTestManager(root, { ...capabilities, coordinator });
-    await manager.initialize();
-
-    const error = await captureCredentialHomeError(() =>
-      manager.ensure({ ownerId: "user_safe", connectionId: "conn_safe" })
-    );
-    expect(error.code).toBe("credential_home_capability_unavailable");
-    expect(error.message).not.toContain(canary);
   });
 
   it("rejects symlink ancestors, roots, leaves, and permissive nodes", async () => {
@@ -586,10 +572,9 @@ describe("CodexCredentialHomeManager adversarial host behavior", () => {
     const ancestor = join(parent, "ancestor");
     await mkdir(target, { mode: 0o700 });
     await symlink(target, ancestor);
-    const capabilities = createLocalCredentialHomeTestCapabilities();
     const ancestorManager = buildTestManager(
       join(ancestor, "homes"),
-      capabilities
+      createLocalCredentialHomeTestCapabilities()
     );
     expect(
       (await captureCredentialHomeError(() => ancestorManager.initialize()))
@@ -607,29 +592,28 @@ describe("CodexCredentialHomeManager adversarial host behavior", () => {
     ).toBe("credential_home_unsafe");
 
     const harness = await createManager();
-    const identity = { ownerId: "user_leaf", connectionId: "conn_leaf" };
-    const ensured = await harness.manager.ensure(identity);
-    await rm(ensured.runtime.env.CODEX_HOME, { recursive: true });
-    await symlink(target, ensured.runtime.env.CODEX_HOME);
-    const leafError = await captureCredentialHomeError(() =>
-      harness.manager.ensure(identity)
-    );
-    expect(leafError.code).toBe("credential_home_unsafe");
+    const leafIdentity = { ownerId: "user_leaf", connectionId: "conn_leaf" };
+    const leaf = await harness.manager.ensure(leafIdentity);
+    await rm(leaf.runtime.env.CODEX_HOME, { recursive: true });
+    await symlink(target, leaf.runtime.env.CODEX_HOME);
+    expect(
+      (
+        await captureCredentialHomeError(() =>
+          harness.manager.ensure(leafIdentity)
+        )
+      ).code
+    ).toBe("credential_home_unsafe");
 
-    // Use a distinct ID to exercise an unsafe permissive directory leaf.
-    const unsafeIdentity = {
-      ownerId: "user_unsafe",
-      connectionId: "conn_unsafe",
-    };
-    const unsafe = await harness.manager.ensure(unsafeIdentity);
-    await rm(unsafe.runtime.env.CODEX_HOME, { recursive: true });
-    await mkdir(unsafe.runtime.env.CODEX_HOME, { mode: 0o700 });
-    await chmod(unsafe.runtime.env.CODEX_HOME, 0o755);
-    const permissionError = await captureCredentialHomeError(() =>
-      harness.manager.ensure(unsafeIdentity)
-    );
-    expect(permissionError.code).toBe("credential_home_unsafe");
-    expect(ensured.homeId).not.toBe(unsafe.homeId);
+    const modeIdentity = { ownerId: "user_mode", connectionId: "conn_mode" };
+    const modeHome = await harness.manager.ensure(modeIdentity);
+    await chmod(modeHome.runtime.env.CODEX_HOME, 0o755);
+    expect(
+      (
+        await captureCredentialHomeError(() =>
+          harness.manager.ensure(modeIdentity)
+        )
+      ).code
+    ).toBe("credential_home_unsafe");
   });
 
   it.each([

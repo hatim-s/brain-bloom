@@ -9,11 +9,8 @@ import {
   type DurableRootIdentityPins,
   type HostDeleteHomeResult,
   type HostEnsureHomeResult,
-  type HostIsolationAttestation,
   type HostRootIdentity,
   type HostRootResult,
-  type LifecycleDurabilityAttestation,
-  type RootPinDurabilityAttestation,
   type RootPinResult,
 } from "./codex-credential-homes.ts";
 
@@ -31,7 +28,15 @@ type LocalCredentialHomeTestCapabilities = Readonly<{
   host: CredentialHomeHostCapability;
   rootPins: DurableRootIdentityPins;
   coordinator: DurableCredentialHomeCoordinator;
+  controls: LocalTestCoordinatorControls;
 }>;
+
+type LocalTestCoordinatorControls = Readonly<{
+  failNextMarkRevoked: () => void;
+  setNextLeaseState: (state: unknown) => void;
+}>;
+
+const NO_STATE_OVERRIDE = Symbol("no-test-state-override");
 
 /**
  * In-memory, single-process coordinator used only to exercise the manager.
@@ -45,20 +50,19 @@ class LocalTestCredentialHomeCoordinator
 {
   readonly isolationDomain = TEST_ISOLATION_DOMAIN;
   private readonly locks = new Map<string, Promise<unknown>>();
-  private readonly states = new Map<
-    string,
-    Exclude<CredentialHomeLifecycleState, undefined>
-  >();
+  private readonly states = new Map<string, CredentialHomeLifecycleState>();
+  private failMarkRevoked = false;
+  private nextStateOverride: unknown | typeof NO_STATE_OVERRIDE =
+    NO_STATE_OVERRIDE;
 
-  /** Truthfully labels this single-process, in-memory coordinator test-only. */
-  async attestDurability(): Promise<LifecycleDurabilityAttestation> {
-    return {
-      isolationDomain: this.isolationDomain,
-      environment: "test-only",
-      crossProcessExclusive: false,
-      persistentRevokedTombstones: false,
-      revokedIsTerminal: true,
-    };
+  /** Injects one durable-finalization failure without clearing revoking state. */
+  failNextMarkRevoked(): void {
+    this.failMarkRevoked = true;
+  }
+
+  /** Supplies one malformed or controlled state to the next acquired lease. */
+  setNextLeaseState(state: unknown): void {
+    this.nextStateOverride = state;
   }
 
   /** Serializes one home and commits lifecycle state before releasing it. */
@@ -70,19 +74,41 @@ class LocalTestCredentialHomeCoordinator
     const current = previous
       .catch(() => undefined)
       .then(async () => {
-        let currentState = this.states.get(homeId);
+        let currentState: unknown =
+          this.nextStateOverride === NO_STATE_OVERRIDE
+            ? (this.states.get(homeId) ?? "provisionable")
+            : this.nextStateOverride;
+        this.nextStateOverride = NO_STATE_OVERRIDE;
         const lease: CredentialHomeLifecycleLease = {
           state: currentState,
           markActive: () => {
-            if (currentState === "revoked") {
-              throw new Error("test coordinator refuses revoked transition");
+            if (currentState !== "provisionable" && currentState !== "active") {
+              throw new Error("test coordinator refuses active transition");
             }
             currentState = "active";
-            this.states.set(homeId, currentState);
+            this.states.set(homeId, "active");
+          },
+          markRevoking: () => {
+            if (
+              currentState !== "provisionable" &&
+              currentState !== "active" &&
+              currentState !== "revoking"
+            ) {
+              throw new Error("test coordinator refuses revoking transition");
+            }
+            currentState = "revoking";
+            this.states.set(homeId, "revoking");
           },
           markRevoked: () => {
+            if (this.failMarkRevoked) {
+              this.failMarkRevoked = false;
+              throw new Error("test coordinator finalization failed");
+            }
+            if (currentState !== "revoking" && currentState !== "revoked") {
+              throw new Error("test coordinator refuses revoked transition");
+            }
             currentState = "revoked";
-            this.states.set(homeId, currentState);
+            this.states.set(homeId, "revoked");
           },
         };
         return operation(lease);
@@ -104,17 +130,6 @@ class LocalTestRootIdentityPins implements DurableRootIdentityPins {
   readonly isolationDomain = TEST_ISOLATION_DOMAIN;
   private readonly pins = new Map<string, HostRootIdentity>();
 
-  /** Truthfully labels these in-memory root pins as non-durable test support. */
-  async attestDurability(): Promise<RootPinDurabilityAttestation> {
-    return {
-      isolationDomain: this.isolationDomain,
-      environment: "test-only",
-      storedOutsideManagedRoot: true,
-      atomicCompareAndSet: true,
-      survivesRestart: false,
-    };
-  }
-
   /** Atomically pins the first identity and rejects all later substitutions. */
   async pinOrVerify(
     rootKey: string,
@@ -133,34 +148,17 @@ class LocalTestRootIdentityPins implements DurableRootIdentityPins {
  * Portable behavior emulator for unit tests only.
  *
  * Its path-based operations do not satisfy the production deletion or
- * same-UID sibling-isolation threat model. The test-only attestation forces an
- * explicit allowTestOnlyCapabilities opt-in and cannot initialize defaults.
+ * same-UID sibling-isolation threat model. It can only be supplied to the
+ * separate test-only manager and cannot mint production authority.
  */
 class LocalTestCredentialHomeHost implements CredentialHomeHostCapability {
   readonly isolationDomain = TEST_ISOLATION_DOMAIN;
 
   constructor(private readonly hooks: LocalTestHostHooks = {}) {}
 
-  /** Returns a simulated contract attestation explicitly labeled test-only. */
-  async attestIsolation(): Promise<HostIsolationAttestation> {
-    return {
-      isolationDomain: this.isolationDomain,
-      environment: "test-only",
-      siblingHomesInaccessible: false,
-      identityBoundDeletion: false,
-    };
-  }
-
-  /** Creates or validates a private root for local behavioral tests. */
+  /** Validates an already-created private root for local behavioral tests. */
   async ensureRoot(rootPath: string): Promise<HostRootResult> {
     await assertExistingPathComponentsAreSafe(dirname(rootPath));
-    try {
-      await mkdir(rootPath, { mode: PRIVATE_DIRECTORY_MODE });
-    } catch (error) {
-      if (!isNodeError(error) || error.code !== "EEXIST") {
-        throw error;
-      }
-    }
     return inspectPrivateDirectory(rootPath);
   }
 
@@ -241,10 +239,15 @@ class LocalTestCredentialHomeHost implements CredentialHomeHostCapability {
 function createLocalCredentialHomeTestCapabilities(
   hooks: LocalTestHostHooks = {}
 ): LocalCredentialHomeTestCapabilities {
+  const coordinator = new LocalTestCredentialHomeCoordinator();
   return {
     host: new LocalTestCredentialHomeHost(hooks),
     rootPins: new LocalTestRootIdentityPins(),
-    coordinator: new LocalTestCredentialHomeCoordinator(),
+    coordinator,
+    controls: {
+      failNextMarkRevoked: () => coordinator.failNextMarkRevoked(),
+      setNextLeaseState: (state) => coordinator.setNextLeaseState(state),
+    },
   };
 }
 
@@ -344,5 +347,6 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 export {
   createLocalCredentialHomeTestCapabilities,
   type LocalCredentialHomeTestCapabilities,
+  type LocalTestCoordinatorControls,
   type LocalTestHostHooks,
 };
