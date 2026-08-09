@@ -12,6 +12,8 @@ import {
   type LifecycleEvidenceReplayDefense,
   type LifecycleEvidenceSigningKey,
   type LifecycleEvidenceVerificationKeys,
+  type LifecycleMonotonicClock,
+  type LifecyclePlanLabel,
   LifecycleReplayDefenseError,
   type LifecycleReplayEntry,
   type LifecycleTransition,
@@ -20,6 +22,17 @@ import {
 } from "./lifecycle-evidence.ts";
 
 const BASE_TIME = 1_800_000_000;
+const OWNER_A = "user_2abcDEF3456789xyz";
+const OWNER_B = "user_3abcDEF3456789xyz";
+const CONNECTION_A = "connection_v1_11111111-1111-4111-8111-111111111111";
+const CONNECTION_B = "connection_v1_22222222-2222-4222-8222-222222222222";
+const REQUEST_A = "request_v1_33333333-3333-4333-8333-333333333333";
+const REQUEST_B = "request_v1_44444444-4444-4444-8444-444444444444";
+const EVIDENCE_A = "evidence_v1_55555555-5555-4555-8555-555555555555";
+const EVIDENCE_B = "evidence_v1_66666666-6666-4666-8666-666666666666";
+const NONCE_A = "nonce_v1_88888888-8888-4888-8888-888888888888";
+const NONCE_B = "nonce_v1_99999999-9999-4999-8999-999999999999";
+const GATEWAY_CREDENTIAL_A = "gwcred_v1_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 /** Mutable deterministic clock for exact validity-boundary tests. */
 class TestClock implements LifecycleEvidenceClock {
@@ -34,6 +47,13 @@ class TestClock implements LifecycleEvidenceClock {
   }
 }
 
+/** Real monotonic clock for replay timeout behavior. */
+class TestMonotonicClock implements LifecycleMonotonicClock {
+  nowMilliseconds(): number {
+    return performance.now();
+  }
+}
+
 /** Minimal atomic replay store used to prove identifier consumption order. */
 class MemoryReplayDefense implements LifecycleEvidenceReplayDefense {
   readonly entries: LifecycleReplayEntry[] = [];
@@ -43,7 +63,8 @@ class MemoryReplayDefense implements LifecycleEvidenceReplayDefense {
       this.entries.some(
         (existing) =>
           existing.evidenceId === entry.evidenceId ||
-          existing.nonce === entry.nonce
+          existing.nonce === entry.nonce ||
+          existing.requestId === entry.requestId
       )
     ) {
       throw new LifecycleReplayDefenseError("replay_detected");
@@ -64,15 +85,15 @@ function createKeyPair(keyId: string) {
 /** Builds one fully isolated signer/verifier fixture. */
 function createFixture() {
   const clock = new TestClock();
-  const current = createKeyPair("lifecycle-current");
-  const previous = createKeyPair("lifecycle-previous");
+  const current = createKeyPair("lifecycle-v1-a1b2c3d4");
+  const previous = createKeyPair("lifecycle-v1-b1c2d3e4");
   const expected: ExpectedLifecycleEvidenceContext = {
     issuer: "sprig-agent-gateway",
     audience: "sprig-trusted-server",
-    subject: "user_owner_a",
-    connectionId: "connection_a",
+    subject: OWNER_A,
+    connectionId: CONNECTION_A,
     provider: "codex",
-    requestId: "request_a",
+    requestId: REQUEST_A,
     transition: "pending_to_connected",
     credentialRevision: 1,
   };
@@ -88,9 +109,9 @@ function connectedMetadata(
   overrides: Partial<LifecycleEvidenceMetadata> = {}
 ): LifecycleEvidenceMetadata {
   return {
-    gatewayCredentialId: "gateway_opaque_a",
+    gatewayCredentialId: GATEWAY_CREDENTIAL_A,
     account: { type: "chatgpt", present: true },
-    planLabel: "Plus",
+    planLabel: "ChatGPT Plus",
     errorCode: null,
     ...overrides,
   };
@@ -107,8 +128,8 @@ function decision(
     subject: fixture.expected.subject,
     connectionId: fixture.expected.connectionId,
     requestId: fixture.expected.requestId,
-    evidenceId: "evidence_a",
-    nonce: "nonce_a",
+    evidenceId: EVIDENCE_A,
+    nonce: NONCE_A,
     transition: fixture.expected.transition,
     credentialRevision: fixture.expected.credentialRevision,
     metadata: connectedMetadata(),
@@ -135,6 +156,7 @@ function verify(
   token: string | null | undefined,
   overrides: Partial<{
     expected: ExpectedLifecycleEvidenceContext;
+    monotonicClock: LifecycleMonotonicClock;
     replayDefense: LifecycleEvidenceReplayDefense;
     replayDefenseTimeoutMs: number;
     signal: AbortSignal;
@@ -143,6 +165,7 @@ function verify(
 ) {
   return verifyLifecycleEvidence(token, {
     clock: fixture.clock,
+    monotonicClock: overrides.monotonicClock ?? new TestMonotonicClock(),
     expected: overrides.expected ?? fixture.expected,
     replayDefense: overrides.replayDefense ?? new MemoryReplayDefense(),
     verificationKeys: overrides.verificationKeys ?? fixture.verificationKeys,
@@ -227,24 +250,24 @@ describe("gateway lifecycle evidence", () => {
       version: 1,
       issuer: "sprig-agent-gateway",
       audience: "sprig-trusted-server",
-      subject: "user_owner_a",
-      connectionId: "connection_a",
+      subject: OWNER_A,
+      connectionId: CONNECTION_A,
       provider: "codex",
-      requestId: "request_a",
-      evidenceId: "evidence_a",
-      nonce: "nonce_a",
+      requestId: REQUEST_A,
+      evidenceId: EVIDENCE_A,
+      nonce: NONCE_A,
       issuedAt: BASE_TIME,
       expiresAt: BASE_TIME + 60,
       transition: "pending_to_connected",
       credentialRevision: 1,
       metadata: connectedMetadata(),
-      kid: "lifecycle-current",
+      kid: "lifecycle-v1-a1b2c3d4",
     });
     expect(replayDefense.entries).toEqual([
       {
-        evidenceId: "evidence_a",
-        nonce: "nonce_a",
-        requestId: "request_a",
+        evidenceId: EVIDENCE_A,
+        nonce: NONCE_A,
+        requestId: REQUEST_A,
         expiresAt: BASE_TIME + 60,
       },
     ]);
@@ -260,7 +283,7 @@ describe("gateway lifecycle evidence", () => {
     const tamperedClaims = Buffer.from(
       Buffer.from(claims, "base64url")
         .toString("utf8")
-        .replace("user_owner_a", "user_owner_b")
+        .replace(OWNER_A, OWNER_B)
     ).toString("base64url");
     await expectCode(
       () => verify(fixture, `${header}.${tamperedClaims}.${signature}`),
@@ -313,8 +336,8 @@ describe("gateway lifecycle evidence", () => {
 
     const duplicateClaims = Buffer.from(
       claimsText.replace(
-        '"subject":"user_owner_a"',
-        '"subject":"user_owner_a","subject":"user_owner_a"'
+        `"subject":"${OWNER_A}"`,
+        `"subject":"${OWNER_A}","subject":"${OWNER_A}"`
       )
     ).toString("base64url");
     await expectCode(
@@ -364,13 +387,13 @@ describe("gateway lifecycle evidence", () => {
   it("accepts current and previous rotation keys but no unknown key", async () => {
     const fixture = createFixture();
     expect((await verify(fixture, issue(fixture))).kid).toBe(
-      "lifecycle-current"
+      "lifecycle-v1-a1b2c3d4"
     );
     expect(
       (await verify(fixture, issue(fixture, {}, fixture.previous.signing))).kid
-    ).toBe("lifecycle-previous");
+    ).toBe("lifecycle-v1-b1c2d3e4");
 
-    const unknown = createKeyPair("lifecycle-unknown");
+    const unknown = createKeyPair("lifecycle-v1-c1d2e3f4");
     await expectCode(
       () => verify(fixture, issue(fixture, {}, unknown.signing)),
       "invalid_signature"
@@ -418,7 +441,7 @@ describe("gateway lifecycle evidence", () => {
         verify(
           fixture,
           resignHeader(token, fixture.current.signing, (header) => {
-            header.kid = "lifecycle-previous";
+            header.kid = "lifecycle-v1-b1c2d3e4";
           })
         ),
       "invalid_signature"
@@ -433,9 +456,9 @@ describe("gateway lifecycle evidence", () => {
         LifecycleEvidenceError["code"],
       ]
     > = [
-      [{ subject: "user_owner_b" }, "subject_mismatch"],
-      [{ connectionId: "connection_b" }, "connection_mismatch"],
-      [{ requestId: "request_b" }, "request_id_mismatch"],
+      [{ subject: OWNER_B }, "subject_mismatch"],
+      [{ connectionId: CONNECTION_B }, "connection_mismatch"],
+      [{ requestId: REQUEST_B }, "request_id_mismatch"],
       [{ transition: "connected_to_error" }, "transition_mismatch"],
       [{ credentialRevision: 2 }, "credential_revision_mismatch"],
     ];
@@ -473,7 +496,7 @@ describe("gateway lifecycle evidence", () => {
     expect(providerReplay.entries).toHaveLength(1);
   });
 
-  it("rejects replay by either evidence id or nonce", async () => {
+  it("atomically rejects replay by evidence id, nonce, or originating request id", async () => {
     const fixture = createFixture();
     const replayDefense = new MemoryReplayDefense();
     await verify(fixture, issue(fixture), { replayDefense });
@@ -483,51 +506,291 @@ describe("gateway lifecycle evidence", () => {
     );
     await expectCode(
       () =>
-        verify(fixture, issue(fixture, { evidenceId: "evidence_b" }), {
-          replayDefense,
-        }),
+        verify(
+          fixture,
+          issue(fixture, {
+            evidenceId: EVIDENCE_B,
+            nonce: NONCE_A,
+            requestId: REQUEST_B,
+          }),
+          {
+            expected: { ...fixture.expected, requestId: REQUEST_B },
+            replayDefense,
+          }
+        ),
+      "replay_detected"
+    );
+    await expectCode(
+      () =>
+        verify(
+          fixture,
+          issue(fixture, {
+            evidenceId: EVIDENCE_A,
+            nonce: NONCE_B,
+            requestId: REQUEST_B,
+          }),
+          {
+            expected: { ...fixture.expected, requestId: REQUEST_B },
+            replayDefense,
+          }
+        ),
+      "replay_detected"
+    );
+    await expectCode(
+      () =>
+        verify(
+          fixture,
+          issue(fixture, { evidenceId: EVIDENCE_B, nonce: NONCE_B }),
+          { replayDefense }
+        ),
       "replay_detected"
     );
   });
 
-  it("accepts only allowed transition shapes and rejects API-key accounts", async () => {
+  it("allows only one concurrent result for the same originating request", async () => {
     const fixture = createFixture();
+    const replayDefense = new MemoryReplayDefense();
+    const first = issue(fixture);
+    const second = issue(fixture, {
+      evidenceId: EVIDENCE_B,
+      nonce: NONCE_B,
+    });
+    const outcomes = await Promise.allSettled([
+      verify(fixture, first, { replayDefense }),
+      verify(fixture, second, { replayDefense }),
+    ]);
+
+    expect(
+      outcomes.filter((outcome) => outcome.status === "fulfilled")
+    ).toHaveLength(1);
+    const rejected = outcomes.find((outcome) => outcome.status === "rejected");
+    expect(rejected).toBeDefined();
+    expect((rejected as PromiseRejectedResult).reason).toBeInstanceOf(
+      LifecycleEvidenceError
+    );
+    expect(
+      ((rejected as PromiseRejectedResult).reason as LifecycleEvidenceError)
+        .code
+    ).toBe("replay_detected");
+    expect(replayDefense.entries).toHaveLength(1);
+  });
+
+  it("enforces required keys and forbids extensions for every exact transition", async () => {
+    const fixture = createFixture();
+    const errorMetadata: LifecycleEvidenceMetadata = {
+      gatewayCredentialId: null,
+      account: null,
+      planLabel: null,
+      errorCode: "provider_denied",
+    };
+    const expiredMetadata: LifecycleEvidenceMetadata = {
+      gatewayCredentialId: null,
+      account: null,
+      planLabel: null,
+      errorCode: "credential_expired",
+    };
+    const emptyMetadata: LifecycleEvidenceMetadata = {
+      gatewayCredentialId: null,
+      account: null,
+      planLabel: null,
+      errorCode: null,
+    };
     const transitionCases: ReadonlyArray<
-      readonly [LifecycleTransition, LifecycleEvidenceMetadata]
+      Readonly<{
+        transition: LifecycleTransition;
+        policy: "connected" | "error" | "expired" | "empty";
+        metadata: LifecycleEvidenceMetadata;
+      }>
     > = [
-      ["pending_to_connected", connectedMetadata()],
-      [
-        "pending_to_error",
-        {
-          gatewayCredentialId: null,
-          account: null,
-          planLabel: null,
-          errorCode: "provider_denied",
-        },
-      ],
-      [
-        "pending_to_expired",
-        {
-          gatewayCredentialId: null,
-          account: null,
-          planLabel: null,
-          errorCode: "credential_expired",
-        },
-      ],
-      [
-        "connected_to_revoked",
-        {
-          gatewayCredentialId: null,
-          account: null,
-          planLabel: null,
-          errorCode: null,
-        },
-      ],
+      {
+        transition: "pending_to_connected",
+        policy: "connected",
+        metadata: connectedMetadata(),
+      },
+      {
+        transition: "pending_to_error",
+        policy: "error",
+        metadata: errorMetadata,
+      },
+      {
+        transition: "pending_to_expired",
+        policy: "expired",
+        metadata: expiredMetadata,
+      },
+      {
+        transition: "pending_to_revoking",
+        policy: "empty",
+        metadata: emptyMetadata,
+      },
+      {
+        transition: "connected_to_error",
+        policy: "error",
+        metadata: errorMetadata,
+      },
+      {
+        transition: "connected_to_expired",
+        policy: "expired",
+        metadata: expiredMetadata,
+      },
+      {
+        transition: "connected_to_revoking",
+        policy: "empty",
+        metadata: emptyMetadata,
+      },
+      {
+        transition: "error_to_revoking",
+        policy: "empty",
+        metadata: emptyMetadata,
+      },
+      {
+        transition: "expired_to_revoking",
+        policy: "empty",
+        metadata: emptyMetadata,
+      },
+      {
+        transition: "revoking_to_revoked",
+        policy: "empty",
+        metadata: emptyMetadata,
+      },
+      {
+        transition: "revoked_to_deleted",
+        policy: "empty",
+        metadata: emptyMetadata,
+      },
     ];
-    for (const [transition, metadata] of transitionCases) {
+
+    for (const { transition, metadata } of transitionCases) {
       expect(issue(fixture, { transition, metadata }).split(".")).toHaveLength(
         3
       );
+      for (const key of Object.keys(metadata)) {
+        const missing = { ...metadata } as Record<string, unknown>;
+        delete missing[key];
+        await expectCode(
+          () =>
+            issue(fixture, {
+              transition,
+              metadata: missing as LifecycleEvidenceMetadata,
+            }),
+          "invalid_evidence"
+        );
+      }
+      await expectCode(
+        () =>
+          issue(fixture, {
+            transition,
+            metadata: {
+              ...metadata,
+              rawProviderOutput: "safe-looking-extension",
+            } as LifecycleEvidenceMetadata,
+          }),
+        "invalid_evidence"
+      );
+    }
+
+    for (const { transition, policy } of transitionCases) {
+      if (policy === "connected") {
+        await expectCode(
+          () =>
+            issue(fixture, {
+              transition,
+              metadata: connectedMetadata({ gatewayCredentialId: null }),
+            }),
+          "invalid_evidence"
+        );
+        await expectCode(
+          () =>
+            issue(fixture, {
+              transition,
+              metadata: connectedMetadata({ account: null }),
+            }),
+          "invalid_evidence"
+        );
+        await expectCode(
+          () =>
+            issue(fixture, {
+              transition,
+              metadata: connectedMetadata({
+                errorCode: "provider_unavailable",
+              }),
+            }),
+          "invalid_evidence"
+        );
+        expect(
+          issue(fixture, {
+            transition,
+            metadata: connectedMetadata({ planLabel: null }),
+          })
+        ).toContain(".");
+        continue;
+      }
+
+      const requiredError =
+        policy === "error"
+          ? "provider_unavailable"
+          : policy === "expired"
+            ? "credential_expired"
+            : null;
+      for (const forbidden of [
+        { gatewayCredentialId: GATEWAY_CREDENTIAL_A },
+        { account: { type: "chatgpt" as const, present: true as const } },
+        { planLabel: "ChatGPT Plus" as LifecyclePlanLabel },
+      ]) {
+        await expectCode(
+          () =>
+            issue(fixture, {
+              transition,
+              metadata: {
+                gatewayCredentialId: null,
+                account: null,
+                planLabel: null,
+                errorCode: requiredError,
+                ...forbidden,
+              },
+            }),
+          "invalid_evidence"
+        );
+      }
+      if (policy === "error" || policy === "expired") {
+        await expectCode(
+          () =>
+            issue(fixture, {
+              transition,
+              metadata: emptyMetadata,
+            }),
+          "invalid_evidence"
+        );
+      }
+      if (policy === "error") {
+        await expectCode(
+          () =>
+            issue(fixture, {
+              transition,
+              metadata: expiredMetadata,
+            }),
+          "invalid_evidence"
+        );
+      }
+      if (policy === "expired") {
+        await expectCode(
+          () =>
+            issue(fixture, {
+              transition,
+              metadata: errorMetadata,
+            }),
+          "invalid_evidence"
+        );
+      }
+      if (policy === "empty") {
+        await expectCode(
+          () =>
+            issue(fixture, {
+              transition,
+              metadata: errorMetadata,
+            }),
+          "invalid_evidence"
+        );
+      }
     }
 
     await expectCode(
@@ -537,30 +800,6 @@ describe("gateway lifecycle evidence", () => {
             ...connectedMetadata(),
             account: { type: "api_key", present: true },
           } as unknown as LifecycleEvidenceMetadata,
-        }),
-      "invalid_evidence"
-    );
-    await expectCode(
-      () =>
-        issue(fixture, {
-          transition: "pending_to_connected",
-          metadata: connectedMetadata({ gatewayCredentialId: null }),
-        }),
-      "invalid_evidence"
-    );
-    await expectCode(
-      () =>
-        issue(fixture, {
-          transition: "connected_to_revoked",
-          metadata: connectedMetadata(),
-        }),
-      "invalid_evidence"
-    );
-    await expectCode(
-      () =>
-        issue(fixture, {
-          transition: "pending_to_error",
-          metadata: connectedMetadata({ errorCode: null }),
         }),
       "invalid_evidence"
     );
@@ -615,6 +854,72 @@ describe("gateway lifecycle evidence", () => {
     }
   });
 
+  it("rejects secret, path, env, URL, encoded, control, and confusable values in allowed fields", async () => {
+    const fixture = createFixture();
+    const canaries = [
+      "sk-secret-canary",
+      "sess-secret-canary",
+      "gwcred_v1_sk-secret-canary",
+      "gwcred_v1_CODEX_HOME_secret",
+      "gwcred_v1_..%2F..%2Fauth.json",
+      "gwcred_v1_https_example_com_token",
+      "/Users/secret/.codex/auth.json",
+      "..%2F..%2Fauth.json",
+      "CODEX_HOME=/credential/home",
+      "https://example.com/token",
+      "line-one\nline-two",
+      "gwcred_v1_／confusable-slash",
+    ];
+
+    for (const canary of canaries) {
+      const credentialError = await expectCode(
+        () =>
+          issue(fixture, {
+            metadata: connectedMetadata({ gatewayCredentialId: canary }),
+          }),
+        "invalid_evidence"
+      );
+      expect(credentialError.message).not.toContain(canary);
+
+      const planError = await expectCode(
+        () =>
+          issue(fixture, {
+            metadata: connectedMetadata({
+              planLabel: canary as LifecyclePlanLabel,
+            }),
+          }),
+        "invalid_evidence"
+      );
+      expect(planError.message).not.toContain(canary);
+
+      for (const field of [
+        "issuer",
+        "audience",
+        "subject",
+        "connectionId",
+        "requestId",
+        "evidenceId",
+        "nonce",
+      ] as const) {
+        const identifierError = await expectCode(
+          () => issue(fixture, { [field]: canary }),
+          "invalid_evidence"
+        );
+        expect(identifierError.message).not.toContain(canary);
+      }
+    }
+
+    await expectCode(
+      () =>
+        issue(fixture, {
+          metadata: connectedMetadata({
+            planLabel: "ChatGPT Plуs" as LifecyclePlanLabel,
+          }),
+        }),
+      "invalid_evidence"
+    );
+  });
+
   it("rejects huge tokens, identifiers, labels, getters, and invented fields", async () => {
     const fixture = createFixture();
     await expectCode(
@@ -636,14 +941,18 @@ describe("gateway lifecycle evidence", () => {
     await expectCode(
       () =>
         issue(fixture, {
-          metadata: connectedMetadata({ planLabel: "x".repeat(129) }),
+          metadata: connectedMetadata({
+            planLabel: "x".repeat(129) as LifecyclePlanLabel,
+          }),
         }),
       "invalid_evidence"
     );
     await expectCode(
       () =>
         issue(fixture, {
-          metadata: connectedMetadata({ planLabel: "Plus\nsecret" }),
+          metadata: connectedMetadata({
+            planLabel: "Plus\nsecret" as LifecyclePlanLabel,
+          }),
         }),
       "invalid_evidence"
     );
@@ -670,6 +979,123 @@ describe("gateway lifecycle evidence", () => {
     );
     expect(getterInvoked).toBe(false);
 
+    for (const magicKey of ["__proto__", "prototype", "constructor"]) {
+      const hostileDecision = Object.defineProperty(
+        decision(fixture),
+        magicKey,
+        {
+          enumerable: true,
+          value: { lifetimeSeconds: 1 },
+        }
+      );
+      await expectCode(
+        () =>
+          issueLifecycleEvidence(
+            hostileDecision,
+            fixture.current.signing,
+            fixture.clock
+          ),
+        "invalid_evidence"
+      );
+
+      const hostileMetadata = Object.defineProperty(
+        connectedMetadata(),
+        magicKey,
+        { enumerable: true, value: "sk-secret-canary" }
+      );
+      await expectCode(
+        () =>
+          issue(fixture, {
+            metadata: hostileMetadata,
+          }),
+        "invalid_evidence"
+      );
+
+      const hostileAccount = Object.defineProperty(
+        { type: "chatgpt", present: true },
+        magicKey,
+        { enumerable: true, value: "sk-secret-canary" }
+      );
+      await expectCode(
+        () =>
+          issue(fixture, {
+            metadata: connectedMetadata({
+              account: hostileAccount as {
+                readonly type: "chatgpt";
+                readonly present: true;
+              },
+            }),
+          }),
+        "invalid_evidence"
+      );
+    }
+
+    const inheritedLifetime = Object.create({ lifetimeSeconds: 1 }) as Record<
+      string,
+      unknown
+    >;
+    Object.defineProperties(
+      inheritedLifetime,
+      Object.getOwnPropertyDescriptors(decision(fixture))
+    );
+    await expectCode(
+      () =>
+        issueLifecycleEvidence(
+          inheritedLifetime as ServerLifecycleDecision,
+          fixture.current.signing,
+          fixture.clock
+        ),
+      "invalid_evidence"
+    );
+
+    const symbolDecision = decision(fixture) as ServerLifecycleDecision &
+      Record<symbol, unknown>;
+    Object.defineProperty(symbolDecision, Symbol("secret"), {
+      enumerable: true,
+      value: "sk-secret-canary",
+    });
+    await expectCode(
+      () =>
+        issueLifecycleEvidence(
+          symbolDecision,
+          fixture.current.signing,
+          fixture.clock
+        ),
+      "invalid_evidence"
+    );
+
+    const hiddenExtension = Object.defineProperty(decision(fixture), "token", {
+      enumerable: false,
+      value: "sk-secret-canary",
+    });
+    await expectCode(
+      () =>
+        issueLifecycleEvidence(
+          hiddenExtension,
+          fixture.current.signing,
+          fixture.clock
+        ),
+      "invalid_evidence"
+    );
+
+    let nestedGetterInvoked = false;
+    const accessorMetadata = Object.defineProperty(
+      connectedMetadata(),
+      "token",
+      {
+        enumerable: true,
+        get() {
+          nestedGetterInvoked = true;
+          return "sk-secret-canary";
+        },
+      }
+    );
+    await expectCode(
+      () => issue(fixture, { metadata: accessorMetadata }),
+      "invalid_evidence"
+    );
+    expect(nestedGetterInvoked).toBe(false);
+
     fixture.clock.set(Number.MAX_SAFE_INTEGER);
     await expectCode(
       () => issue(fixture),
@@ -679,6 +1105,52 @@ describe("gateway lifecycle evidence", () => {
 
   it("fails closed on replay timeout and abort while observing late settlement", async () => {
     const fixture = createFixture();
+    let preflightReads = 0;
+    const alreadyLateClock: LifecycleMonotonicClock = {
+      nowMilliseconds(): number {
+        preflightReads += 1;
+        return preflightReads === 1 ? 100 : 106;
+      },
+    };
+    const preflightStore: LifecycleEvidenceReplayDefense = {
+      consume(): void {
+        throw new Error("late preflight called replay store");
+      },
+    };
+    await expectCode(
+      () =>
+        verify(fixture, issue(fixture), {
+          monotonicClock: alreadyLateClock,
+          replayDefense: preflightStore,
+          replayDefenseTimeoutMs: 5,
+        }),
+      "replay_defense_unavailable"
+    );
+
+    let blockingSignal: AbortSignal | undefined;
+    const blockingStore: LifecycleEvidenceReplayDefense = {
+      consume(
+        _entry: LifecycleReplayEntry,
+        context?: ControlPlaneOperationContext
+      ): void {
+        blockingSignal = context?.signal;
+        const releaseAt = performance.now() + 30;
+        while (performance.now() < releaseAt) {
+          // Deliberately block to prove the post-settlement deadline check is
+          // authoritative even when the timer callback cannot run on time.
+        }
+      },
+    };
+    await expectCode(
+      () =>
+        verify(fixture, issue(fixture), {
+          replayDefense: blockingStore,
+          replayDefenseTimeoutMs: 5,
+        }),
+      "replay_defense_unavailable"
+    );
+    expect(blockingSignal?.aborted).toBe(true);
+
     let storeSignal: AbortSignal | undefined;
     let settleStore: (() => void) | undefined;
     const slowStore: LifecycleEvidenceReplayDefense = {
@@ -774,6 +1246,13 @@ describe("gateway lifecycle evidence", () => {
       () =>
         verify(fixture, issue(fixture), {
           replayDefenseTimeoutMs: 0,
+        }),
+      "internal_evidence_configuration_invalid"
+    );
+    await expectCode(
+      () =>
+        verify(fixture, issue(fixture), {
+          monotonicClock: { nowMilliseconds: () => Number.NaN },
         }),
       "internal_evidence_configuration_invalid"
     );

@@ -47,24 +47,39 @@ positive credential revision.
 
 Evidence can contain only:
 
-- an opaque gateway credential identifier;
+- an opaque gateway credential identifier shaped as
+  `gwcred_v1_<canonical UUID v4>`;
 - an explicit `{ type: "chatgpt", present: true }` subscription projection;
-- an optional display-only plan label; and
+- an optional display-only plan label from `ChatGPT`, `ChatGPT Plus`, `ChatGPT
+  Pro`, `ChatGPT Business`, `ChatGPT Enterprise`, or `ChatGPT Edu`; and
 - one stable error code from the closed protocol vocabulary.
 
-Connected transitions require the opaque credential id and ChatGPT presence,
-and forbid an error. Error transitions require a stable error. Expired
-transitions require `credential_expired`. Revoked transitions carry no
-credential, account, plan, or error metadata. API-key account types fail closed.
+Only `pending_to_connected` establishes a validated connection. It requires the
+opaque credential id and ChatGPT presence, allows a plan enum, and forbids an
+error. Every later transition forbids credential/account/plan metadata, so
+evidence cannot introduce or replace a credential handle after establishment.
+Error transitions require a non-expiry stable error; expiry transitions require
+`credential_expired`; revoking, revoked, and deleted transitions require all
+metadata fields to be explicit nulls. API-key account types fail closed.
 
-The signer validates exact own data properties without invoking getters.
+The signer validates exact enumerable own data descriptors without invoking
+getters. Fresh snapshots have null prototypes; symbols, hostile prototypes,
+accessors, hidden properties, and the magic keys `__proto__`, `prototype`, and
+`constructor` are rejected at the decision, metadata, and account boundaries.
 Unexpected fields are rejected, so raw provider output, tokens, filesystem
 paths, commands, environment values, serialized homes, and arbitrary error
-messages cannot enter the envelope. All identifiers and display labels are
-bounded before signing. The verifier bounds the complete envelope before
-signature work and accepts only canonical unpadded base64url plus fixed-order
-JSON. Authenticated whitespace, reordered keys, duplicate keys, extension
-fields, and equivalent encodings are noncanonical and rejected.
+messages cannot enter the envelope.
+
+Issuer and audience are exact protocol constants. Clerk subjects have the
+closed Clerk user-id grammar. Connection, request, evidence, nonce, and gateway
+credential identifiers each have a distinct versioned canonical UUID-v4
+grammar. Key ids have a small lifecycle-v1 hex grammar. The plan projection is
+an enum rather than text. Token prefixes, paths, URLs, environment assignments,
+control characters, percent-encoded paths, Unicode confusables, and alternate
+encodings therefore fail before signing. The verifier bounds the complete
+envelope before signature work and accepts only canonical unpadded base64url
+plus fixed-order JSON. Authenticated whitespace, reordered keys, duplicate
+keys, extension fields, and equivalent encodings are noncanonical and rejected.
 
 ## Replay and rotation contract
 
@@ -81,21 +96,38 @@ connection, provider, request, transition, or credential revision. Therefore a
 valid signed envelope presented in the wrong context is burned and cannot be
 retried against the intended context.
 
-The replay mutation has a finite server-owned deadline and a derived,
-reason-free abort signal. Timeout, caller abort, unknown rejection, and any
-non-void or otherwise ambiguous store result fail closed. Late fulfillment or
-rejection remains observed after the verifier settles. A production replay
-store must atomically reject a duplicate evidence id or nonce across every
-gateway/server process and retain that decision through evidence expiry.
+The replay mutation has a finite server-owned deadline from an injected
+monotonic clock and a derived, reason-free abort signal. The clock is checked
+before invocation and immediately after synchronous or asynchronous settlement,
+so a store that blocks the event loop past its deadline cannot be accepted even
+if its fulfillment microtask beats the delayed timer. Timeout, caller abort,
+clock ambiguity, unknown rejection, and any non-void or otherwise ambiguous
+store result fail closed. Late fulfillment or rejection remains observed after
+the verifier settles.
+
+A production replay store must atomically reject a duplicate evidence id,
+nonce, **or originating request id** across every gateway/server process and
+retain all three decisions through evidence expiry. One request therefore has
+exactly one terminal lifecycle evidence result; concurrent distinct envelopes
+for the same request cannot both verify.
 
 ## Allowed transitions
 
-Version 1 recognizes only these exact transitions:
+Version 1 recognizes only the following explicit transition/metadata matrix:
 
-- `pending_to_connected`, `pending_to_error`, `pending_to_expired`;
-- `connected_to_error`, `connected_to_expired`, `connected_to_revoked`;
-- `error_to_connected`, `error_to_revoked`; and
-- `expired_to_connected`, `expired_to_revoked`.
+| Transition | Credential | Account | Plan | Error |
+| --- | --- | --- | --- | --- |
+| `pending_to_connected` | required | required ChatGPT presence | enum or null | null |
+| `pending_to_error` | null | null | null | required non-expiry code |
+| `pending_to_expired` | null | null | null | `credential_expired` |
+| `pending_to_revoking` | null | null | null | null |
+| `connected_to_error` | null | null | null | required non-expiry code |
+| `connected_to_expired` | null | null | null | `credential_expired` |
+| `connected_to_revoking` | null | null | null | null |
+| `error_to_revoking` | null | null | null | null |
+| `expired_to_revoking` | null | null | null | null |
+| `revoking_to_revoked` | null | null | null | null |
+| `revoked_to_deleted` | null | null | null | null |
 
 The signer accepts a closed `ServerLifecycleDecision`, not generic status
 strings or caller-defined metadata. Integration code must construct that

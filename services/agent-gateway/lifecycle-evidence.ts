@@ -4,32 +4,42 @@ import {
   verify as verifyBytes,
 } from "node:crypto";
 
-import {
-  awaitControlPlaneOperation,
-  type ControlPlaneOperationContext,
-} from "./control-plane.ts";
+import type { ControlPlaneOperationContext } from "./control-plane.ts";
 
 const LIFECYCLE_EVIDENCE_ALGORITHM = "EdDSA";
 const LIFECYCLE_EVIDENCE_TYPE = "sprig-lifecycle-evidence";
 const LIFECYCLE_EVIDENCE_VERSION = 1;
 const MAX_LIFECYCLE_EVIDENCE_LIFETIME_SECONDS = 60;
 const MAX_LIFECYCLE_EVIDENCE_LENGTH = 8_192;
-const MAX_IDENTIFIER_LENGTH = 256;
-const MAX_PLAN_LABEL_LENGTH = 128;
 const DEFAULT_LIFECYCLE_REPLAY_TIMEOUT_MS = 1_000;
 const MAX_LIFECYCLE_REPLAY_TIMEOUT_MS = 10_000;
+const LIFECYCLE_EVIDENCE_ISSUER = "sprig-agent-gateway";
+const LIFECYCLE_EVIDENCE_AUDIENCE = "sprig-trusted-server";
+
+const UUID_V4_PATTERN =
+  "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+const CLERK_SUBJECT_PATTERN = /^user_[A-Za-z0-9]{16,64}$/;
+const CONNECTION_ID_PATTERN = new RegExp(`^connection_v1_${UUID_V4_PATTERN}$`);
+const REQUEST_ID_PATTERN = new RegExp(`^request_v1_${UUID_V4_PATTERN}$`);
+const EVIDENCE_ID_PATTERN = new RegExp(`^evidence_v1_${UUID_V4_PATTERN}$`);
+const NONCE_PATTERN = new RegExp(`^nonce_v1_${UUID_V4_PATTERN}$`);
+const GATEWAY_CREDENTIAL_ID_PATTERN = new RegExp(
+  `^gwcred_v1_${UUID_V4_PATTERN}$`
+);
+const KEY_ID_PATTERN = /^lifecycle-v1-[0-9a-f]{8}$/;
 
 const LIFECYCLE_TRANSITIONS = [
   "pending_to_connected",
   "pending_to_error",
   "pending_to_expired",
+  "pending_to_revoking",
   "connected_to_error",
   "connected_to_expired",
-  "connected_to_revoked",
-  "error_to_connected",
-  "error_to_revoked",
-  "expired_to_connected",
-  "expired_to_revoked",
+  "connected_to_revoking",
+  "error_to_revoking",
+  "expired_to_revoking",
+  "revoking_to_revoked",
+  "revoked_to_deleted",
 ] as const;
 
 const LIFECYCLE_ERROR_CODES = [
@@ -41,8 +51,38 @@ const LIFECYCLE_ERROR_CODES = [
   "provider_unavailable",
 ] as const;
 
+const LIFECYCLE_PLAN_LABELS = [
+  "ChatGPT",
+  "ChatGPT Plus",
+  "ChatGPT Pro",
+  "ChatGPT Business",
+  "ChatGPT Enterprise",
+  "ChatGPT Edu",
+] as const;
+
 type LifecycleTransition = (typeof LIFECYCLE_TRANSITIONS)[number];
 type LifecycleErrorCode = (typeof LIFECYCLE_ERROR_CODES)[number];
+type LifecyclePlanLabel = (typeof LIFECYCLE_PLAN_LABELS)[number];
+
+type LifecycleMetadataPolicy =
+  | "establish_connection"
+  | "record_error"
+  | "record_expiry"
+  | "empty_terminal";
+
+const LIFECYCLE_TRANSITION_METADATA_POLICIES = {
+  pending_to_connected: "establish_connection",
+  pending_to_error: "record_error",
+  pending_to_expired: "record_expiry",
+  pending_to_revoking: "empty_terminal",
+  connected_to_error: "record_error",
+  connected_to_expired: "record_expiry",
+  connected_to_revoking: "empty_terminal",
+  error_to_revoking: "empty_terminal",
+  expired_to_revoking: "empty_terminal",
+  revoking_to_revoked: "empty_terminal",
+  revoked_to_deleted: "empty_terminal",
+} as const satisfies Record<LifecycleTransition, LifecycleMetadataPolicy>;
 
 type LifecycleEvidenceErrorCode =
   | "audience_mismatch"
@@ -73,7 +113,7 @@ type LifecycleEvidenceAccount = Readonly<{
 type LifecycleEvidenceMetadata = Readonly<{
   gatewayCredentialId: string | null;
   account: LifecycleEvidenceAccount | null;
-  planLabel: string | null;
+  planLabel: LifecyclePlanLabel | null;
   errorCode: LifecycleErrorCode | null;
 }>;
 
@@ -104,6 +144,10 @@ type LifecycleEvidenceHeader = Readonly<{
 
 type LifecycleEvidenceClock = Readonly<{
   nowSeconds: () => number;
+}>;
+
+type LifecycleMonotonicClock = Readonly<{
+  nowMilliseconds: () => number;
 }>;
 
 type LifecycleEvidenceSigningKey = Readonly<{
@@ -161,6 +205,7 @@ type LifecycleReplayEntry = Readonly<{
 }>;
 
 interface LifecycleEvidenceReplayDefense {
+  /** Atomically consumes all three identifiers through the entry expiry. */
   consume(
     entry: LifecycleReplayEntry,
     context?: ControlPlaneOperationContext
@@ -172,6 +217,7 @@ type VerifyLifecycleEvidenceOptions = Readonly<{
   expected: ExpectedLifecycleEvidenceContext;
   replayDefense: LifecycleEvidenceReplayDefense;
   verificationKeys: LifecycleEvidenceVerificationKeys;
+  monotonicClock: LifecycleMonotonicClock;
   replayDefenseTimeoutMs?: number;
   signal?: AbortSignal;
 }>;
@@ -179,6 +225,14 @@ type VerifyLifecycleEvidenceOptions = Readonly<{
 type LifecycleReplayDefenseErrorCode =
   | "replay_defense_unavailable"
   | "replay_detected";
+
+type ReplayConsumeOutcome =
+  | Readonly<{ status: "fulfilled"; value: unknown }>
+  | Readonly<{ status: "rejected"; error: unknown }>
+  | Readonly<{ status: "aborted" }>
+  | Readonly<{ status: "timed_out" }>;
+
+const SKIPPED_REPLAY_CONSUME = Symbol("skipped replay consume");
 
 /** Stable evidence failure whose message contains no signed or provider data. */
 class LifecycleEvidenceError extends Error {
@@ -306,7 +360,10 @@ async function verifyLifecycleEvidence(
     throw configurationError();
   }
 
-  const replayOutcome = await awaitControlPlaneOperation(
+  const replayStartedAtMilliseconds = readMonotonicClock(
+    options.monotonicClock
+  );
+  const replayOutcome = await awaitReplayConsume(
     (context) =>
       options.replayDefense.consume(
         {
@@ -318,6 +375,8 @@ async function verifyLifecycleEvidence(
         context
       ),
     replayDefenseTimeoutMs,
+    options.monotonicClock,
+    replayStartedAtMilliseconds,
     options.signal
   );
   if (
@@ -341,6 +400,100 @@ async function verifyLifecycleEvidence(
 
   assertExpectedContext(claims, options.expected);
   return claims;
+}
+
+/**
+ * Awaits one atomic replay consume behind an authoritative monotonic deadline.
+ *
+ * The clock is checked immediately before invocation and after both synchronous
+ * and asynchronous settlement. Therefore a blocking consume cannot win merely
+ * because its fulfillment microtask runs before a delayed timer callback.
+ */
+function awaitReplayConsume(
+  operation: (
+    context: ControlPlaneOperationContext
+  ) => unknown | PromiseLike<unknown>,
+  timeoutMs: number,
+  monotonicClock: LifecycleMonotonicClock,
+  startedAtMilliseconds: number,
+  requestSignal?: AbortSignal
+): Promise<ReplayConsumeOutcome> {
+  const operationController = new AbortController();
+  const deadlineAtMilliseconds = startedAtMilliseconds + timeoutMs;
+
+  return new Promise<ReplayConsumeOutcome>((resolve) => {
+    let settled = false;
+    const finish = (
+      outcome: ReplayConsumeOutcome,
+      cancelOperation: boolean
+    ): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      requestSignal?.removeEventListener("abort", handleRequestAbort);
+      if (cancelOperation) operationController.abort();
+      resolve(outcome);
+    };
+    const handleRequestAbort = (): void => {
+      finish({ status: "aborted" }, true);
+    };
+    const readSettlementTime = (): number | null => {
+      try {
+        const nowMilliseconds = readMonotonicClock(monotonicClock);
+        return nowMilliseconds < startedAtMilliseconds ? null : nowMilliseconds;
+      } catch {
+        return null;
+      }
+    };
+
+    const timeout = setTimeout(() => {
+      finish({ status: "timed_out" }, true);
+    }, timeoutMs);
+    requestSignal?.addEventListener("abort", handleRequestAbort, {
+      once: true,
+    });
+    if (requestSignal?.aborted) handleRequestAbort();
+
+    Promise.resolve()
+      .then(() => {
+        if (settled) return SKIPPED_REPLAY_CONSUME;
+        const beforeInvocation = readSettlementTime();
+        if (
+          beforeInvocation === null ||
+          beforeInvocation >= deadlineAtMilliseconds
+        ) {
+          finish({ status: "timed_out" }, true);
+          return SKIPPED_REPLAY_CONSUME;
+        }
+        return operation(
+          Object.freeze({
+            signal: operationController.signal,
+            deadlineAtMilliseconds,
+          })
+        );
+      })
+      .then(
+        (value) => {
+          if (value === SKIPPED_REPLAY_CONSUME) return;
+          const settledAt = readSettlementTime();
+          if (settledAt === null || settledAt >= deadlineAtMilliseconds) {
+            finish({ status: "timed_out" }, true);
+            return;
+          }
+          finish({ status: "fulfilled", value }, false);
+        },
+        (error: unknown) => {
+          // Keep this handler attached after timeout/abort so late rejection is
+          // observed, but let an exceeded deadline dominate a store error.
+          const settledAt = readSettlementTime();
+          if (settledAt === null || settledAt >= deadlineAtMilliseconds) {
+            finish({ status: "timed_out" }, true);
+            return;
+          }
+          finish({ status: "rejected", error }, false);
+        }
+      );
+  });
 }
 
 type AuthenticatedEvidence = Readonly<{
@@ -443,12 +596,12 @@ function parseHeader(segment: string): LifecycleEvidenceHeader {
   ) {
     throw invalidEvidence();
   }
-  return {
+  return Object.freeze({
     algorithm: LIFECYCLE_EVIDENCE_ALGORITHM,
     type: LIFECYCLE_EVIDENCE_TYPE,
     version: LIFECYCLE_EVIDENCE_VERSION,
-    kid: assertIdentifier(value.kid),
-  };
+    kid: assertKeyIdClaim(value.kid),
+  });
 }
 
 /** Parses the exact v1 claim and safe-metadata schema after authentication. */
@@ -486,19 +639,20 @@ function parseClaims(segment: string): LifecycleEvidenceClaims {
     throw invalidEvidence();
   }
   const transition = assertTransition(value.transition);
-  const evidenceId = assertIdentifier(value.evidenceId);
-  const nonce = assertIdentifier(value.nonce);
+  const evidenceId = assertOpaqueId(value.evidenceId, EVIDENCE_ID_PATTERN);
+  const nonce = assertOpaqueId(value.nonce, NONCE_PATTERN);
   if (evidenceId === nonce) throw invalidEvidence();
   const metadata = parseMetadata(value.metadata, transition);
-  return {
+  return Object.freeze({
     version: LIFECYCLE_EVIDENCE_VERSION,
-    issuer: assertIdentifier(value.issuer),
-    audience: assertIdentifier(value.audience),
-    subject: assertIdentifier(value.subject),
-    connectionId: assertIdentifier(value.connectionId),
-    // Provider remains a string until replay consumption precedes context match.
-    provider: assertIdentifier(value.provider) as "codex",
-    requestId: assertIdentifier(value.requestId),
+    issuer: assertIssuer(value.issuer),
+    audience: assertAudience(value.audience),
+    subject: assertClerkSubject(value.subject),
+    connectionId: assertOpaqueId(value.connectionId, CONNECTION_ID_PATTERN),
+    // A known alternate provider remains parseable so its signed evidence is
+    // consumed before the exact Codex expected-context comparison.
+    provider: assertProviderClaim(value.provider),
+    requestId: assertOpaqueId(value.requestId, REQUEST_ID_PATTERN),
     evidenceId,
     nonce,
     issuedAt: value.issuedAt as number,
@@ -506,8 +660,8 @@ function parseClaims(segment: string): LifecycleEvidenceClaims {
     transition,
     credentialRevision: value.credentialRevision as number,
     metadata,
-    kid: assertIdentifier(value.kid),
-  };
+    kid: assertKeyIdClaim(value.kid),
+  });
 }
 
 /** Copies and validates a closed signer decision without invoking accessors. */
@@ -542,22 +696,22 @@ function parseServerDecision(
     throw invalidEvidence();
   }
   const transition = assertTransition(value.transition);
-  const evidenceId = assertIdentifier(value.evidenceId);
-  const nonce = assertIdentifier(value.nonce);
+  const evidenceId = assertOpaqueId(value.evidenceId, EVIDENCE_ID_PATTERN);
+  const nonce = assertOpaqueId(value.nonce, NONCE_PATTERN);
   if (evidenceId === nonce) throw invalidEvidence();
-  return {
-    issuer: assertIdentifier(value.issuer),
-    audience: assertIdentifier(value.audience),
-    subject: assertIdentifier(value.subject),
-    connectionId: assertIdentifier(value.connectionId),
-    requestId: assertIdentifier(value.requestId),
+  return Object.freeze({
+    issuer: assertIssuer(value.issuer),
+    audience: assertAudience(value.audience),
+    subject: assertClerkSubject(value.subject),
+    connectionId: assertOpaqueId(value.connectionId, CONNECTION_ID_PATTERN),
+    requestId: assertOpaqueId(value.requestId, REQUEST_ID_PATTERN),
     evidenceId,
     nonce,
     transition,
     credentialRevision: value.credentialRevision as number,
     metadata: parseMetadata(value.metadata, transition),
     lifetimeSeconds: value.lifetimeSeconds as number | undefined,
-  };
+  });
 }
 
 /** Validates the only safe gateway metadata allowed for a transition. */
@@ -572,7 +726,7 @@ function parseMetadata(
     "gatewayCredentialId",
     "planLabel",
   ]);
-  const gatewayCredentialId = assertNullableIdentifier(
+  const gatewayCredentialId = assertNullableGatewayCredentialId(
     value.gatewayCredentialId
   );
   const planLabel = assertNullablePlanLabel(value.planLabel);
@@ -580,30 +734,39 @@ function parseMetadata(
   const account = parseNullableAccount(value.account);
   const metadata = { gatewayCredentialId, account, planLabel, errorCode };
 
-  const target = transition.split("_to_")[1];
-  if (target === "connected") {
-    if (
-      gatewayCredentialId === null ||
-      account === null ||
-      errorCode !== null
-    ) {
-      throw invalidEvidence();
-    }
-  } else if (target === "error") {
-    if (errorCode === null || (account === null && planLabel !== null)) {
-      throw invalidEvidence();
-    }
-  } else if (target === "expired") {
-    if (errorCode !== "credential_expired") {
-      throw invalidEvidence();
-    }
-  } else if (
-    gatewayCredentialId !== null ||
-    account !== null ||
-    planLabel !== null ||
-    errorCode !== null
+  const policy = LIFECYCLE_TRANSITION_METADATA_POLICIES[transition];
+  if (
+    policy === "establish_connection" &&
+    (gatewayCredentialId === null || account === null || errorCode !== null)
   ) {
-    // Revocation evidence confirms a terminal state, not credential metadata.
+    throw invalidEvidence();
+  }
+  if (
+    policy === "record_error" &&
+    (gatewayCredentialId !== null ||
+      account !== null ||
+      planLabel !== null ||
+      errorCode === null ||
+      errorCode === "credential_expired")
+  ) {
+    throw invalidEvidence();
+  }
+  if (
+    policy === "record_expiry" &&
+    (gatewayCredentialId !== null ||
+      account !== null ||
+      planLabel !== null ||
+      errorCode !== "credential_expired")
+  ) {
+    throw invalidEvidence();
+  }
+  if (
+    policy === "empty_terminal" &&
+    (gatewayCredentialId !== null ||
+      account !== null ||
+      planLabel !== null ||
+      errorCode !== null)
+  ) {
     throw invalidEvidence();
   }
   return Object.freeze(metadata);
@@ -690,6 +853,19 @@ function readClock(clock: LifecycleEvidenceClock): number {
   return nowSeconds;
 }
 
+/** Reads a finite injected monotonic clock without accepting unsafe deadlines. */
+function readMonotonicClock(clock: LifecycleMonotonicClock): number {
+  const nowMilliseconds = clock.nowMilliseconds();
+  if (
+    !Number.isFinite(nowMilliseconds) ||
+    nowMilliseconds < 0 ||
+    nowMilliseconds > Number.MAX_SAFE_INTEGER - MAX_LIFECYCLE_REPLAY_TIMEOUT_MS
+  ) {
+    throw configurationError();
+  }
+  return nowMilliseconds;
+}
+
 /** Restricts keys to Ed25519 and their required role. */
 function assertKeyObject(
   key: KeyObject,
@@ -727,84 +903,121 @@ function assertNullableErrorCode(value: unknown): LifecycleErrorCode | null {
   return value as LifecycleErrorCode;
 }
 
-/** Validates one required non-empty identifier without returning input values. */
-function assertIdentifier(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > MAX_IDENTIFIER_LENGTH ||
-    Buffer.byteLength(value, "utf8") > MAX_IDENTIFIER_LENGTH
-  ) {
+/** Validates the sole protocol issuer. */
+function assertIssuer(value: unknown): string {
+  if (value !== LIFECYCLE_EVIDENCE_ISSUER) throw invalidEvidence();
+  return value;
+}
+
+/** Validates the sole trusted reconciliation audience. */
+function assertAudience(value: unknown): string {
+  if (value !== LIFECYCLE_EVIDENCE_AUDIENCE) throw invalidEvidence();
+  return value;
+}
+
+/** Validates a Clerk user subject without accepting arbitrary safe-looking text. */
+function assertClerkSubject(value: unknown): string {
+  if (typeof value !== "string" || !CLERK_SUBJECT_PATTERN.test(value)) {
     throw invalidEvidence();
   }
   return value;
 }
 
-/** Validates a bounded configured key identifier as configuration, not input. */
-function assertConfiguredKeyId(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > MAX_IDENTIFIER_LENGTH ||
-    Buffer.byteLength(value, "utf8") > MAX_IDENTIFIER_LENGTH
-  ) {
-    throw configurationError();
+/** Validates one versioned UUID-shaped server identifier. */
+function assertOpaqueId(value: unknown, pattern: RegExp): string {
+  if (typeof value !== "string" || !pattern.test(value)) {
+    throw invalidEvidence();
   }
   return value;
 }
 
-/** Validates one nullable opaque identifier. */
-function assertNullableIdentifier(value: unknown): string | null {
-  return value === null ? null : assertIdentifier(value);
+/** Keeps known alternate-provider evidence consumable before context matching. */
+function assertProviderClaim(value: unknown): "codex" {
+  if (value !== "codex" && value !== "claude") throw invalidEvidence();
+  return value as "codex";
 }
 
-/** Validates one display-only plan label. */
-function assertNullablePlanLabel(value: unknown): string | null {
+/** Validates a signed key identifier before matching authenticated key bytes. */
+function assertKeyIdClaim(value: unknown): string {
+  if (typeof value !== "string" || !KEY_ID_PATTERN.test(value)) {
+    throw invalidEvidence();
+  }
+  return value;
+}
+
+/** Validates a configured key identifier as configuration, not signed input. */
+function assertConfiguredKeyId(value: unknown): string {
+  if (typeof value !== "string" || !KEY_ID_PATTERN.test(value))
+    throw configurationError();
+  return value;
+}
+
+/** Validates the only opaque credential-handle shape. */
+function assertNullableGatewayCredentialId(value: unknown): string | null {
+  return value === null
+    ? null
+    : assertOpaqueId(value, GATEWAY_CREDENTIAL_ID_PATTERN);
+}
+
+/** Validates one small server-owned display label enum. */
+function assertNullablePlanLabel(value: unknown): LifecyclePlanLabel | null {
   if (value === null) return null;
   if (
     typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > MAX_PLAN_LABEL_LENGTH ||
-    Buffer.byteLength(value, "utf8") > MAX_PLAN_LABEL_LENGTH ||
-    containsControlCharacter(value)
+    !LIFECYCLE_PLAN_LABELS.includes(value as LifecyclePlanLabel)
   ) {
     throw invalidEvidence();
   }
-  return value;
-}
-
-/** Rejects C0 and DEL characters from display-only metadata. */
-function containsControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const codeUnit = value.charCodeAt(index);
-    if (codeUnit <= 0x1f || codeUnit === 0x7f) return true;
-  }
-  return false;
+  return value as LifecyclePlanLabel;
 }
 
 /** Reads a plain data object without invoking getters or accepting prototypes. */
 function readPlainDataObject(value: unknown): Record<string, unknown> {
   try {
+    const prototype =
+      typeof value === "object" && value !== null
+        ? Object.getPrototypeOf(value)
+        : undefined;
     if (
       typeof value !== "object" ||
       value === null ||
       Array.isArray(value) ||
-      (Object.getPrototypeOf(value) !== Object.prototype &&
-        Object.getPrototypeOf(value) !== null)
+      (prototype !== Object.prototype && prototype !== null)
     ) {
       throw invalidEvidence();
     }
     const ownKeys = Reflect.ownKeys(value);
-    if (ownKeys.length > 20 || ownKeys.some((key) => typeof key !== "string")) {
+    if (
+      ownKeys.length > 20 ||
+      ownKeys.some(
+        (key) =>
+          typeof key !== "string" ||
+          key === "__proto__" ||
+          key === "prototype" ||
+          key === "constructor"
+      )
+    ) {
       throw invalidEvidence();
     }
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    const result: Record<string, unknown> = {};
-    for (const [key, descriptor] of Object.entries(descriptors)) {
-      if (!("value" in descriptor) || typeof descriptor.value === "function") {
+    const result = Object.create(null) as Record<string, unknown>;
+    for (const key of ownKeys as string[]) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (
+        descriptor === undefined ||
+        !("value" in descriptor) ||
+        descriptor.enumerable !== true ||
+        typeof descriptor.value === "function"
+      ) {
         throw invalidEvidence();
       }
-      result[key] = descriptor.value;
+      // A null-prototype destination plus defineProperty prevents magic-key
+      // assignment from invoking Object.prototype setters.
+      Object.defineProperty(result, key, {
+        configurable: false,
+        enumerable: true,
+        value: descriptor.value,
+        writable: false,
+      });
     }
     return result;
   } catch (error) {
@@ -915,7 +1128,10 @@ export {
   type ExpectedLifecycleEvidenceContext,
   issueLifecycleEvidence,
   LIFECYCLE_ERROR_CODES,
+  LIFECYCLE_EVIDENCE_AUDIENCE,
+  LIFECYCLE_EVIDENCE_ISSUER,
   LIFECYCLE_EVIDENCE_VERSION,
+  LIFECYCLE_PLAN_LABELS,
   LIFECYCLE_TRANSITIONS,
   type LifecycleErrorCode,
   type LifecycleEvidenceAccount,
@@ -928,6 +1144,8 @@ export {
   type LifecycleEvidenceSigningKey,
   type LifecycleEvidenceVerificationKey,
   type LifecycleEvidenceVerificationKeys,
+  type LifecycleMonotonicClock,
+  type LifecyclePlanLabel,
   LifecycleReplayDefenseError,
   type LifecycleReplayDefenseErrorCode,
   type LifecycleReplayEntry,
