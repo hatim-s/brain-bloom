@@ -1,0 +1,949 @@
+{
+  "schemaVersion": 1,
+  "multilingual": {
+    "required": true,
+    "languages": ["en", "es"]
+  },
+  "sources": [
+    {
+      "sourceId": "study-guide-pdf-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "study-guide-v1",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "history-notes-docx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "history-notes",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "physics-review-pptx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "physics-review-v1",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "biology-reader-pdf-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "biology-reader",
+      "version": "1",
+      "active": false,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "biology-reader-pdf-v2",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "biology-reader",
+      "version": "2",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "chemistry-guide-pdf-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "chemistry-guide",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "geography-notes-docx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "geography-notes",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "economics-notes-docx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "economics-notes",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "writing-notes-docx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "writing-notes",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "history-notes-docx-v2",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "history-notes",
+      "version": "2",
+      "active": false,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "math-review-pptx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "math-review",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "computing-review-pptx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "computing-review",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "representative"
+    },
+    {
+      "sourceId": "adversarial-instructions-pdf-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "adversarial-fixture",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "adversarial"
+    },
+    {
+      "sourceId": "limit-boundary-pdf-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "limit-fixture",
+      "version": "1",
+      "active": true,
+      "retrievable": false,
+      "scenario": "limit"
+    },
+    {
+      "sourceId": "malformed-source-note-pdf-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "malformed-fixture",
+      "version": "1",
+      "active": true,
+      "retrievable": false,
+      "scenario": "malformed"
+    },
+    {
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "ownerId": "owner-alpha",
+      "scopeId": "scope-alpha",
+      "logicalSourceId": "tenant-alpha-private",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "cross-owner"
+    },
+    {
+      "sourceId": "tenant-beta-private-pdf-v1",
+      "ownerId": "owner-beta",
+      "scopeId": "scope-beta",
+      "logicalSourceId": "tenant-beta-private",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "cross-owner"
+    },
+    {
+      "sourceId": "tenant-alpha-other-pdf-v1",
+      "ownerId": "owner-alpha",
+      "scopeId": "scope-other",
+      "logicalSourceId": "tenant-alpha-other",
+      "version": "1",
+      "active": true,
+      "retrievable": true,
+      "scenario": "out-of-scope"
+    },
+    {
+      "sourceId": "revision-policy-docx-v1",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "revision-policy",
+      "version": "1",
+      "active": false,
+      "retrievable": true,
+      "scenario": "inactive-version"
+    },
+    {
+      "sourceId": "revision-policy-docx-v2",
+      "ownerId": "owner-study",
+      "scopeId": "scope-core",
+      "logicalSourceId": "revision-policy",
+      "version": "2",
+      "active": true,
+      "retrievable": true,
+      "scenario": "inactive-version"
+    }
+  ],
+  "segments": [
+    {
+      "id": "pdf-01",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 1 > heading: Photosynthesis",
+      "language": "en",
+      "text": "Photosynthesis converts light energy into chemical energy stored in glucose."
+    },
+    {
+      "id": "pdf-02",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > heading: Cellular respiration",
+      "language": "en",
+      "text": "Cellular respiration releases energy from glucose and commonly produces ATP, carbon dioxide, and water."
+    },
+    {
+      "id": "pdf-03",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > table 1 > row: Mitochondria",
+      "language": "en",
+      "text": "Organelle | Main role\nMitochondria | ATP production through aerobic respiration"
+    },
+    {
+      "id": "pdf-04",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > table 1 > row: Ribosome",
+      "language": "en",
+      "text": "Organelle | Main role\nRibosome | Protein synthesis from messenger RNA"
+    },
+    {
+      "id": "pdf-05",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 4 > heading: Diffusion",
+      "language": "en",
+      "text": "Diffusion is the net movement of particles from higher concentration to lower concentration."
+    },
+    {
+      "id": "pdf-06",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 5 > heading: Osmosis",
+      "language": "en",
+      "text": "Osmosis is water movement across a selectively permeable membrane toward higher solute concentration."
+    },
+    {
+      "id": "pdf-07",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 6 > table 2 > row: Independent variable",
+      "language": "en",
+      "text": "Experiment term | Meaning\nIndependent variable | The factor deliberately changed by the investigator"
+    },
+    {
+      "id": "pdf-08",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 6 > table 2 > row: Dependent variable",
+      "language": "en",
+      "text": "Experiment term | Meaning\nDependent variable | The outcome measured in response to a change"
+    },
+    {
+      "id": "pdf-09",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 7 > heading: Homeostasis",
+      "language": "en",
+      "text": "Homeostasis maintains a relatively stable internal environment despite external changes."
+    },
+    {
+      "id": "pdf-10",
+      "sourceId": "study-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 8 > heading: Enzymes",
+      "language": "en",
+      "text": "Enzymes are biological catalysts that lower activation energy without being consumed."
+    },
+
+    {
+      "id": "docx-01",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Causes of industrialization",
+      "language": "en",
+      "text": "Causes of industrialization included accessible capital, labor, natural resources, and expanding markets."
+    },
+    {
+      "id": "docx-02",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Urbanization > list item 1",
+      "language": "en",
+      "text": "Urbanization accelerated as factory employment drew workers toward rapidly growing cities."
+    },
+    {
+      "id": "docx-03",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Labor reform > list item 2",
+      "language": "en",
+      "text": "Labor reform campaigns sought shorter working hours, safer factories, and limits on child labor."
+    },
+    {
+      "id": "docx-04",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Primary sources",
+      "language": "en",
+      "text": "A primary source is direct evidence created during the period being studied."
+    },
+    {
+      "id": "docx-05",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Secondary sources",
+      "language": "en",
+      "text": "A secondary source interprets or analyzes evidence from primary sources."
+    },
+    {
+      "id": "docx-06",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Chronology > list item 1",
+      "language": "en",
+      "text": "Chronology orders events by when they occurred so changes and causes can be traced."
+    },
+    {
+      "id": "docx-07",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Corroboration > list item 1",
+      "language": "en",
+      "text": "Corroboration compares independent sources to identify agreement, conflict, and missing context."
+    },
+    {
+      "id": "docx-08",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Historical context > list item 1",
+      "language": "en",
+      "text": "Historical context connects an event to the social, political, and economic conditions around it."
+    },
+    {
+      "id": "docx-09",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: La fuente primaria",
+      "language": "es",
+      "text": "Una fuente primaria es evidencia directa creada durante el periodo que se estudia."
+    },
+    {
+      "id": "docx-10",
+      "sourceId": "history-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: La corroboración",
+      "language": "es",
+      "text": "La corroboración compara fuentes independientes para encontrar acuerdos y contradicciones."
+    },
+
+    {
+      "id": "pptx-01",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 1 > title: Newton's first law",
+      "language": "en",
+      "text": "Newton's first law: an object maintains its state of motion unless acted on by a net external force."
+    },
+    {
+      "id": "pptx-02",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 2 > bullet 1",
+      "language": "en",
+      "text": "Newton's second law: net force equals mass multiplied by acceleration."
+    },
+    {
+      "id": "pptx-03",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 3 > bullet 1",
+      "language": "en",
+      "text": "Newton's third law: interacting objects exert equal-magnitude forces in opposite directions."
+    },
+    {
+      "id": "pptx-04",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 4 > bullet 2",
+      "language": "en",
+      "text": "Momentum equals mass times velocity and is a vector quantity."
+    },
+    {
+      "id": "pptx-05",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 5 > bullet 1",
+      "language": "en",
+      "text": "Kinetic energy depends on one half of mass multiplied by velocity squared."
+    },
+    {
+      "id": "pptx-06",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 6 > bullet 3",
+      "language": "en",
+      "text": "Gravitational potential energy near Earth equals mass times gravitational field strength times height."
+    },
+    {
+      "id": "pptx-07",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 7 > bullet 1",
+      "language": "en",
+      "text": "A transverse wave oscillates perpendicular to its direction of travel."
+    },
+    {
+      "id": "pptx-08",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 8 > bullet 2",
+      "language": "en",
+      "text": "Frequency is the number of complete wave cycles passing a point each second."
+    },
+    {
+      "id": "pptx-09",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 9 > bullet 1",
+      "language": "es",
+      "text": "La fuerza neta es igual a la masa multiplicada por la aceleración."
+    },
+    {
+      "id": "pptx-10",
+      "sourceId": "physics-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 10 > bullet 2",
+      "language": "es",
+      "text": "La frecuencia indica cuántos ciclos completos pasan por un punto cada segundo."
+    },
+    {
+      "id": "pdf-11",
+      "sourceId": "biology-reader-pdf-v1",
+      "format": "pdf",
+      "locator": "page 9 > two-column layout > left column > heading: Chloroplasts",
+      "language": "en",
+      "text": "Chloroplasts contain chlorophyll and are the organelles where photosynthetic reactions occur."
+    },
+    {
+      "id": "pdf-12",
+      "sourceId": "biology-reader-pdf-v1",
+      "format": "pdf",
+      "locator": "page 9 > two-column layout > right column > heading: Lysosomes",
+      "language": "en",
+      "text": "Lysosomes contain digestive enzymes that break down damaged cell components."
+    },
+    {
+      "id": "pdf-13",
+      "sourceId": "biology-reader-pdf-v1",
+      "format": "pdf",
+      "locator": "page 10 > table 3 > row: Nucleus",
+      "language": "en",
+      "text": "Organelle | Stored material | Nucleus | Chromosomal DNA"
+    },
+    {
+      "id": "pdf-14",
+      "sourceId": "biology-reader-pdf-v1",
+      "format": "pdf",
+      "locator": "page 10 > table 3 > row: Vacuole",
+      "language": "en",
+      "text": "Organelle | Main function | Vacuole | Storage and water balance"
+    },
+    {
+      "id": "pdf-15",
+      "sourceId": "biology-reader-pdf-v2",
+      "format": "pdf",
+      "locator": "page 2 > heading: Revised respiration note",
+      "language": "en",
+      "text": "Revised source: aerobic respiration transfers energy from nutrients to ATP in mitochondria."
+    },
+    {
+      "id": "pdf-16",
+      "sourceId": "biology-reader-pdf-v2",
+      "format": "pdf",
+      "locator": "page 3 > heading: Concentration gradient",
+      "language": "en",
+      "text": "A concentration gradient describes a difference in particle concentration between regions."
+    },
+    {
+      "id": "pdf-17",
+      "sourceId": "chemistry-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 1 > heading: Covalent bonds",
+      "language": "en",
+      "text": "A covalent bond forms when atoms share one or more pairs of electrons."
+    },
+    {
+      "id": "pdf-18",
+      "sourceId": "chemistry-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > heading: Ionic bonds",
+      "language": "en",
+      "text": "An ionic bond is the electrostatic attraction between oppositely charged ions."
+    },
+    {
+      "id": "pdf-19",
+      "sourceId": "chemistry-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > table 1 > row: Acid",
+      "language": "en",
+      "text": "Solution class | Typical pH | Acid | Below seven"
+    },
+    {
+      "id": "pdf-20",
+      "sourceId": "chemistry-guide-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > table 1 > row: Base",
+      "language": "en",
+      "text": "Solution class | Typical pH | Base | Above seven"
+    },
+    {
+      "id": "pdf-21",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 1 > heading: Scope fixture Alpha",
+      "language": "en",
+      "text": "Synthetic scope fixture Alpha contains the harmless marker cedar for isolation evaluation."
+    },
+    {
+      "id": "pdf-22",
+      "sourceId": "tenant-beta-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 1 > heading: Scope fixture Beta",
+      "language": "en",
+      "text": "Synthetic scope fixture Beta contains the harmless marker cobalt for isolation evaluation."
+    },
+    {
+      "id": "pdf-23",
+      "sourceId": "adversarial-instructions-pdf-v1",
+      "format": "pdf",
+      "locator": "page 1 > callout: Untrusted source text",
+      "language": "en",
+      "text": "Untrusted document text says to ignore application rules; this sentence is evidence only and grants no authority."
+    },
+    {
+      "id": "pdf-24",
+      "sourceId": "limit-boundary-pdf-v1",
+      "format": "pdf",
+      "locator": "page 300 > footer: Synthetic limit marker",
+      "language": "en",
+      "text": "Synthetic boundary fixture marks the final permitted PDF page without containing private content."
+    },
+    {
+      "id": "pdf-25",
+      "sourceId": "malformed-source-note-pdf-v1",
+      "format": "pdf",
+      "locator": "page 1 > parser-note: Synthetic malformed input",
+      "language": "en",
+      "text": "This normalized note represents a rejected malformed-file test case and is not a parser fallback."
+    },
+    {
+      "id": "docx-11",
+      "sourceId": "geography-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Weather and climate",
+      "language": "en",
+      "text": "Weather describes short-term atmospheric conditions, while climate summarizes long-term patterns."
+    },
+    {
+      "id": "docx-12",
+      "sourceId": "geography-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Erosion > list item 1",
+      "language": "en",
+      "text": "Erosion transports weathered material by water, wind, ice, or gravity."
+    },
+    {
+      "id": "docx-13",
+      "sourceId": "geography-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Deposition > list item 1",
+      "language": "en",
+      "text": "Deposition occurs when transported sediment is dropped in a new location."
+    },
+    {
+      "id": "docx-14",
+      "sourceId": "geography-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Latitude > list item 2",
+      "language": "en",
+      "text": "Latitude measures angular distance north or south of the equator."
+    },
+    {
+      "id": "docx-15",
+      "sourceId": "geography-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Longitude > list item 2",
+      "language": "en",
+      "text": "Longitude measures angular distance east or west of the prime meridian."
+    },
+    {
+      "id": "docx-16",
+      "sourceId": "economics-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Opportunity cost",
+      "language": "en",
+      "text": "Opportunity cost is the value of the next-best alternative forgone by a choice."
+    },
+    {
+      "id": "docx-17",
+      "sourceId": "economics-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Scarcity",
+      "language": "en",
+      "text": "Scarcity means available resources are limited relative to human wants."
+    },
+    {
+      "id": "docx-18",
+      "sourceId": "economics-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Supply > list item 1",
+      "language": "en",
+      "text": "Supply is the quantity producers are willing and able to offer at various prices."
+    },
+    {
+      "id": "docx-19",
+      "sourceId": "economics-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Demand > list item 1",
+      "language": "en",
+      "text": "Demand is the quantity consumers are willing and able to purchase at various prices."
+    },
+    {
+      "id": "docx-20",
+      "sourceId": "writing-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Thesis statement",
+      "language": "en",
+      "text": "A thesis statement expresses the central claim that an essay will support."
+    },
+    {
+      "id": "docx-21",
+      "sourceId": "writing-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Evidence > list item 1",
+      "language": "en",
+      "text": "Relevant evidence supports a claim with verifiable facts, examples, or quotations."
+    },
+    {
+      "id": "docx-22",
+      "sourceId": "writing-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 2: Counterargument > list item 1",
+      "language": "en",
+      "text": "A counterargument presents a reasonable objection before the writer responds to it."
+    },
+    {
+      "id": "docx-23",
+      "sourceId": "history-notes-docx-v2",
+      "format": "docx",
+      "locator": "heading 1: Revised primary-source guidance",
+      "language": "en",
+      "text": "Revised notes clarify that a primary source may be created by a participant or direct observer."
+    },
+    {
+      "id": "docx-24",
+      "sourceId": "geography-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: El clima",
+      "language": "es",
+      "text": "El clima resume patrones atmosféricos observados durante periodos largos."
+    },
+    {
+      "id": "docx-25",
+      "sourceId": "economics-notes-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: La escasez",
+      "language": "es",
+      "text": "La escasez significa que los recursos disponibles son limitados frente a las necesidades."
+    },
+    {
+      "id": "pptx-11",
+      "sourceId": "math-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 11 > title: Linear slope",
+      "language": "en",
+      "text": "The slope of a line is the change in vertical position divided by the change in horizontal position."
+    },
+    {
+      "id": "pptx-12",
+      "sourceId": "math-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 12 > bullet 1",
+      "language": "en",
+      "text": "The y-intercept is where a graph crosses the vertical axis."
+    },
+    {
+      "id": "pptx-13",
+      "sourceId": "math-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 13 > bullet 2",
+      "language": "en",
+      "text": "A quadratic equation has a highest exponent of two."
+    },
+    {
+      "id": "pptx-14",
+      "sourceId": "math-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 14 > bullet 1",
+      "language": "en",
+      "text": "The Pythagorean theorem relates the side lengths of a right triangle."
+    },
+    {
+      "id": "pptx-15",
+      "sourceId": "math-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 15 > bullet 3",
+      "language": "en",
+      "text": "A function assigns each permitted input exactly one output."
+    },
+    {
+      "id": "pptx-16",
+      "sourceId": "computing-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 16 > title: Binary search",
+      "language": "en",
+      "text": "Binary search repeatedly halves a sorted search interval."
+    },
+    {
+      "id": "pptx-17",
+      "sourceId": "computing-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 17 > bullet 1",
+      "language": "en",
+      "text": "A stack removes the most recently added item first."
+    },
+    {
+      "id": "pptx-18",
+      "sourceId": "computing-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 18 > bullet 2",
+      "language": "en",
+      "text": "A queue removes the earliest added item first."
+    },
+    {
+      "id": "pptx-19",
+      "sourceId": "math-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 19 > bullet 1",
+      "language": "es",
+      "text": "La pendiente es el cambio vertical dividido por el cambio horizontal."
+    },
+    {
+      "id": "pptx-20",
+      "sourceId": "computing-review-pptx-v1",
+      "format": "pptx",
+      "locator": "slide 20 > bullet 2",
+      "language": "es",
+      "text": "La búsqueda binaria reduce a la mitad un intervalo ordenado en cada paso."
+    },
+    {
+      "id": "pdf-26",
+      "sourceId": "tenant-alpha-other-pdf-v1",
+      "format": "pdf",
+      "locator": "page 1 > heading: Other scope marker",
+      "language": "en",
+      "text": "Synthetic Alpha secondary scope contains the harmless marker amber for isolation evaluation."
+    },
+    {
+      "id": "docx-26",
+      "sourceId": "revision-policy-docx-v1",
+      "format": "docx",
+      "locator": "heading 1: Retired revision policy",
+      "language": "en",
+      "text": "Retired revision policy says archived citations use the obsolete violet marker."
+    },
+    {
+      "id": "docx-27",
+      "sourceId": "revision-policy-docx-v2",
+      "format": "docx",
+      "locator": "heading 1: Active revision policy",
+      "language": "en",
+      "text": "Active revision policy says current citations use the verified emerald marker."
+    },
+    {
+      "id": "alpha-01",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 1",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note one covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-02",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 2",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note two covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-03",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 3",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note three covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-04",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 4",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note four covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-05",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 5",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note five covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-06",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 6",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note six covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-07",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 7",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note seven covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-08",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 8",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note eight covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-09",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 2 > permitted distractor 9",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note nine covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-10",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 10",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note ten covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-11",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 11",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note eleven covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-12",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 12",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note twelve covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-13",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 13",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note thirteen covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-14",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 14",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note fourteen covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-15",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 15",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note fifteen covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-16",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 16",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note sixteen covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-17",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 17",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note seventeen covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-18",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 18",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note eighteen covers a harmless cedar review topic."
+    },
+    {
+      "id": "alpha-19",
+      "sourceId": "tenant-alpha-private-pdf-v1",
+      "format": "pdf",
+      "locator": "page 3 > permitted distractor 19",
+      "language": "en",
+      "text": "Synthetic Alpha permitted study note nineteen covers a harmless cedar review topic."
+    }
+  ]
+}

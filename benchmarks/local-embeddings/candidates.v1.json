@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "budgets": {
+    "maxColdLoadMs": 10000,
+    "maxWarmQueryP95Ms": 100,
+    "minIngestionSegmentsPerSecond": 20,
+    "maxResidentMemoryMb": 1024,
+    "maxCacheBytes": 1073741824
+  },
+  "cacheLimits": {
+    "maxBytes": 1073741824,
+    "maxFiles": 2000,
+    "maxDepth": 8
+  },
+  "adapterLimits": {
+    "maxBytes": 16777216,
+    "maxFiles": 4,
+    "maxDepth": 2
+  },
+  "measurement": {
+    "warmQueryPasses": 3,
+    "candidateTimeoutMs": 300000
+  },
+  "candidates": [
+    {
+      "key": "minilm-l6-v2",
+      "modelId": "sentence-transformers/all-MiniLM-L6-v2",
+      "revision": "c9745ed1d9f207416be6d2e6f8de32d1f16199bf",
+      "dimensions": 384,
+      "artifactChecksum": "sha256:6d5b837a241bf1827ef79af30b8655633b9f2669268d97753616da2029d4c5d7",
+      "offlineCachePath": "minilm-l6-v2-c9745ed1",
+      "adapter": {
+        "id": "sprig-local-embedding-adapter",
+        "version": "1.0.0",
+        "revision": "4b1ad7e8c2a76b69c87e5876b1c78be78d1ab092",
+        "modulePath": "sprig-local-embedding-adapter-1.0.0/adapter.mjs",
+        "artifactChecksum": "sha256:a6be51dd880e7da398f9060202f3c1cb3ffc20188c77b3beab1d6d5317a14314",
+        "manifestPath": "sprig-local-embedding-adapter-1.0.0/minilm.manifest.json",
+        "manifestChecksum": "sha256:96934ce9cad45f03af0103bd8e81f053e2d3672293c7873d672a9c38fa97ddad",
+        "bundle": {
+          "format": "self-contained-esm-bundle/v1",
+          "executionBoundary": "node-vm-source-text-module/v1",
+          "allowedNodeBuiltins": [],
+          "executionEvidence": {
+            "modelArtifactAccess": "none",
+            "evidenceClass": "sandbox-smoke-only",
+            "selectionEligibility": "invalid",
+            "selectionIneligibilityReason": "no-model-artifact-capability"
+          }
+        }
+      },
+      "runtime": {
+        "id": "onnxruntime",
+        "version": "1.22.0"
+      },
+      "preprocessing": {
+        "id": "minilm-mean-normalized",
+        "version": "1.0.0",
+        "pooling": "mean",
+        "normalize": true,
+        "queryPrefix": "",
+        "documentPrefix": ""
+      }
+    },
+    {
+      "key": "bge-small-en-v1.5",
+      "modelId": "BAAI/bge-small-en-v1.5",
+      "revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+      "dimensions": 384,
+      "artifactChecksum": "sha256:d44f8900f22d0a90c1f3362f34a2d6a2c43fcba8447499ea414e0c1fed653a2b",
+      "offlineCachePath": "bge-small-en-v1.5-5c38ec7c",
+      "adapter": {
+        "id": "sprig-local-embedding-adapter",
+        "version": "1.0.0",
+        "revision": "4b1ad7e8c2a76b69c87e5876b1c78be78d1ab092",
+        "modulePath": "sprig-local-embedding-adapter-1.0.0/adapter.mjs",
+        "artifactChecksum": "sha256:a6be51dd880e7da398f9060202f3c1cb3ffc20188c77b3beab1d6d5317a14314",
+        "manifestPath": "sprig-local-embedding-adapter-1.0.0/bge.manifest.json",
+        "manifestChecksum": "sha256:144ce71f04dfc2f6b293689f86007363d3bf31acd6d5cb4dc98af952d2195026",
+        "bundle": {
+          "format": "self-contained-esm-bundle/v1",
+          "executionBoundary": "node-vm-source-text-module/v1",
+          "allowedNodeBuiltins": [],
+          "executionEvidence": {
+            "modelArtifactAccess": "none",
+            "evidenceClass": "sandbox-smoke-only",
+            "selectionEligibility": "invalid",
+            "selectionIneligibilityReason": "no-model-artifact-capability"
+          }
+        }
+      },
+      "runtime": {
+        "id": "onnxruntime",
+        "version": "1.22.0"
+      },
+      "preprocessing": {
+        "id": "bge-query-cls-normalized",
+        "version": "1.0.0",
+        "pooling": "cls",
+        "normalize": true,
+        "queryPrefix": "Represent this sentence for searching relevant passages: ",
+        "documentPrefix": ""
+      }
+    }
+  ]
+}
