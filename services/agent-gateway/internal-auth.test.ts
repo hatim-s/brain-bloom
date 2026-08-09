@@ -141,24 +141,32 @@ function signEncodedAssertion(
   return `${signingInput}.${signature}`;
 }
 
-/** Captures and checks the stable error code from one rejected verification. */
-function expectCode(
-  action: () => unknown,
+/** Awaits a rejected verification and checks only its stable public code. */
+async function expectCode(
+  action: () => unknown | Promise<unknown>,
   code: InternalAssertionError["code"]
-): void {
+): Promise<void> {
+  const error = await captureAssertionError(action);
+  expect(error.code).toBe(code);
+}
+
+/** Captures one stable verifier error without accepting another error type. */
+async function captureAssertionError(
+  action: () => unknown | Promise<unknown>
+): Promise<InternalAssertionError> {
   try {
-    action();
-    throw new Error(`Expected ${code}`);
+    await action();
+    throw new Error("Expected an InternalAssertionError");
   } catch (error) {
     expect(error).toBeInstanceOf(InternalAssertionError);
-    expect((error as InternalAssertionError).code).toBe(code);
+    return error as InternalAssertionError;
   }
 }
 
 describe("internal gateway assertions", () => {
-  it("issues and verifies the exact Codex-only v1 context", () => {
+  it("issues and verifies the exact Codex-only v1 context", async () => {
     const fixture = createFixture();
-    const claims = verifyToken(fixture, issueToken(fixture));
+    const claims = await verifyToken(fixture, issueToken(fixture));
 
     expect(claims).toEqual({
       version: 1,
@@ -176,10 +184,16 @@ describe("internal gateway assertions", () => {
     });
   });
 
-  it("rejects missing, malformed, and signature-tampered assertions", () => {
+  it("rejects missing, malformed, and signature-tampered assertions", async () => {
     const fixture = createFixture();
-    expectCode(() => verifyToken(fixture, undefined), "missing_assertion");
-    expectCode(() => verifyToken(fixture, "not-a-token"), "invalid_assertion");
+    await expectCode(
+      () => verifyToken(fixture, undefined),
+      "missing_assertion"
+    );
+    await expectCode(
+      () => verifyToken(fixture, "not-a-token"),
+      "invalid_assertion"
+    );
 
     const token = issueToken(fixture);
     const [header, claims, signature] = token.split(".");
@@ -188,7 +202,7 @@ describe("internal gateway assertions", () => {
     // unlike replacing a possibly unused base64 padding bit.
     tamperedSignatureBytes[0] ^= 0x01;
     const tamperedSignature = tamperedSignatureBytes.toString("base64url");
-    expectCode(
+    await expectCode(
       () => verifyToken(fixture, `${header}.${claims}.${tamperedSignature}`),
       "invalid_signature"
     );
@@ -199,44 +213,47 @@ describe("internal gateway assertions", () => {
         subject: "user_owner_b",
       })
     ).toString("base64url");
-    expectCode(
+    await expectCode(
       () => verifyToken(fixture, `${header}.${tamperedClaims}.${signature}`),
       "invalid_signature"
     );
   });
 
-  it("enforces a strict maximum lifetime and exact no-skew boundaries", () => {
+  it("enforces a strict maximum lifetime and exact no-skew boundaries", async () => {
     const fixture = createFixture();
-    expectCode(
+    await expectCode(
       () => issueToken(fixture, { lifetimeSeconds: 61 }),
       "assertion_lifetime_invalid"
     );
 
     const token = issueToken(fixture, { lifetimeSeconds: 10 });
     fixture.clock.set(BASE_TIME - 1);
-    expectCode(() => verifyToken(fixture, token), "assertion_from_future");
+    await expectCode(
+      () => verifyToken(fixture, token),
+      "assertion_from_future"
+    );
 
     fixture.clock.set(BASE_TIME + 9);
-    expect(verifyToken(fixture, token).exp).toBe(BASE_TIME + 10);
+    expect((await verifyToken(fixture, token)).exp).toBe(BASE_TIME + 10);
 
     fixture.clock.set(BASE_TIME + 10);
-    expectCode(() => verifyToken(fixture, token), "assertion_expired");
+    await expectCode(() => verifyToken(fixture, token), "assertion_expired");
   });
 
-  it("rejects signed assertions whose encoded lifetime exceeds the limit", () => {
+  it("rejects signed assertions whose encoded lifetime exceeds the limit", async () => {
     const fixture = createFixture();
     const token = issueToken(fixture);
     const oversized = resignToken(token, fixture.current.signing, (claims) => {
       claims.exp = BASE_TIME + 61;
     });
 
-    expectCode(
+    await expectCode(
       () => verifyToken(fixture, oversized),
       "assertion_lifetime_invalid"
     );
   });
 
-  it("rejects a correctly signed assertion from another protocol version", () => {
+  it("rejects a correctly signed assertion from another protocol version", async () => {
     const fixture = createFixture();
     const token = resignToken(
       issueToken(fixture),
@@ -246,13 +263,13 @@ describe("internal gateway assertions", () => {
       }
     );
 
-    expectCode(
+    await expectCode(
       () => verifyToken(fixture, token),
       "unsupported_assertion_version"
     );
   });
 
-  it("rejects authenticated noncanonical header and payload JSON", () => {
+  it("rejects authenticated noncanonical header and payload JSON", async () => {
     const canonicalToken = issueToken(createFixture());
     const [encodedHeader, encodedClaims] = canonicalToken.split(".");
     const header = JSON.parse(
@@ -297,7 +314,10 @@ describe("internal gateway assertions", () => {
         noncanonicalClaims,
         fixture.current.signing
       );
-      expectCode(() => verifyToken(fixture, token), "noncanonical_assertion");
+      await expectCode(
+        () => verifyToken(fixture, token),
+        "noncanonical_assertion"
+      );
     }
   });
 
@@ -309,7 +329,7 @@ describe("internal gateway assertions", () => {
     ["operation", "operation_mismatch", { operation: "node-editing" }],
   ] as const)(
     "rejects a wrong expected %s and consumes the signed assertion",
-    (_label, code, expectedOverride) => {
+    async (_label, code, expectedOverride) => {
       const fixture = createFixture();
       const replayDefense = new BoundedReplayCache(4);
       const token = issueToken(fixture);
@@ -318,7 +338,7 @@ describe("internal gateway assertions", () => {
         ...expectedOverride,
       } as ExpectedAssertionContext;
 
-      expectCode(
+      await expectCode(
         () =>
           verifyToken(fixture, token, {
             expected: wrongExpected,
@@ -326,14 +346,14 @@ describe("internal gateway assertions", () => {
           }),
         code
       );
-      expectCode(
+      await expectCode(
         () => verifyToken(fixture, token, { replayDefense }),
         "replay_detected"
       );
     }
   );
 
-  it("rejects a signed non-Codex provider and still consumes it", () => {
+  it("rejects a signed non-Codex provider and still consumes it", async () => {
     const fixture = createFixture();
     const replayDefense = new BoundedReplayCache(4);
     const token = resignToken(
@@ -344,22 +364,22 @@ describe("internal gateway assertions", () => {
       }
     );
 
-    expectCode(
+    await expectCode(
       () => verifyToken(fixture, token, { replayDefense }),
       "provider_mismatch"
     );
-    expectCode(
+    await expectCode(
       () => verifyToken(fixture, token, { replayDefense }),
       "replay_detected"
     );
   });
 
-  it("rejects a signed request identifier mismatch and keeps it consumed", () => {
+  it("rejects a signed request identifier mismatch and keeps it consumed", async () => {
     const fixture = createFixture();
     const replayDefense = new BoundedReplayCache(4);
     const token = issueToken(fixture);
 
-    expectCode(
+    await expectCode(
       () =>
         verifyToken(fixture, token, {
           expected: { ...fixture.expected, requestId: "request_2" },
@@ -367,25 +387,25 @@ describe("internal gateway assertions", () => {
         }),
       "request_id_mismatch"
     );
-    expectCode(
+    await expectCode(
       () => verifyToken(fixture, token, { replayDefense }),
       "replay_detected"
     );
   });
 
-  it("detects request identifier and nonce reuse independently", () => {
+  it("detects request identifier and nonce reuse independently", async () => {
     const fixture = createFixture();
     const replayDefense = new BoundedReplayCache(4);
-    verifyToken(fixture, issueToken(fixture), { replayDefense });
+    await verifyToken(fixture, issueToken(fixture), { replayDefense });
 
-    expectCode(
+    await expectCode(
       () =>
         verifyToken(fixture, issueToken(fixture, { nonce: "nonce_2" }), {
           replayDefense,
         }),
       "replay_detected"
     );
-    expectCode(
+    await expectCode(
       () =>
         verifyToken(fixture, issueToken(fixture, { requestId: "request_2" }), {
           replayDefense,
@@ -394,14 +414,14 @@ describe("internal gateway assertions", () => {
     );
   });
 
-  it("fails closed through the validity of a token rejected at capacity", () => {
+  it("fails closed through the validity of a token rejected at capacity", async () => {
     const fixture = createFixture();
     const replayDefense = new BoundedReplayCache(1);
-    verifyToken(fixture, issueToken(fixture, { lifetimeSeconds: 2 }), {
+    await verifyToken(fixture, issueToken(fixture, { lifetimeSeconds: 2 }), {
       replayDefense,
     });
 
-    expectCode(
+    await expectCode(
       () =>
         verifyToken(
           fixture,
@@ -415,7 +435,7 @@ describe("internal gateway assertions", () => {
     );
 
     fixture.clock.set(BASE_TIME + 2);
-    expectCode(
+    await expectCode(
       () =>
         verifyToken(
           fixture,
@@ -430,65 +450,125 @@ describe("internal gateway assertions", () => {
 
     fixture.clock.set(BASE_TIME + 62);
     expect(
-      verifyToken(
-        fixture,
-        issueToken(fixture, {
-          requestId: "request_4",
-          nonce: "nonce_4",
-        }),
-        {
-          expected: { ...fixture.expected, requestId: "request_4" },
-          replayDefense,
-        }
+      (
+        await verifyToken(
+          fixture,
+          issueToken(fixture, {
+            requestId: "request_4",
+            nonce: "nonce_4",
+          }),
+          {
+            expected: { ...fixture.expected, requestId: "request_4" },
+            replayDefense,
+          }
+        )
       ).requestId
     ).toBe("request_4");
   });
 
-  it("normalizes unavailable replay state into a fail-closed error", () => {
+  it("awaits delayed replay enforcement before resolving verification", async () => {
     const fixture = createFixture();
-    const unavailable: ReplayDefense = {
-      consume() {
-        throw new Error("state backend disconnected");
+    let releaseConsume: (() => void) | undefined;
+    let settled = false;
+    const delayed: ReplayDefense = {
+      async consume() {
+        await new Promise<void>((resolve) => {
+          releaseConsume = resolve;
+        });
       },
     };
 
-    expectCode(
-      () =>
-        verifyToken(fixture, issueToken(fixture), {
-          replayDefense: unavailable,
-        }),
-      "replay_defense_unavailable"
+    const verification = verifyToken(fixture, issueToken(fixture), {
+      replayDefense: delayed,
+    });
+    void verification.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
     );
+    await Promise.resolve();
+
+    expect(releaseConsume).toBeTypeOf("function");
+    expect(settled).toBe(false);
+    releaseConsume?.();
+    await expect(verification).resolves.toMatchObject({
+      requestId: "request_1",
+    });
   });
 
-  it("accepts the explicit previous key only during token validity", () => {
+  it("normalizes async replay-store rejection without leaking its message", async () => {
+    const fixture = createFixture();
+    const unavailable: ReplayDefense = {
+      async consume() {
+        throw new Error("redis://user:secret@private-replay-host");
+      },
+    };
+
+    const error = await captureAssertionError(() =>
+      verifyToken(fixture, issueToken(fixture), {
+        replayDefense: unavailable,
+      })
+    );
+    expect(error).toMatchObject({
+      code: "replay_defense_unavailable",
+      message: "Replay defense could not enforce single use",
+    });
+    expect(error.message).not.toContain("secret");
+    expect(error.message).not.toContain("private-replay-host");
+  });
+
+  it("atomically accepts only one concurrent use of an assertion", async () => {
+    const fixture = createFixture();
+    const replayDefense = new BoundedReplayCache(4);
+    const token = issueToken(fixture);
+    const results = await Promise.allSettled([
+      verifyToken(fixture, token, { replayDefense }),
+      verifyToken(fixture, token, { replayDefense }),
+    ]);
+
+    const successes = results.filter((result) => result.status === "fulfilled");
+    const rejections = results.filter((result) => result.status === "rejected");
+    expect(successes).toHaveLength(1);
+    expect(rejections).toHaveLength(1);
+    expect(rejections[0]).toMatchObject({
+      reason: {
+        code: "replay_detected",
+        message: "Internal assertion was already consumed",
+      },
+    });
+  });
+
+  it("accepts the explicit previous key only during token validity", async () => {
     const fixture = createFixture();
     const token = issueToken(
       fixture,
       { lifetimeSeconds: 5 },
       fixture.previous.signing
     );
-    expect(verifyToken(fixture, token).kid).toBe("key-previous");
+    expect((await verifyToken(fixture, token)).kid).toBe("key-previous");
 
     const currentOnly: VerificationKeys = {
       current: fixture.verificationKeys.current,
     };
-    expectCode(
+    await expectCode(
       () => verifyToken(fixture, token, { verificationKeys: currentOnly }),
       "invalid_signature"
     );
 
     fixture.clock.set(BASE_TIME + 5);
-    expectCode(() => verifyToken(fixture, token), "assertion_expired");
+    await expectCode(() => verifyToken(fixture, token), "assertion_expired");
   });
 
-  it("rejects unknown key identifiers and ambiguous rotation configuration", () => {
+  it("rejects unknown key identifiers and ambiguous rotation configuration", async () => {
     const fixture = createFixture();
     const unknown = createKeyPair("key-unknown");
     const token = issueToken(fixture, {}, unknown.signing);
-    expectCode(() => verifyToken(fixture, token), "invalid_signature");
+    await expectCode(() => verifyToken(fixture, token), "invalid_signature");
 
-    expectCode(
+    await expectCode(
       () =>
         verifyToken(fixture, issueToken(fixture), {
           verificationKeys: {
@@ -503,14 +583,14 @@ describe("internal gateway assertions", () => {
     );
   });
 
-  it("keeps replay state isolated from unrelated unique assertions", () => {
+  it("keeps replay state isolated from unrelated unique assertions", async () => {
     const fixture = createFixture();
     const replayDefense = new BoundedReplayCache(3);
     const ownerAMismatch = {
       ...fixture.expected,
       subject: "user_owner_b",
     };
-    expectCode(
+    await expectCode(
       () =>
         verifyToken(fixture, issueToken(fixture), {
           expected: ownerAMismatch,
@@ -524,10 +604,12 @@ describe("internal gateway assertions", () => {
       nonce: "nonce_unrelated",
     });
     expect(
-      verifyToken(fixture, unrelated, {
-        expected: { ...fixture.expected, requestId: "request_unrelated" },
-        replayDefense,
-      }).subject
+      (
+        await verifyToken(fixture, unrelated, {
+          expected: { ...fixture.expected, requestId: "request_unrelated" },
+          replayDefense,
+        })
+      ).subject
     ).toBe("user_owner_a");
   });
 });

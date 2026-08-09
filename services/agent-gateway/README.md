@@ -24,4 +24,5 @@ key custody/rotation mechanism, durable replay-state topology, backup policy,
 and deployment remain explicit human gates. `BoundedReplayCache` is a
 deterministic test/local primitive only. Any real deployment must inject an
 atomic `ReplayDefense` whose lifecycle prevents reuse across process restarts;
-a multi-process deployment also requires shared replay state.
+a multi-process deployment also requires shared replay state. Verification
+awaits the injected replay contract before evaluating expected request context.

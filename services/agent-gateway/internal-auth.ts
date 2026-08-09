@@ -115,8 +115,10 @@ type ReplayEntry = Readonly<{
 }>;
 
 interface ReplayDefense {
-  consume(entry: ReplayEntry, nowSeconds: number): void;
+  consume(entry: ReplayEntry, nowSeconds: number): void | Promise<void>;
 }
+
+type ReplayDefenseErrorCode = "replay_defense_unavailable" | "replay_detected";
 
 /** Stable internal-auth failure that callers may map to secret-free responses. */
 class InternalAssertionError extends Error {
@@ -125,6 +127,17 @@ class InternalAssertionError extends Error {
   constructor(code: AssertionErrorCode, message: string) {
     super(message);
     this.name = "InternalAssertionError";
+    this.code = code;
+  }
+}
+
+/** Typed store rejection whose backend message never crosses verification. */
+class ReplayDefenseError extends Error {
+  readonly code: ReplayDefenseErrorCode;
+
+  constructor(code: ReplayDefenseErrorCode) {
+    super("Replay defense rejected the assertion");
+    this.name = "ReplayDefenseError";
     this.code = code;
   }
 }
@@ -152,10 +165,7 @@ class BoundedReplayCache implements ReplayDefense {
   /** Atomically rejects a duplicate or retains both identifiers until expiry. */
   consume(entry: ReplayEntry, nowSeconds: number): void {
     if (!Number.isSafeInteger(nowSeconds)) {
-      throw new InternalAssertionError(
-        "replay_defense_unavailable",
-        "Replay defense received an invalid clock value"
-      );
+      throw new ReplayDefenseError("replay_defense_unavailable");
     }
 
     // Expiry is exclusive, matching assertion verification at expiresAt.
@@ -170,10 +180,7 @@ class BoundedReplayCache implements ReplayDefense {
       // entry expired first. Keep the cache closed through every such token's
       // validity without retaining an unbounded list of identifiers.
       this.unavailableUntil = Math.max(this.unavailableUntil, entry.expiresAt);
-      throw new InternalAssertionError(
-        "replay_defense_unavailable",
-        "Replay defense is recovering from capacity exhaustion"
-      );
+      throw new ReplayDefenseError("replay_defense_unavailable");
     }
 
     if (
@@ -183,18 +190,12 @@ class BoundedReplayCache implements ReplayDefense {
           existing.nonce === entry.nonce
       )
     ) {
-      throw new InternalAssertionError(
-        "replay_detected",
-        "The assertion request identifier or nonce was already consumed"
-      );
+      throw new ReplayDefenseError("replay_detected");
     }
 
     if (this.entries.length >= this.capacity) {
       this.unavailableUntil = entry.expiresAt;
-      throw new InternalAssertionError(
-        "replay_defense_unavailable",
-        "Replay defense capacity is exhausted"
-      );
+      throw new ReplayDefenseError("replay_defense_unavailable");
     }
 
     this.entries.push(entry);
@@ -266,10 +267,10 @@ function issueInternalAssertion(
  * Consuming replay identifiers before context checks is intentional: a signed
  * token presented against the wrong owner or operation must not remain usable.
  */
-function verifyInternalAssertion(
+async function verifyInternalAssertion(
   token: string | null | undefined,
   options: VerifyAssertionOptions
-): InternalAssertionClaims {
+): Promise<InternalAssertionClaims> {
   if (!token) {
     throw new InternalAssertionError(
       "missing_assertion",
@@ -314,7 +315,7 @@ function verifyInternalAssertion(
   // State errors are normalized so unavailable custom stores cannot accidentally
   // degrade into accepting a request without replay protection.
   try {
-    options.replayDefense.consume(
+    await options.replayDefense.consume(
       {
         requestId: claims.requestId,
         nonce: claims.nonce,
@@ -323,21 +324,26 @@ function verifyInternalAssertion(
       nowSeconds
     );
   } catch (error) {
-    if (
-      error instanceof InternalAssertionError &&
-      (error.code === "replay_detected" ||
-        error.code === "replay_defense_unavailable")
-    ) {
-      throw error;
-    }
-    throw new InternalAssertionError(
-      "replay_defense_unavailable",
-      "Replay defense could not enforce single use"
-    );
+    const code =
+      error instanceof ReplayDefenseError
+        ? error.code
+        : "replay_defense_unavailable";
+    throw replayEnforcementError(code);
   }
 
   assertExpectedContext(claims, options.expected);
   return claims;
+}
+
+/** Maps store failures to fixed, secret-free verifier errors. */
+function replayEnforcementError(
+  code: ReplayDefenseErrorCode
+): InternalAssertionError {
+  const message =
+    code === "replay_detected"
+      ? "Internal assertion was already consumed"
+      : "Replay defense could not enforce single use";
+  return new InternalAssertionError(code, message);
 }
 
 /** Validates exact expected context without revealing any alternate owner state. */
@@ -651,6 +657,8 @@ export {
   issueInternalAssertion,
   MAX_ASSERTION_LIFETIME_SECONDS,
   type ReplayDefense,
+  ReplayDefenseError,
+  type ReplayDefenseErrorCode,
   type ReplayEntry,
   type SigningKey,
   type VerificationKey,
