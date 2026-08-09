@@ -6,6 +6,7 @@
 | `CLERK_SECRET_KEY` | Clerk's server SDK and request proxy. | Not required in keyless development; production-only in P9. | Configure the production Clerk application in P9. |
 | `NEXT_PUBLIC_ENABLE_OAUTH` | `app/(auth-pages)/oauth-buttons.tsx` renders the Google and GitHub buttons on `/sign-in` and `/sign-up` only when this is exactly `"true"`. | Optional; leave unset in keyless development. | Set to `true` once P9 claims the Clerk instance and enables the Google and GitHub social connections in the Clerk dashboard. |
 | `CLERK_FRONTEND_API_URL` | `convex/auth.config.ts` uses this issuer to validate Clerk JWTs when it is configured. | Optional in keyless/local runs; required in the Convex deployment environment after Clerk is claimed in P9. | Use the claimed Clerk instance's full Frontend API URL, including `https://`. |
+| `SPRIG_PERSONAL_BETA_CLERK_SUBJECTS` | Convex connection create/select mutations require an exact authenticated Clerk subject match in this comma-separated server-only allowlist. Missing, unreadable, empty, and non-matching values deny access. | Required to create or select subscription connection metadata; safe owner-only status reads do not require it. | Add approved Clerk `subject` values to the Convex deployment environment only after the personal-beta cohort is approved. |
 | `CONVEX_DEPLOYMENT` | The Convex CLI uses this deployment identifier for schema generation and local backend commands. | Required for Convex development commands. | Created by the anonymous local Convex setup and stored in `.env.local`. Production deployment values arrive in P9. |
 | `SPRIG_AI_PROVIDER` | Routes every server-side AI path through the Claude Agent SDK or Codex SDK. | Optional; defaults to `claude`. | Set to exactly `claude` or `codex`. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | The Claude Agent SDK authenticates `/api/chat` and the AI generation/editing server actions with the local operator's Claude subscription. | Required for subscription-backed AI features; dev-local and single-operator only. | Run `claude setup-token` and copy the generated token. |
@@ -34,6 +35,12 @@ Social sign-in is gated behind `NEXT_PUBLIC_ENABLE_OAUTH` for the same reason: a
 keyless instance has no OAuth credentials, so the buttons stay out of the markup
 entirely until the instance is claimed. The flag is read at module scope, so
 changing it requires a dev-server restart.
+
+`SPRIG_PERSONAL_BETA_CLERK_SUBJECTS` is server-owned Convex configuration, not
+browser input. It accepts exact Clerk subjects separated by commas. There is no
+wildcard value. Do not deploy the additive `aiConnections` schema or configure
+the allowlist against a real Convex database until a human approves that
+deployment and the personal-beta cohort.
 
 `SPRIG_AI_PROVIDER` switches every AI entry point together: `claude` uses the
 Claude Agent SDK and `codex` uses the OpenAI Codex SDK. Unsupported values are
