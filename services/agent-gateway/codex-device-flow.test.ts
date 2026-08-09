@@ -2,15 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   type CancelCeremonyOutcome,
+  type ClaimCleanupOutcome,
   type CodexDeviceCeremonyRecord,
   type CodexDeviceCeremonyStore,
   type CodexDeviceClient,
   type CodexDeviceClientBeginOutcome,
   type CodexDevicePollCompletion,
   type CodexDeviceScope,
+  type CompleteCleanupOutcome,
   type CompletePollOutcome,
   createCodexDeviceFlow,
   type PreparePollOutcome,
+  type RecordBeginOutcome,
   type ReserveCeremonyOutcome,
 } from "./codex-device-flow.ts";
 import type { ControlPlaneOperationContext } from "./control-plane.ts";
@@ -64,21 +67,34 @@ class TestCeremonyStore implements CodexDeviceCeremonyStore {
       nextPollAtMilliseconds:
         input.nowMilliseconds + input.pollIntervalMilliseconds,
       revision: 1,
+      providerBeginKey: input.providerBeginKey,
+      cleanupSessionRefs: [],
     };
     this.records.set(input.ceremonyId, record);
     return { status: "reserved", record };
   }
 
-  async activate(
-    input: Parameters<CodexDeviceCeremonyStore["activate"]>[0],
+  async recordBegin(
+    input: Parameters<CodexDeviceCeremonyStore["recordBegin"]>[0],
     _context: ControlPlaneOperationContext
-  ) {
+  ): Promise<RecordBeginOutcome> {
     const record = this.scoped(input.ceremonyId, input.scope);
     if (!record) return { status: "not_found" } as const;
+    if (record.providerBeginKey !== input.providerBeginKey) {
+      return { status: "not_found" };
+    }
     const current = this.expire(record, input.nowMilliseconds);
     if (current.status !== "starting") {
-      this.records.set(input.ceremonyId, current);
-      return { status: "current", record: current } as const;
+      if (
+        current.status === "pending" &&
+        current.providerSessionRef === input.providerSessionRef
+      ) {
+        this.records.set(input.ceremonyId, current);
+        return { status: "current", record: current };
+      }
+      const retained = this.retainCleanup(current, input.providerSessionRef);
+      this.records.set(input.ceremonyId, retained);
+      return { status: "recorded", record: retained };
     }
     const activated: CodexDeviceCeremonyRecord = {
       ...current,
@@ -88,7 +104,7 @@ class TestCeremonyStore implements CodexDeviceCeremonyStore {
       revision: current.revision + 1,
     };
     this.records.set(input.ceremonyId, activated);
-    return { status: "activated", record: activated } as const;
+    return { status: "recorded", record: activated };
   }
 
   async preparePoll(
@@ -152,20 +168,63 @@ class TestCeremonyStore implements CodexDeviceCeremonyStore {
       return {
         status: "current",
         record: current,
-        providerSessionRef: current.providerSessionRef,
       };
     }
     const cancelled: CodexDeviceCeremonyRecord = {
       ...current,
       status: "cancelled",
+      cleanupSessionRefs: current.providerSessionRef
+        ? uniqueRefs(current.cleanupSessionRefs, current.providerSessionRef)
+        : current.cleanupSessionRefs,
       revision: current.revision + 1,
     };
     this.records.set(input.ceremonyId, cancelled);
     return {
       status: "cancelled",
       record: cancelled,
-      providerSessionRef: current.providerSessionRef,
     };
+  }
+
+  async claimCleanup(
+    input: Parameters<CodexDeviceCeremonyStore["claimCleanup"]>[0],
+    _context: ControlPlaneOperationContext
+  ): Promise<ClaimCleanupOutcome> {
+    const record = this.scoped(input.ceremonyId, input.scope);
+    if (!record) return { status: "not_found" };
+    const current = this.expire(record, input.nowMilliseconds);
+    this.records.set(input.ceremonyId, current);
+    const providerSessionRef = current.cleanupSessionRefs[0];
+    if (!providerSessionRef) return { status: "current", record: current };
+    return {
+      status: "granted",
+      record: current,
+      cleanupRevision: current.revision,
+      providerBeginKey: current.providerBeginKey,
+      providerSessionRef,
+    };
+  }
+
+  async completeCleanup(
+    input: Parameters<CodexDeviceCeremonyStore["completeCleanup"]>[0],
+    _context: ControlPlaneOperationContext
+  ): Promise<CompleteCleanupOutcome> {
+    const record = this.scoped(input.ceremonyId, input.scope);
+    if (!record) return { status: "not_found" };
+    if (
+      record.revision !== input.cleanupRevision ||
+      !record.cleanupSessionRefs.includes(input.providerSessionRef)
+    ) {
+      return { status: "current", record };
+    }
+    const completed: CodexDeviceCeremonyRecord = {
+      ...record,
+      cleanupSessionRefs: record.cleanupSessionRefs.filter(
+        (value) => value !== input.providerSessionRef
+      ),
+      revision: record.revision + 1,
+    };
+    this.records.set(input.ceremonyId, completed);
+    return { status: "completed", record: completed };
   }
 
   /** Returns a record only when every caller-bound scope component matches. */
@@ -187,11 +246,40 @@ class TestCeremonyStore implements CodexDeviceCeremonyStore {
     record: CodexDeviceCeremonyRecord,
     nowMilliseconds: number
   ): CodexDeviceCeremonyRecord {
-    return isActive(record.status) &&
-      nowMilliseconds >= record.expiresAtMilliseconds
-      ? { ...record, status: "expired", revision: record.revision + 1 }
-      : record;
+    if (
+      !isActive(record.status) ||
+      nowMilliseconds < record.expiresAtMilliseconds
+    ) {
+      return record;
+    }
+    return {
+      ...record,
+      status: "expired",
+      cleanupSessionRefs: record.providerSessionRef
+        ? uniqueRefs(record.cleanupSessionRefs, record.providerSessionRef)
+        : record.cleanupSessionRefs,
+      revision: record.revision + 1,
+    };
   }
+
+  /** Retains each race-loser or terminal provider ref exactly once. */
+  private retainCleanup(
+    record: CodexDeviceCeremonyRecord,
+    providerSessionRef: string
+  ): CodexDeviceCeremonyRecord {
+    const refs = uniqueRefs(record.cleanupSessionRefs, providerSessionRef);
+    return refs === record.cleanupSessionRefs
+      ? record
+      : { ...record, cleanupSessionRefs: refs, revision: record.revision + 1 };
+  }
+}
+
+/** Appends one cleanup ref without duplicating an idempotent retry. */
+function uniqueRefs(
+  values: readonly string[],
+  value: string
+): readonly string[] {
+  return values.includes(value) ? values : [...values, value];
 }
 
 /** Deterministic injected provider with fully shaped, server-only results. */
@@ -225,6 +313,7 @@ function createFixture(
   const store = overrides.store ?? new TestCeremonyStore();
   const client = overrides.client ?? new TestDeviceClient();
   let identifier = 0;
+  let providerKey = 0;
   const flow = createCodexDeviceFlow({
     client,
     store,
@@ -234,6 +323,7 @@ function createFixture(
     dependencyTimeoutMilliseconds: overrides.timeout ?? 50,
     now: () => clock.nowMilliseconds,
     createCeremonyId: () => (++identifier).toString().padStart(32, "A"),
+    createProviderBeginKey: () => (++providerKey).toString().padStart(32, "K"),
   });
   return { client, clock, flow, store };
 }
@@ -279,6 +369,9 @@ function applyCompletion(
   return {
     ...record,
     status: completion.status,
+    cleanupSessionRefs: record.providerSessionRef
+      ? uniqueRefs(record.cleanupSessionRefs, record.providerSessionRef)
+      : record.cleanupSessionRefs,
     revision: record.revision + 1,
   };
 }
@@ -305,6 +398,21 @@ describe("Codex device ceremony flow", () => {
     "https://user:pass@auth.openai.com/device",
     "https://auth.openai.com/device?token=secret",
     "https://auth.openai.com/device#secret",
+    "https://evil.example/phish",
+    "https://auth.openai.com.evil.example/codex/device",
+    "https://xn--openai-9za.example/codex/device",
+    "https://auth.openаi.com/codex/device",
+    "https://auth.openai.com\\@evil.example/codex/device",
+    "https://auth.openai.com:444/codex/device",
+    "https://auth.openai.com:443/codex/device",
+    "https://auth.openai.com/codex/device/",
+    "https://auth.openai.com/codex/other",
+    "https://auth.openai.com/codex%2Fdevice",
+    "https://auth.openai.com/codex/device%2Fredirect",
+    "https://auth.openai.com/codex/%2e%2e/device",
+    `https://auth.openai.com/codex/device?next=${encodeURIComponent(
+      "https://evil.example"
+    )}`,
     "not a url",
   ])("rejects unsafe server verification URL %s", (verificationUrl) => {
     expect(() => createFixture({ verificationUrl })).toThrow(
@@ -323,9 +431,22 @@ describe("Codex device ceremony flow", () => {
 
     await expect(flow.begin(OWNER_A)).resolves.toEqual({
       ok: false,
-      error: "invalid_provider_response",
+      error: "provider_unavailable",
     });
   });
+
+  it.each([null, undefined, {}, { providerSessionRef: "session" }])(
+    "fails closed for malformed provider begin envelope %#",
+    async (malformed) => {
+      const client = new TestDeviceClient();
+      client.begin.mockResolvedValue(malformed as never);
+      const { flow } = createFixture({ client });
+      await expect(flow.begin(OWNER_A)).resolves.toEqual({
+        ok: false,
+        error: "provider_unavailable",
+      });
+    }
+  );
 
   it.each(["a", "lower-code", "ABCD 1234", "A".repeat(17)])(
     "rejects unsafe user code %s",
@@ -338,7 +459,7 @@ describe("Codex device ceremony flow", () => {
       const { flow } = createFixture({ client });
       await expect(flow.begin(OWNER_A)).resolves.toEqual({
         ok: false,
-        error: "invalid_provider_response",
+        error: "provider_unavailable",
       });
     }
   );
@@ -473,7 +594,54 @@ describe("Codex device ceremony flow", () => {
 
     await expect(
       fixture.flow.poll(OWNER_A, ceremony.ceremonyId)
-    ).resolves.toEqual({ ok: false, error: "invalid_provider_response" });
+    ).resolves.toEqual({ ok: false, error: "provider_unavailable" });
+  });
+
+  it("rejects ambient API-key presence as a subscription authorization", async () => {
+    const fixture = createFixture();
+    const ceremony = await beginCeremony(fixture);
+    fixture.clock.advance(5_000);
+    fixture.client.poll.mockResolvedValue({
+      status: "authorized",
+      account: { type: "api_key", present: true },
+    } as never);
+
+    const result = await fixture.flow.poll(OWNER_A, ceremony.ceremonyId);
+    expect(result).toEqual({ ok: false, error: "provider_unavailable" });
+    expect(JSON.stringify(result)).not.toContain("api_key");
+  });
+
+  it.each([
+    null,
+    undefined,
+    {},
+    { status: "authorized" },
+    { status: "mystery" },
+  ])(
+    "fails closed for malformed provider poll envelope %#",
+    async (malformed) => {
+      const fixture = createFixture();
+      const ceremony = await beginCeremony(fixture);
+      fixture.clock.advance(5_000);
+      fixture.client.poll.mockResolvedValue(malformed as never);
+      await expect(
+        fixture.flow.poll(OWNER_A, ceremony.ceremonyId)
+      ).resolves.toEqual({ ok: false, error: "provider_unavailable" });
+    }
+  );
+
+  it("keeps cleanup pending when provider cancel fulfills with a malformed value", async () => {
+    const store = new TestCeremonyStore();
+    const fixture = createFixture({ store });
+    const ceremony = await beginCeremony(fixture);
+    fixture.client.cancel.mockResolvedValue({ secret: SECRET_CANARY } as never);
+
+    const result = await fixture.flow.cancel(OWNER_A, ceremony.ceremonyId);
+    expect(result).toEqual({ ok: false, error: "provider_unavailable" });
+    expect(store.records.get(ceremony.ceremonyId)?.cleanupSessionRefs).toEqual([
+      `provider-session-${SECRET_CANARY}`,
+    ]);
+    expect(JSON.stringify(result)).not.toContain(SECRET_CANARY);
   });
 
   it("fails closed instead of projecting corrupted durable fields", async () => {
@@ -538,9 +706,118 @@ describe("Codex device ceremony flow", () => {
       ceremony: { status: "cancelled" },
     });
     expect(client.cancel).toHaveBeenCalledWith(
-      { ceremonyId, providerSessionRef: "late-provider-session" },
+      {
+        ceremonyId,
+        providerBeginKey: "KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK1",
+        providerSessionRef: "late-provider-session",
+      },
       expect.any(Object)
     );
+  });
+
+  it("retains and cleans a delayed begin result after exact expiry", async () => {
+    const client = new TestDeviceClient();
+    const beginGate = deferred<CodexDeviceClientBeginOutcome>();
+    client.begin.mockImplementation(() => beginGate.promise);
+    const fixture = createFixture({ client });
+    const begin = fixture.flow.begin(OWNER_A);
+    await vi.waitFor(() => expect(client.begin).toHaveBeenCalledOnce());
+    const ceremonyId = client.begin.mock.calls[0]?.[0].ceremonyId;
+    fixture.clock.advance(60_000);
+
+    await expect(fixture.flow.poll(OWNER_A, ceremonyId)).resolves.toMatchObject(
+      {
+        ok: true,
+        ceremony: { status: "expired" },
+      }
+    );
+    beginGate.resolve({
+      providerSessionRef: "late-expired-session",
+      userCode: "ABCD-1234",
+    });
+    await expect(begin).resolves.toMatchObject({
+      ok: true,
+      ceremony: { status: "expired" },
+    });
+    expect(client.cancel).toHaveBeenCalledWith(
+      expect.objectContaining({ providerSessionRef: "late-expired-session" }),
+      expect.any(Object)
+    );
+  });
+
+  it.each(["timeout", "rejection"] as const)(
+    "keeps cleanup durable after provider %s and lets a fresh manager retry",
+    async (failureMode) => {
+      const store = new TestCeremonyStore();
+      const client = new TestDeviceClient();
+      const beginGate = deferred<CodexDeviceClientBeginOutcome>();
+      const cleanupGate = deferred<void>();
+      client.begin.mockImplementation(() => beginGate.promise);
+      if (failureMode === "timeout") {
+        client.cancel.mockImplementationOnce(() => cleanupGate.promise);
+      } else {
+        client.cancel.mockRejectedValueOnce(new Error(SECRET_CANARY));
+      }
+      const fixture = createFixture({ client, store, timeout: 20 });
+      const begin = fixture.flow.begin(OWNER_A);
+      await vi.waitFor(() => expect(client.begin).toHaveBeenCalledOnce(), {
+        interval: 1,
+        timeout: 10,
+      });
+      const ceremonyId = client.begin.mock.calls[0]?.[0].ceremonyId;
+      await fixture.flow.cancel(OWNER_A, ceremonyId);
+      beginGate.resolve({
+        providerSessionRef: "durable-cleanup-session",
+        userCode: "ABCD-1234",
+      });
+      await expect(begin).resolves.toMatchObject({
+        ok: false,
+        error: failureMode === "timeout" ? "timed_out" : "provider_unavailable",
+      });
+      expect(store.records.get(ceremonyId)?.cleanupSessionRefs).toContain(
+        "durable-cleanup-session"
+      );
+
+      client.cancel.mockResolvedValue(undefined);
+      const freshManager = createFixture({ client, store });
+      await expect(
+        freshManager.flow.cancel(OWNER_A, ceremonyId)
+      ).resolves.toMatchObject({
+        ok: true,
+        ceremony: { status: "cancelled" },
+      });
+      expect(store.records.get(ceremonyId)?.cleanupSessionRefs).toEqual([]);
+      cleanupGate.resolve();
+    }
+  );
+
+  it("cleans a distinct session ref returned by a broken concurrent begin loser", async () => {
+    const store = new TestCeremonyStore();
+    const client = new TestDeviceClient();
+    client.begin
+      .mockResolvedValueOnce({
+        providerSessionRef: "race-session-a",
+        userCode: "ABCD-1234",
+      })
+      .mockResolvedValueOnce({
+        providerSessionRef: "race-session-b",
+        userCode: "ABCD-1234",
+      });
+    const fixture = createFixture({ client, store });
+    const [first, second] = await Promise.all([
+      fixture.flow.begin(OWNER_A),
+      fixture.flow.begin(OWNER_A),
+    ]);
+    expect(first).toMatchObject({ ok: true, ceremony: { status: "pending" } });
+    expect(second).toMatchObject({ ok: true, ceremony: { status: "pending" } });
+    const record = Array.from(store.records.values())[0];
+    const active = record?.providerSessionRef;
+    const loser =
+      active === "race-session-a" ? "race-session-b" : "race-session-a";
+    expect(
+      client.cancel.mock.calls.map(([input]) => input.providerSessionRef)
+    ).toContain(loser);
+    expect(record?.cleanupSessionRefs).toEqual([]);
   });
 
   it("fences delayed authorization at the exact expiry boundary", async () => {
@@ -562,17 +839,14 @@ describe("Codex device ceremony flow", () => {
     });
   });
 
-  it("makes repeated cancellation terminal while retrying provider cleanup", async () => {
+  it("makes repeated cancellation terminal without repeating completed cleanup", async () => {
     const fixture = createFixture();
     const ceremony = await beginCeremony(fixture);
     const first = await fixture.flow.cancel(OWNER_A, ceremony.ceremonyId);
     const second = await fixture.flow.cancel(OWNER_A, ceremony.ceremonyId);
 
     expect(first).toEqual(second);
-    expect(fixture.client.cancel).toHaveBeenCalledTimes(2);
-    expect(fixture.client.cancel.mock.calls[0]?.[0]).toEqual(
-      fixture.client.cancel.mock.calls[1]?.[0]
-    );
+    expect(fixture.client.cancel).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -594,6 +868,127 @@ describe("Codex device ceremony flow", () => {
       expect(JSON.stringify(result)).not.toContain(SECRET_CANARY);
     }
   );
+
+  it.each([
+    null,
+    undefined,
+    { status: "mystery" },
+    { status: "reserved" },
+    { status: "reserved", record: null },
+    { status: "reserved", record: { providerBeginKey: SECRET_CANARY } },
+  ])("fails closed for malformed reserve envelope %#", async (malformed) => {
+    const store = new TestCeremonyStore();
+    vi.spyOn(store, "reserve").mockResolvedValue(malformed as never);
+    const { flow } = createFixture({ store });
+    await expect(flow.begin(OWNER_A)).resolves.toEqual({
+      ok: false,
+      error: "store_unavailable",
+    });
+  });
+
+  it("fails closed for hostile store envelope accessors", async () => {
+    const store = new TestCeremonyStore();
+    const hostile = new Proxy(
+      {},
+      {
+        get: () => {
+          throw new Error(SECRET_CANARY);
+        },
+      }
+    );
+    vi.spyOn(store, "reserve").mockResolvedValue(hostile as never);
+    const { flow } = createFixture({ store });
+    const result = await flow.begin(OWNER_A);
+    expect(result).toEqual({ ok: false, error: "store_unavailable" });
+    expect(JSON.stringify(result)).not.toContain(SECRET_CANARY);
+  });
+
+  it("fails closed for null or malformed runtime scope", async () => {
+    const fixture = createFixture();
+    await expect(fixture.flow.begin(null as never)).resolves.toEqual({
+      ok: false,
+      error: "not_found",
+    });
+    await expect(
+      fixture.flow.begin({ ownerId: SECRET_CANARY } as never)
+    ).resolves.toEqual({ ok: false, error: "not_found" });
+    await expect(
+      fixture.flow.begin({
+        ...OWNER_A,
+        verificationUrl: "https://evil.example/phish",
+      } as never)
+    ).resolves.toEqual({ ok: false, error: "not_found" });
+    expect(fixture.client.begin).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for malformed begin-result store envelopes", async () => {
+    const store = new TestCeremonyStore();
+    vi.spyOn(store, "recordBegin").mockResolvedValue({
+      status: "recorded",
+    } as never);
+    const { flow } = createFixture({ store });
+    await expect(flow.begin(OWNER_A)).resolves.toEqual({
+      ok: false,
+      error: "store_unavailable",
+    });
+  });
+
+  it("fails closed for malformed prepare-poll store envelopes", async () => {
+    const store = new TestCeremonyStore();
+    const fixture = createFixture({ store });
+    const ceremony = await beginCeremony(fixture);
+    vi.spyOn(store, "preparePoll").mockResolvedValue(undefined as never);
+    await expect(
+      fixture.flow.poll(OWNER_A, ceremony.ceremonyId)
+    ).resolves.toEqual({ ok: false, error: "store_unavailable" });
+  });
+
+  it("fails closed for malformed complete-poll store envelopes", async () => {
+    const store = new TestCeremonyStore();
+    const fixture = createFixture({ store });
+    const ceremony = await beginCeremony(fixture);
+    fixture.clock.advance(5_000);
+    vi.spyOn(store, "completePoll").mockResolvedValue({
+      status: "completed",
+    } as never);
+    await expect(
+      fixture.flow.poll(OWNER_A, ceremony.ceremonyId)
+    ).resolves.toEqual({ ok: false, error: "store_unavailable" });
+  });
+
+  it("fails closed for malformed cancel store envelopes", async () => {
+    const store = new TestCeremonyStore();
+    const fixture = createFixture({ store });
+    const ceremony = await beginCeremony(fixture);
+    vi.spyOn(store, "cancel").mockResolvedValue({
+      status: "unexpected",
+    } as never);
+    await expect(
+      fixture.flow.cancel(OWNER_A, ceremony.ceremonyId)
+    ).resolves.toEqual({ ok: false, error: "store_unavailable" });
+  });
+
+  it("fails closed for malformed cleanup-claim store envelopes", async () => {
+    const store = new TestCeremonyStore();
+    vi.spyOn(store, "claimCleanup").mockResolvedValue({
+      status: "granted",
+    } as never);
+    const { flow } = createFixture({ store });
+    await expect(flow.begin(OWNER_A)).resolves.toEqual({
+      ok: false,
+      error: "store_unavailable",
+    });
+  });
+
+  it("fails closed for malformed cleanup-completion store envelopes", async () => {
+    const store = new TestCeremonyStore();
+    const fixture = createFixture({ store });
+    const ceremony = await beginCeremony(fixture);
+    vi.spyOn(store, "completeCleanup").mockResolvedValue(null as never);
+    await expect(
+      fixture.flow.cancel(OWNER_A, ceremony.ceremonyId)
+    ).resolves.toEqual({ ok: false, error: "store_unavailable" });
+  });
 
   it.each(["store", "provider"] as const)(
     "bounds and aborts stalled %s operations while observing late rejection",
@@ -637,8 +1032,9 @@ describe("Codex device ceremony flow", () => {
     expect(fixture.client.begin).not.toHaveBeenCalled();
   });
 
-  it("propagates a reason-free abort to an active provider wait", async () => {
-    const fixture = createFixture();
+  it("terminalizes caller abort while independently retaining and cleaning late begin", async () => {
+    const store = new TestCeremonyStore();
+    const fixture = createFixture({ store });
     const gate = deferred<CodexDeviceClientBeginOutcome>();
     let context: ControlPlaneOperationContext | undefined;
     fixture.client.begin.mockImplementation((_input, value) => {
@@ -651,10 +1047,52 @@ describe("Codex device ceremony flow", () => {
     controller.abort(SECRET_CANARY);
 
     await expect(begin).resolves.toEqual({ ok: false, error: "aborted" });
-    expect(context?.signal.aborted).toBe(true);
+    expect(context?.signal.aborted).toBe(false);
     expect(context?.signal.reason).not.toBe(SECRET_CANARY);
-    gate.reject(new Error(SECRET_CANARY));
-    await Promise.resolve();
+    gate.resolve({
+      providerSessionRef: "caller-abort-session",
+      userCode: "ABCD-1234",
+    });
+    await vi.waitFor(() =>
+      expect(fixture.client.cancel).toHaveBeenCalledWith(
+        expect.objectContaining({ providerSessionRef: "caller-abort-session" }),
+        expect.any(Object)
+      )
+    );
+    const record = Array.from(store.records.values())[0];
+    expect(record).toMatchObject({
+      status: "cancelled",
+      cleanupSessionRefs: [],
+    });
+  });
+
+  it("retries an initially failed abort transition after the begin ref is durable", async () => {
+    const store = new TestCeremonyStore();
+    vi.spyOn(store, "cancel").mockRejectedValueOnce(new Error(SECRET_CANARY));
+    const fixture = createFixture({ store });
+    const gate = deferred<CodexDeviceClientBeginOutcome>();
+    fixture.client.begin.mockImplementation(() => gate.promise);
+    const controller = new AbortController();
+    const begin = fixture.flow.begin(OWNER_A, controller.signal);
+    await vi.waitFor(() => expect(fixture.client.begin).toHaveBeenCalledOnce());
+    controller.abort(SECRET_CANARY);
+    await expect(begin).resolves.toEqual({ ok: false, error: "aborted" });
+
+    gate.resolve({
+      providerSessionRef: "abort-retry-session",
+      userCode: "ABCD-1234",
+    });
+    await vi.waitFor(() => {
+      const record = Array.from(store.records.values())[0];
+      expect(record).toMatchObject({
+        status: "cancelled",
+        cleanupSessionRefs: [],
+      });
+    });
+    expect(fixture.client.cancel).toHaveBeenCalledWith(
+      expect.objectContaining({ providerSessionRef: "abort-retry-session" }),
+      expect.any(Object)
+    );
   });
 
   it("recovers an ambiguous late reserve on a same-request retry", async () => {
@@ -678,13 +1116,13 @@ describe("Codex device ceremony flow", () => {
     expect(retry).toMatchObject({ ok: true, ceremony: { status: "pending" } });
   });
 
-  it("recovers an ambiguous activate commit without another provider begin", async () => {
+  it("recovers an ambiguous begin-result commit without another provider begin", async () => {
     const store = new TestCeremonyStore();
-    const originalActivate = store.activate.bind(store);
+    const originalRecordBegin = store.recordBegin.bind(store);
     const gate = deferred<void>();
-    vi.spyOn(store, "activate").mockImplementationOnce(
+    vi.spyOn(store, "recordBegin").mockImplementationOnce(
       async (input, context) => {
-        const committed = await originalActivate(input, context);
+        const committed = await originalRecordBegin(input, context);
         await gate.promise;
         return committed;
       }
@@ -699,6 +1137,30 @@ describe("Codex device ceremony flow", () => {
     const retry = await fixture.flow.begin(OWNER_A);
     expect(retry).toMatchObject({ ok: true, ceremony: { status: "pending" } });
     expect(fixture.client.begin).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers an uncommitted begin-result timeout with the persisted idempotency key", async () => {
+    const store = new TestCeremonyStore();
+    const client = new TestDeviceClient();
+    const storeGate = deferred<RecordBeginOutcome>();
+    vi.spyOn(store, "recordBegin").mockImplementationOnce(
+      () => storeGate.promise
+    );
+    const fixture = createFixture({ client, store, timeout: 5 });
+    await expect(fixture.flow.begin(OWNER_A)).resolves.toEqual({
+      ok: false,
+      error: "timed_out",
+    });
+    storeGate.reject(new Error(SECRET_CANARY));
+
+    await expect(fixture.flow.begin(OWNER_A)).resolves.toMatchObject({
+      ok: true,
+      ceremony: { status: "pending" },
+    });
+    expect(client.begin).toHaveBeenCalledTimes(2);
+    expect(client.begin.mock.calls[0]?.[0]).toEqual(
+      client.begin.mock.calls[1]?.[0]
+    );
   });
 
   it("recovers an ambiguous poll completion from durable authorized state", async () => {
@@ -757,12 +1219,41 @@ describe("Codex device ceremony flow", () => {
     });
   });
 
+  it("recovers an ambiguous cleanup completion without repeating provider cleanup", async () => {
+    const store = new TestCeremonyStore();
+    const fixture = createFixture({ store, timeout: 5 });
+    const ceremony = await beginCeremony(fixture);
+    const originalCompleteCleanup = store.completeCleanup.bind(store);
+    const gate = deferred<void>();
+    vi.spyOn(store, "completeCleanup").mockImplementationOnce(
+      async (input, context) => {
+        const committed = await originalCompleteCleanup(input, context);
+        await gate.promise;
+        return committed;
+      }
+    );
+
+    await expect(
+      fixture.flow.cancel(OWNER_A, ceremony.ceremonyId)
+    ).resolves.toEqual({ ok: false, error: "timed_out" });
+    gate.resolve();
+    const freshManager = createFixture({ client: fixture.client, store });
+    await expect(
+      freshManager.flow.cancel(OWNER_A, ceremony.ceremonyId)
+    ).resolves.toMatchObject({
+      ok: true,
+      ceremony: { status: "cancelled" },
+    });
+    expect(fixture.client.cancel).toHaveBeenCalledTimes(1);
+  });
+
   it("does not accept caller-selected URLs, commands, models, homes, or env", async () => {
     const fixture = createFixture();
     await beginCeremony(fixture);
     const beginInput = fixture.client.begin.mock.calls[0]?.[0];
     expect(beginInput).toEqual({
       ceremonyId: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1",
+      providerBeginKey: "KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK1",
     });
     expect(JSON.stringify(beginInput)).not.toMatch(
       /url|command|model|home|env/i

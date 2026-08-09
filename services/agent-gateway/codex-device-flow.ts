@@ -6,11 +6,15 @@ import {
 } from "./control-plane.ts";
 
 const CEREMONY_ID_BYTES = 24;
+const MAX_CLEANUP_SESSION_REFS = 8;
 const MAX_IDENTIFIER_LENGTH = 160;
 const MAX_PROVIDER_SESSION_REF_LENGTH = 512;
 const USER_CODE_PATTERN = /^[A-Z0-9](?:[A-Z0-9-]{2,14}[A-Z0-9])$/;
+const OFFICIAL_CODEX_VERIFICATION_URLS = Object.freeze([
+  "https://auth.openai.com/codex/device",
+] as const);
 
-type CodexDeviceAccountType = "chatgpt" | "api_key";
+type CodexDeviceAccountType = "chatgpt";
 type CodexDeviceStatus =
   | "starting"
   | "pending"
@@ -41,8 +45,10 @@ type CodexDeviceCeremonyRecord = Readonly<{
   pollIntervalMilliseconds: number;
   nextPollAtMilliseconds: number;
   revision: number;
+  providerBeginKey: string;
   userCode?: string;
   providerSessionRef?: string;
+  cleanupSessionRefs: readonly string[];
   account?: CodexDeviceAccount;
 }>;
 
@@ -59,7 +65,6 @@ type CodexDeviceProjection = Readonly<{
 type CodexDeviceErrorCode =
   | "aborted"
   | "active_ceremony_exists"
-  | "invalid_provider_response"
   | "not_found"
   | "provider_unavailable"
   | "store_unavailable"
@@ -76,8 +81,8 @@ type ReserveCeremonyOutcome =
   | Readonly<{ status: "not_found" }>
   | Readonly<{ status: "id_collision" }>;
 
-type ActivateCeremonyOutcome =
-  | Readonly<{ status: "activated"; record: CodexDeviceCeremonyRecord }>
+type RecordBeginOutcome =
+  | Readonly<{ status: "recorded"; record: CodexDeviceCeremonyRecord }>
   | Readonly<{ status: "current"; record: CodexDeviceCeremonyRecord }>
   | Readonly<{ status: "not_found" }>;
 
@@ -103,7 +108,24 @@ type CancelCeremonyOutcome =
   | Readonly<{
       status: "cancelled" | "current";
       record: CodexDeviceCeremonyRecord;
-      providerSessionRef?: string;
+    }>
+  | Readonly<{ status: "not_found" }>;
+
+type ClaimCleanupOutcome =
+  | Readonly<{
+      status: "granted";
+      record: CodexDeviceCeremonyRecord;
+      cleanupRevision: number;
+      providerBeginKey: string;
+      providerSessionRef: string;
+    }>
+  | Readonly<{ status: "current"; record: CodexDeviceCeremonyRecord }>
+  | Readonly<{ status: "not_found" }>;
+
+type CompleteCleanupOutcome =
+  | Readonly<{
+      status: "completed" | "current";
+      record: CodexDeviceCeremonyRecord;
     }>
   | Readonly<{ status: "not_found" }>;
 
@@ -120,12 +142,13 @@ type CodexDeviceClientBeginOutcome = Readonly<{
 
 interface CodexDeviceClient {
   /**
-   * Starts or recovers a provider ceremony idempotently by ceremonyId.
+   * Starts or recovers a provider ceremony atomically and idempotently by the
+   * persisted ceremonyId/providerBeginKey pair across processes and restarts.
    * Implementations must never vary command, model, home, or environment from
    * caller input because none of those values are accepted by this contract.
    */
   begin(
-    input: Readonly<{ ceremonyId: string }>,
+    input: Readonly<{ ceremonyId: string; providerBeginKey: string }>,
     context: ControlPlaneOperationContext
   ): PromiseLike<CodexDeviceClientBeginOutcome>;
 
@@ -133,15 +156,17 @@ interface CodexDeviceClient {
   poll(
     input: Readonly<{
       ceremonyId: string;
+      providerBeginKey: string;
       providerSessionRef: string;
     }>,
     context: ControlPlaneOperationContext
   ): PromiseLike<CodexDevicePollCompletion>;
 
-  /** Cancels a provider ceremony idempotently by ceremonyId. */
+  /** Cancels one exact provider session idempotently by persisted begin key. */
   cancel(
     input: Readonly<{
       ceremonyId: string;
+      providerBeginKey: string;
       providerSessionRef: string;
     }>,
     context: ControlPlaneOperationContext
@@ -159,6 +184,7 @@ interface CodexDeviceCeremonyStore {
   reserve(
     input: Readonly<{
       ceremonyId: string;
+      providerBeginKey: string;
       scope: CodexDeviceScope;
       nowMilliseconds: number;
       expiresAtMilliseconds: number;
@@ -167,17 +193,22 @@ interface CodexDeviceCeremonyStore {
     context: ControlPlaneOperationContext
   ): PromiseLike<ReserveCeremonyOutcome>;
 
-  /** Activates only the matching starting record, or returns current state. */
-  activate(
+  /**
+   * Atomically records every idempotent begin result. The first result may
+   * activate a starting record; terminal and race-loser references must be
+   * retained in cleanupSessionRefs until completeCleanup removes them.
+   */
+  recordBegin(
     input: Readonly<{
       ceremonyId: string;
+      providerBeginKey: string;
       scope: CodexDeviceScope;
       nowMilliseconds: number;
       userCode: string;
       providerSessionRef: string;
     }>,
     context: ControlPlaneOperationContext
-  ): PromiseLike<ActivateCeremonyOutcome>;
+  ): PromiseLike<RecordBeginOutcome>;
 
   /**
    * Atomically validates scope, applies expiry and poll throttling, and grants
@@ -213,6 +244,28 @@ interface CodexDeviceCeremonyStore {
     }>,
     context: ControlPlaneOperationContext
   ): PromiseLike<CancelCeremonyOutcome>;
+
+  /** Atomically grants one retained provider session for idempotent cleanup. */
+  claimCleanup(
+    input: Readonly<{
+      ceremonyId: string;
+      scope: CodexDeviceScope;
+      nowMilliseconds: number;
+    }>,
+    context: ControlPlaneOperationContext
+  ): PromiseLike<ClaimCleanupOutcome>;
+
+  /** Removes only the exact cleanup revision/reference after provider success. */
+  completeCleanup(
+    input: Readonly<{
+      ceremonyId: string;
+      scope: CodexDeviceScope;
+      nowMilliseconds: number;
+      cleanupRevision: number;
+      providerSessionRef: string;
+    }>,
+    context: ControlPlaneOperationContext
+  ): PromiseLike<CompleteCleanupOutcome>;
 }
 
 type CodexDeviceFlowOptions = Readonly<{
@@ -224,6 +277,7 @@ type CodexDeviceFlowOptions = Readonly<{
   dependencyTimeoutMilliseconds: number;
   now?: () => number;
   createCeremonyId?: () => string;
+  createProviderBeginKey?: () => string;
 }>;
 
 type CodexDeviceFlow = Readonly<{
@@ -243,6 +297,8 @@ type CodexDeviceFlow = Readonly<{
   ) => Promise<CodexDeviceResult>;
 }>;
 
+type BeginLifecycleState = { abortRequested: boolean };
+
 /** Creates the provider-neutral Codex device authorization coordinator. */
 function createCodexDeviceFlow(
   options: CodexDeviceFlowOptions
@@ -253,22 +309,37 @@ function createCodexDeviceFlow(
   );
   const now = options.now ?? Date.now;
   const createCeremonyId = options.createCeremonyId ?? defaultCeremonyId;
+  const createProviderBeginKey =
+    options.createProviderBeginKey ?? defaultCeremonyId;
+
+  /** Reads the injected clock without exposing exceptions or invalid values. */
+  function readServerTime(): number | null {
+    try {
+      const value = now();
+      return isValidTimestamp(value) ? value : null;
+    } catch {
+      return null;
+    }
+  }
 
   /** Starts or recovers one request-bound ceremony without duplicate sessions. */
   async function begin(
     scope: CodexDeviceScope,
     requestSignal?: AbortSignal
   ): Promise<CodexDeviceResult> {
-    if (!isValidScope(scope)) return failure("not_found");
-    const nowMilliseconds = now();
-    const ceremonyId = createCeremonyId();
-    if (!isValidCeremonyId(ceremonyId)) return failure("store_unavailable");
+    if (!safelyValidate(() => isValidScope(scope))) return failure("not_found");
+    const nowMilliseconds = readServerTime();
+    if (nowMilliseconds === null) return failure("store_unavailable");
+    const ceremonyId = safelyCreateOpaqueId(createCeremonyId);
+    const providerBeginKey = safelyCreateOpaqueId(createProviderBeginKey);
+    if (!ceremonyId || !providerBeginKey) return failure("store_unavailable");
 
     const reservation = await awaitDependency(
       (context) =>
         options.store.reserve(
           {
             ceremonyId,
+            providerBeginKey,
             scope,
             nowMilliseconds,
             expiresAtMilliseconds:
@@ -282,85 +353,139 @@ function createCodexDeviceFlow(
       "store"
     );
     if (!reservation.ok) return reservation.result;
-    if (reservation.value.status === "active_other_request") {
+    const reserved = safelyParse(() =>
+      parseReserveOutcome(
+        reservation.value,
+        scope,
+        ceremonyId,
+        providerBeginKey
+      )
+    );
+    if (!reserved) return failure("store_unavailable");
+    if (reserved.status === "active_other_request") {
       return failure("active_ceremony_exists");
     }
-    if (reservation.value.status === "not_found") return failure("not_found");
-    if (reservation.value.status === "id_collision") {
+    if (reserved.status === "not_found") return failure("not_found");
+    if (reserved.status === "id_collision") {
       return failure("store_unavailable");
     }
 
-    const record = reservation.value.record;
-    if (!isValidRecord(record, scope, record.ceremonyId)) {
-      return failure("store_unavailable");
-    }
+    const record = reserved.record;
     if (record.status !== "starting") {
+      const cleaned = await drainCleanup(record, scope);
+      if (!cleaned.ok) return cleaned.result;
       return resultFromRecord(
-        record,
+        cleaned.record,
         scope,
         record.ceremonyId,
         verificationUrl
       );
     }
 
-    const providerBegin = await awaitDependency(
-      (context) =>
-        options.client.begin({ ceremonyId: record.ceremonyId }, context),
-      options.dependencyTimeoutMilliseconds,
-      requestSignal,
-      "provider"
+    // Once the durable reservation commits, provider settlement and cleanup are
+    // server-owned. Caller abort stops waiting but cannot discard a late ref.
+    const lifecycleState: BeginLifecycleState = { abortRequested: false };
+    const lifecycle = settleProviderBegin(record, scope, lifecycleState).catch(
+      () => failure("provider_unavailable")
     );
-    if (!providerBegin.ok) return providerBegin.result;
-    if (!isValidBeginOutcome(providerBegin.value)) {
-      return failure("invalid_provider_response");
-    }
+    return awaitCallerLifecycle(lifecycle, requestSignal, () => {
+      lifecycleState.abortRequested = true;
+      return terminalizeAfterCallerAbort(record, scope);
+    });
+  }
 
-    const activation = await awaitDependency(
+  /** Makes caller-aborted begin terminal while the provider settles independently. */
+  async function terminalizeAfterCallerAbort(
+    record: CodexDeviceCeremonyRecord,
+    scope: CodexDeviceScope
+  ): Promise<void> {
+    const nowMilliseconds = readServerTime();
+    if (nowMilliseconds === null) return;
+    const cancellation = await awaitDependency(
       (context) =>
-        options.store.activate(
+        options.store.cancel(
           {
             ceremonyId: record.ceremonyId,
             scope,
-            nowMilliseconds: now(),
+            nowMilliseconds,
+          },
+          context
+        ),
+      options.dependencyTimeoutMilliseconds,
+      undefined,
+      "store"
+    );
+    if (!cancellation.ok) return;
+    const durable = safelyParse(() =>
+      parseCancelOutcome(cancellation.value, scope, record.ceremonyId)
+    );
+    if (!durable || durable.status === "not_found") return;
+    await drainCleanup(durable.record, scope);
+  }
+
+  /** Records an idempotent provider begin result before any cleanup attempt. */
+  async function settleProviderBegin(
+    record: CodexDeviceCeremonyRecord,
+    scope: CodexDeviceScope,
+    lifecycleState: BeginLifecycleState
+  ): Promise<CodexDeviceResult> {
+    const providerBegin = await awaitDependency(
+      (context) =>
+        options.client.begin(
+          {
+            ceremonyId: record.ceremonyId,
+            providerBeginKey: record.providerBeginKey,
+          },
+          context
+        ),
+      options.dependencyTimeoutMilliseconds,
+      undefined,
+      "provider"
+    );
+    if (!providerBegin.ok) return providerBegin.result;
+    if (!safelyValidate(() => isValidBeginOutcome(providerBegin.value))) {
+      return failure("provider_unavailable");
+    }
+    const nowMilliseconds = readServerTime();
+    if (nowMilliseconds === null) return failure("store_unavailable");
+    const recordedBegin = await awaitDependency(
+      (context) =>
+        options.store.recordBegin(
+          {
+            ceremonyId: record.ceremonyId,
+            providerBeginKey: record.providerBeginKey,
+            scope,
+            nowMilliseconds,
             userCode: providerBegin.value.userCode,
             providerSessionRef: providerBegin.value.providerSessionRef,
           },
           context
         ),
       options.dependencyTimeoutMilliseconds,
-      requestSignal,
+      undefined,
       "store"
     );
-    if (!activation.ok) return activation.result;
-    if (activation.value.status === "not_found") return failure("not_found");
-    if (!isValidRecord(activation.value.record, scope, record.ceremonyId)) {
-      return failure("store_unavailable");
+    if (!recordedBegin.ok) return recordedBegin.result;
+    const recorded = safelyParse(() =>
+      parseRecordBeginOutcome(
+        recordedBegin.value,
+        scope,
+        record.ceremonyId,
+        record.providerBeginKey,
+        providerBegin.value.providerSessionRef
+      )
+    );
+    if (!recorded) return failure("store_unavailable");
+    if (recorded.status === "not_found") return failure("not_found");
+    if (lifecycleState.abortRequested) {
+      // Retry the durable terminal transition after the ref is recorded. This
+      // closes an ambiguous or failed first cancellation attempt during abort.
+      await terminalizeAfterCallerAbort(recorded.record, scope);
     }
-    if (
-      activation.value.status === "current" &&
-      (activation.value.record.status === "cancelled" ||
-        activation.value.record.status === "expired")
-    ) {
-      // A provider begin can settle after the durable ceremony became terminal.
-      // Cancel that newly learned session, but never cancel a concurrently
-      // activated pending session owned by the same idempotency key.
-      const cleanup = await awaitDependency(
-        (context) =>
-          options.client.cancel(
-            {
-              ceremonyId: record.ceremonyId,
-              providerSessionRef: providerBegin.value.providerSessionRef,
-            },
-            context
-          ),
-        options.dependencyTimeoutMilliseconds,
-        requestSignal,
-        "provider"
-      );
-      if (!cleanup.ok) return cleanup.result;
-    }
+    const cleaned = await drainCleanup(recorded.record, scope);
+    if (!cleaned.ok) return cleaned.result;
     return resultFromRecord(
-      activation.value.record,
+      cleaned.record,
       scope,
       record.ceremonyId,
       verificationUrl
@@ -373,13 +498,18 @@ function createCodexDeviceFlow(
     ceremonyId: string,
     requestSignal?: AbortSignal
   ): Promise<CodexDeviceResult> {
-    if (!isValidScope(scope) || !isValidCeremonyId(ceremonyId)) {
+    if (
+      !safelyValidate(() => isValidScope(scope)) ||
+      !isValidCeremonyId(ceremonyId)
+    ) {
       return failure("not_found");
     }
+    const prepareAtMilliseconds = readServerTime();
+    if (prepareAtMilliseconds === null) return failure("store_unavailable");
     const prepared = await awaitDependency(
       (context) =>
         options.store.preparePoll(
-          { ceremonyId, scope, nowMilliseconds: now() },
+          { ceremonyId, scope, nowMilliseconds: prepareAtMilliseconds },
           context
         ),
       options.dependencyTimeoutMilliseconds,
@@ -387,33 +517,29 @@ function createCodexDeviceFlow(
       "store"
     );
     if (!prepared.ok) return prepared.result;
-    if (prepared.value.status === "not_found") return failure("not_found");
-    if (prepared.value.status === "current") {
+    const preparedOutcome = safelyParse(() =>
+      parsePreparePollOutcome(prepared.value, scope, ceremonyId)
+    );
+    if (!preparedOutcome) return failure("store_unavailable");
+    if (preparedOutcome.status === "not_found") return failure("not_found");
+    if (preparedOutcome.status === "current") {
+      const cleaned = await drainCleanup(preparedOutcome.record, scope);
+      if (!cleaned.ok) return cleaned.result;
       return resultFromRecord(
-        prepared.value.record,
+        cleaned.record,
         scope,
         ceremonyId,
         verificationUrl
       );
     }
-    const grantedPoll = prepared.value;
-    if (
-      !isValidRecord(grantedPoll.record, scope, ceremonyId) ||
-      grantedPoll.record.status !== "pending" ||
-      !isValidProviderSessionRef(grantedPoll.providerSessionRef) ||
-      grantedPoll.record.providerSessionRef !==
-        grantedPoll.providerSessionRef ||
-      !Number.isSafeInteger(grantedPoll.pollRevision) ||
-      grantedPoll.pollRevision !== grantedPoll.record.revision
-    ) {
-      return failure("store_unavailable");
-    }
+    const grantedPoll = preparedOutcome;
 
     const providerPoll = await awaitDependency(
       (context) =>
         options.client.poll(
           {
             ceremonyId,
+            providerBeginKey: grantedPoll.record.providerBeginKey,
             providerSessionRef: grantedPoll.providerSessionRef,
           },
           context
@@ -423,9 +549,11 @@ function createCodexDeviceFlow(
       "provider"
     );
     if (!providerPoll.ok) return providerPoll.result;
-    if (!isValidPollCompletion(providerPoll.value)) {
-      return failure("invalid_provider_response");
+    if (!safelyValidate(() => isValidPollCompletion(providerPoll.value))) {
+      return failure("provider_unavailable");
     }
+    const completeAtMilliseconds = readServerTime();
+    if (completeAtMilliseconds === null) return failure("store_unavailable");
 
     const completed = await awaitDependency(
       (context) =>
@@ -433,7 +561,7 @@ function createCodexDeviceFlow(
           {
             ceremonyId,
             scope,
-            nowMilliseconds: now(),
+            nowMilliseconds: completeAtMilliseconds,
             pollRevision: grantedPoll.pollRevision,
             completion: providerPoll.value,
           },
@@ -444,13 +572,14 @@ function createCodexDeviceFlow(
       "store"
     );
     if (!completed.ok) return completed.result;
-    if (completed.value.status === "not_found") return failure("not_found");
-    return resultFromRecord(
-      completed.value.record,
-      scope,
-      ceremonyId,
-      verificationUrl
+    const completedOutcome = safelyParse(() =>
+      parseCompletePollOutcome(completed.value, scope, ceremonyId)
     );
+    if (!completedOutcome) return failure("store_unavailable");
+    if (completedOutcome.status === "not_found") return failure("not_found");
+    const cleaned = await drainCleanup(completedOutcome.record, scope);
+    if (!cleaned.ok) return cleaned.result;
+    return resultFromRecord(cleaned.record, scope, ceremonyId, verificationUrl);
   }
 
   /** Commits terminal cancellation before bounded provider cleanup. */
@@ -459,58 +588,404 @@ function createCodexDeviceFlow(
     ceremonyId: string,
     requestSignal?: AbortSignal
   ): Promise<CodexDeviceResult> {
-    if (!isValidScope(scope) || !isValidCeremonyId(ceremonyId)) {
+    if (
+      !safelyValidate(() => isValidScope(scope)) ||
+      !isValidCeremonyId(ceremonyId)
+    ) {
       return failure("not_found");
     }
+    const nowMilliseconds = readServerTime();
+    if (nowMilliseconds === null) return failure("store_unavailable");
     const cancellation = await awaitDependency(
       (context) =>
-        options.store.cancel(
-          { ceremonyId, scope, nowMilliseconds: now() },
-          context
-        ),
+        options.store.cancel({ ceremonyId, scope, nowMilliseconds }, context),
       options.dependencyTimeoutMilliseconds,
       requestSignal,
       "store"
     );
     if (!cancellation.ok) return cancellation.result;
-    if (cancellation.value.status === "not_found") return failure("not_found");
-    const durableCancellation = cancellation.value;
-    if (
-      !isValidRecord(durableCancellation.record, scope, ceremonyId) ||
-      (durableCancellation.providerSessionRef !== undefined &&
-        (!isValidProviderSessionRef(durableCancellation.providerSessionRef) ||
-          durableCancellation.record.providerSessionRef !==
-            durableCancellation.providerSessionRef))
-    ) {
-      return failure("store_unavailable");
-    }
+    const durableCancellation = safelyParse(() =>
+      parseCancelOutcome(cancellation.value, scope, ceremonyId)
+    );
+    if (!durableCancellation) return failure("store_unavailable");
+    if (durableCancellation.status === "not_found") return failure("not_found");
+    const cleaned = await drainCleanup(durableCancellation.record, scope);
+    if (!cleaned.ok) return cleaned.result;
+    return resultFromRecord(cleaned.record, scope, ceremonyId, verificationUrl);
+  }
 
-    if (durableCancellation.providerSessionRef) {
-      const providerSessionRef = durableCancellation.providerSessionRef;
-      const providerCancellation = await awaitDependency(
+  /** Drains durable cleanup work under server-owned deadlines, never caller abort. */
+  async function drainCleanup(
+    initialRecord: CodexDeviceCeremonyRecord,
+    scope: CodexDeviceScope
+  ): Promise<
+    | Readonly<{ ok: true; record: CodexDeviceCeremonyRecord }>
+    | Readonly<{ ok: false; result: CodexDeviceResult }>
+  > {
+    let record = initialRecord;
+    for (let attempt = 0; attempt < MAX_CLEANUP_SESSION_REFS; attempt += 1) {
+      const claimAtMilliseconds = readServerTime();
+      if (claimAtMilliseconds === null) {
+        return { ok: false, result: failure("store_unavailable") };
+      }
+      const claimedCleanup = await awaitDependency(
         (context) =>
-          options.client.cancel(
+          options.store.claimCleanup(
             {
-              ceremonyId,
-              providerSessionRef,
+              ceremonyId: record.ceremonyId,
+              scope,
+              nowMilliseconds: claimAtMilliseconds,
             },
             context
           ),
         options.dependencyTimeoutMilliseconds,
-        requestSignal,
+        undefined,
+        "store"
+      );
+      if (!claimedCleanup.ok) return claimedCleanup;
+      const claimed = safelyParse(() =>
+        parseClaimCleanupOutcome(claimedCleanup.value, scope, record.ceremonyId)
+      );
+      if (!claimed) {
+        return { ok: false, result: failure("store_unavailable") };
+      }
+      if (claimed.status === "not_found") {
+        return { ok: false, result: failure("not_found") };
+      }
+      record = claimed.record;
+      if (claimed.status === "current") return { ok: true, record };
+
+      const providerCancellation = await awaitDependency(
+        (context) =>
+          options.client.cancel(
+            {
+              ceremonyId: record.ceremonyId,
+              providerBeginKey: claimed.providerBeginKey,
+              providerSessionRef: claimed.providerSessionRef,
+            },
+            context
+          ),
+        options.dependencyTimeoutMilliseconds,
+        undefined,
         "provider"
       );
-      if (!providerCancellation.ok) return providerCancellation.result;
+      if (!providerCancellation.ok) return providerCancellation;
+      if (providerCancellation.value !== undefined) {
+        return { ok: false, result: failure("provider_unavailable") };
+      }
+      const completeAtMilliseconds = readServerTime();
+      if (completeAtMilliseconds === null) {
+        return { ok: false, result: failure("store_unavailable") };
+      }
+      const completedCleanup = await awaitDependency(
+        (context) =>
+          options.store.completeCleanup(
+            {
+              ceremonyId: record.ceremonyId,
+              scope,
+              nowMilliseconds: completeAtMilliseconds,
+              cleanupRevision: claimed.cleanupRevision,
+              providerSessionRef: claimed.providerSessionRef,
+            },
+            context
+          ),
+        options.dependencyTimeoutMilliseconds,
+        undefined,
+        "store"
+      );
+      if (!completedCleanup.ok) return completedCleanup;
+      const completed = safelyParse(() =>
+        parseCompleteCleanupOutcome(
+          completedCleanup.value,
+          scope,
+          record.ceremonyId,
+          claimed.providerSessionRef
+        )
+      );
+      if (!completed) {
+        return { ok: false, result: failure("store_unavailable") };
+      }
+      if (completed.status === "not_found") {
+        return { ok: false, result: failure("not_found") };
+      }
+      record = completed.record;
     }
-    return resultFromRecord(
-      durableCancellation.record,
-      scope,
-      ceremonyId,
-      verificationUrl
-    );
+    return record.cleanupSessionRefs.length === 0
+      ? { ok: true, record }
+      : { ok: false, result: failure("store_unavailable") };
   }
 
   return Object.freeze({ begin, poll, cancel });
+}
+
+/** Lets a caller stop waiting without aborting the server-owned lifecycle. */
+function awaitCallerLifecycle(
+  lifecycle: Promise<CodexDeviceResult>,
+  requestSignal?: AbortSignal,
+  onAbort?: () => Promise<void>
+): Promise<CodexDeviceResult> {
+  if (!requestSignal) return lifecycle;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: CodexDeviceResult): void => {
+      if (settled) return;
+      settled = true;
+      requestSignal.removeEventListener("abort", handleAbort);
+      resolve(result);
+    };
+    const handleAbort = (): void => {
+      // The server-owned terminal transition continues after the response.
+      onAbort?.().catch(() => undefined);
+      finish(failure("aborted"));
+    };
+    requestSignal.addEventListener("abort", handleAbort, { once: true });
+    if (requestSignal.aborted) handleAbort();
+    lifecycle.then(finish, () => finish(failure("provider_unavailable")));
+  });
+}
+
+/** Converts hostile accessors or malformed runtime envelopes into null. */
+function safelyParse<T>(parser: () => T | null): T | null {
+  try {
+    return parser();
+  } catch {
+    return null;
+  }
+}
+
+/** Converts hostile accessors in a runtime validator into a false result. */
+function safelyValidate(validator: () => boolean): boolean {
+  try {
+    return validator();
+  } catch {
+    return false;
+  }
+}
+
+/** Parses the exact atomic reserve envelope before any record dereference. */
+function parseReserveOutcome(
+  value: unknown,
+  scope: CodexDeviceScope,
+  proposedCeremonyId: string,
+  proposedProviderBeginKey: string
+): ReserveCeremonyOutcome | null {
+  if (!isPlainObject(value) || typeof value.status !== "string") return null;
+  if (
+    ["active_other_request", "not_found", "id_collision"].includes(value.status)
+  ) {
+    return hasExactKeys(value, ["status"])
+      ? (value as ReserveCeremonyOutcome)
+      : null;
+  }
+  if (
+    (value.status !== "reserved" && value.status !== "same_request") ||
+    !hasExactKeys(value, ["status", "record"]) ||
+    !isValidRecord(value.record, scope)
+  ) {
+    return null;
+  }
+  if (
+    value.status === "reserved" &&
+    (value.record.ceremonyId !== proposedCeremonyId ||
+      value.record.providerBeginKey !== proposedProviderBeginKey ||
+      value.record.status !== "starting")
+  ) {
+    return null;
+  }
+  if (
+    value.status === "same_request" &&
+    value.record.status !== "starting" &&
+    value.record.status !== "pending"
+  ) {
+    return null;
+  }
+  return value as ReserveCeremonyOutcome;
+}
+
+/** Parses the exact durable provider-begin result envelope. */
+function parseRecordBeginOutcome(
+  value: unknown,
+  scope: CodexDeviceScope,
+  ceremonyId: string,
+  providerBeginKey: string,
+  providerSessionRef: string
+): RecordBeginOutcome | null {
+  if (!isPlainObject(value) || typeof value.status !== "string") return null;
+  if (value.status === "not_found") {
+    return hasExactKeys(value, ["status"]) ? { status: "not_found" } : null;
+  }
+  if (
+    (value.status !== "recorded" && value.status !== "current") ||
+    !hasExactKeys(value, ["status", "record"]) ||
+    !isValidRecord(value.record, scope, ceremonyId) ||
+    value.record.providerBeginKey !== providerBeginKey ||
+    value.record.status === "starting" ||
+    (value.record.providerSessionRef !== providerSessionRef &&
+      !value.record.cleanupSessionRefs.includes(providerSessionRef))
+  ) {
+    return null;
+  }
+  return value as RecordBeginOutcome;
+}
+
+/** Parses and verifies poll grants before a provider session is touched. */
+function parsePreparePollOutcome(
+  value: unknown,
+  scope: CodexDeviceScope,
+  ceremonyId: string
+): PreparePollOutcome | null {
+  if (!isPlainObject(value) || typeof value.status !== "string") return null;
+  if (value.status === "not_found") {
+    return hasExactKeys(value, ["status"]) ? { status: "not_found" } : null;
+  }
+  if (value.status === "current") {
+    return hasExactKeys(value, ["status", "record"]) &&
+      isValidRecord(value.record, scope, ceremonyId)
+      ? (value as PreparePollOutcome)
+      : null;
+  }
+  if (
+    value.status !== "granted" ||
+    !hasExactKeys(value, [
+      "status",
+      "record",
+      "pollRevision",
+      "providerSessionRef",
+    ]) ||
+    !isValidRecord(value.record, scope, ceremonyId) ||
+    value.record.status !== "pending" ||
+    !isValidProviderSessionRef(value.providerSessionRef) ||
+    value.record.providerSessionRef !== value.providerSessionRef ||
+    !Number.isSafeInteger(value.pollRevision) ||
+    value.pollRevision !== value.record.revision
+  ) {
+    return null;
+  }
+  return value as PreparePollOutcome;
+}
+
+/** Parses the exact poll-completion store envelope. */
+function parseCompletePollOutcome(
+  value: unknown,
+  scope: CodexDeviceScope,
+  ceremonyId: string
+): CompletePollOutcome | null {
+  const parsed = parseRecordOutcome(value, scope, ceremonyId, [
+    "completed",
+    "stale",
+  ]) as CompletePollOutcome | null;
+  if (
+    parsed?.status === "completed" &&
+    !["pending", "authorized", "denied", "expired"].includes(
+      parsed.record.status
+    )
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
+/** Parses the exact cancellation store envelope. */
+function parseCancelOutcome(
+  value: unknown,
+  scope: CodexDeviceScope,
+  ceremonyId: string
+): CancelCeremonyOutcome | null {
+  const parsed = parseRecordOutcome(value, scope, ceremonyId, [
+    "cancelled",
+    "current",
+  ]) as CancelCeremonyOutcome | null;
+  if (
+    (parsed?.status === "cancelled" && parsed.record.status !== "cancelled") ||
+    (parsed?.status === "current" &&
+      (parsed.record.status === "starting" ||
+        parsed.record.status === "pending"))
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
+/** Parses a cleanup grant and proves its reference remains durably retained. */
+function parseClaimCleanupOutcome(
+  value: unknown,
+  scope: CodexDeviceScope,
+  ceremonyId: string
+): ClaimCleanupOutcome | null {
+  if (!isPlainObject(value) || typeof value.status !== "string") return null;
+  if (value.status === "not_found") {
+    return hasExactKeys(value, ["status"]) ? { status: "not_found" } : null;
+  }
+  if (value.status === "current") {
+    return hasExactKeys(value, ["status", "record"]) &&
+      isValidRecord(value.record, scope, ceremonyId) &&
+      value.record.cleanupSessionRefs.length === 0
+      ? (value as ClaimCleanupOutcome)
+      : null;
+  }
+  if (
+    value.status !== "granted" ||
+    !hasExactKeys(value, [
+      "status",
+      "record",
+      "cleanupRevision",
+      "providerBeginKey",
+      "providerSessionRef",
+    ]) ||
+    !isValidRecord(value.record, scope, ceremonyId) ||
+    value.providerBeginKey !== value.record.providerBeginKey ||
+    !isValidProviderSessionRef(value.providerSessionRef) ||
+    !value.record.cleanupSessionRefs.includes(value.providerSessionRef) ||
+    !Number.isSafeInteger(value.cleanupRevision) ||
+    value.cleanupRevision !== value.record.revision
+  ) {
+    return null;
+  }
+  return value as ClaimCleanupOutcome;
+}
+
+/** Parses cleanup completion without assuming a successful removal. */
+function parseCompleteCleanupOutcome(
+  value: unknown,
+  scope: CodexDeviceScope,
+  ceremonyId: string,
+  providerSessionRef: string
+): CompleteCleanupOutcome | null {
+  const parsed = parseRecordOutcome(value, scope, ceremonyId, [
+    "completed",
+    "current",
+  ]) as CompleteCleanupOutcome | null;
+  if (
+    parsed?.status === "completed" &&
+    parsed.record.cleanupSessionRefs.includes(providerSessionRef)
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
+/** Parses a common exact status/record or not-found store envelope. */
+function parseRecordOutcome(
+  value: unknown,
+  scope: CodexDeviceScope,
+  ceremonyId: string,
+  statuses: readonly string[]
+):
+  | Readonly<{ status: string; record: CodexDeviceCeremonyRecord }>
+  | Readonly<{ status: "not_found" }>
+  | null {
+  if (!isPlainObject(value) || typeof value.status !== "string") return null;
+  if (value.status === "not_found") {
+    return hasExactKeys(value, ["status"]) ? { status: "not_found" } : null;
+  }
+  return statuses.includes(value.status) &&
+    hasExactKeys(value, ["status", "record"]) &&
+    isValidRecord(value.record, scope, ceremonyId)
+    ? (value as Readonly<{
+        status: string;
+        record: CodexDeviceCeremonyRecord;
+      }>)
+    : null;
 }
 
 /** Bounds one injected dependency and maps all opaque failures to stable codes. */
@@ -523,11 +998,21 @@ async function awaitDependency<T>(
   | Readonly<{ ok: true; value: T }>
   | Readonly<{ ok: false; result: CodexDeviceResult }>
 > {
-  const outcome = await awaitControlPlaneOperation(
-    operation,
-    timeoutMilliseconds,
-    requestSignal
-  );
+  let outcome;
+  try {
+    outcome = await awaitControlPlaneOperation(
+      operation,
+      timeoutMilliseconds,
+      requestSignal
+    );
+  } catch {
+    return {
+      ok: false,
+      result: failure(
+        kind === "store" ? "store_unavailable" : "provider_unavailable"
+      ),
+    };
+  }
   if (outcome.status === "fulfilled") return { ok: true, value: outcome.value };
   if (outcome.status === "aborted") {
     return { ok: false, result: failure("aborted") };
@@ -582,7 +1067,7 @@ function resultFromRecord(
   ceremonyId: string,
   verificationUrl: string
 ): CodexDeviceResult {
-  return isValidRecord(record, scope, ceremonyId)
+  return safelyValidate(() => isValidRecord(record, scope, ceremonyId))
     ? success(project(record, verificationUrl))
     : failure("store_unavailable");
 }
@@ -591,12 +1076,12 @@ function resultFromRecord(
 function isValidRecord(
   value: unknown,
   scope: CodexDeviceScope,
-  ceremonyId: string
+  ceremonyId?: string
 ): value is CodexDeviceCeremonyRecord {
   if (!isPlainObject(value)) return false;
   if (
-    value.ceremonyId !== ceremonyId ||
-    !isValidCeremonyId(ceremonyId) ||
+    !isValidCeremonyId(value.ceremonyId) ||
+    (ceremonyId !== undefined && value.ceremonyId !== ceremonyId) ||
     value.ownerId !== scope.ownerId ||
     value.connectionId !== scope.connectionId ||
     value.requestId !== scope.requestId ||
@@ -608,6 +1093,24 @@ function isValidRecord(
       "expired",
       "denied",
     ].includes(String(value.status))
+  ) {
+    return false;
+  }
+  if (
+    !isValidCeremonyId(value.providerBeginKey) ||
+    !Array.isArray(value.cleanupSessionRefs) ||
+    value.cleanupSessionRefs.length > MAX_CLEANUP_SESSION_REFS ||
+    !value.cleanupSessionRefs.every(isValidProviderSessionRef) ||
+    new Set(value.cleanupSessionRefs).size !== value.cleanupSessionRefs.length
+  ) {
+    return false;
+  }
+  if (
+    value.status === "starting" &&
+    (value.userCode !== undefined ||
+      value.providerSessionRef !== undefined ||
+      value.account !== undefined ||
+      value.cleanupSessionRefs.length !== 0)
   ) {
     return false;
   }
@@ -633,10 +1136,19 @@ function isValidRecord(
     return (
       typeof value.userCode === "string" &&
       USER_CODE_PATTERN.test(value.userCode) &&
-      isValidProviderSessionRef(value.providerSessionRef)
+      isValidProviderSessionRef(value.providerSessionRef) &&
+      !value.cleanupSessionRefs.includes(value.providerSessionRef) &&
+      value.account === undefined
     );
   }
+  if (
+    value.providerSessionRef !== undefined &&
+    !isValidProviderSessionRef(value.providerSessionRef)
+  ) {
+    return false;
+  }
   if (value.status === "authorized") return isValidAccount(value.account);
+  if (value.account !== undefined) return false;
   return true;
 }
 
@@ -678,7 +1190,7 @@ function isValidAccount(value: unknown): value is CodexDeviceAccount {
     keys.length === 2 &&
     keys.includes("type") &&
     keys.includes("present") &&
-    (value.type === "chatgpt" || value.type === "api_key") &&
+    value.type === "chatgpt" &&
     value.present === true
   );
 }
@@ -711,14 +1223,20 @@ function normalizeOfficialVerificationUrl(value: string): string {
     throw new TypeError("officialVerificationUrl must be a valid HTTPS URL");
   }
   if (
+    value !== url.href ||
     url.protocol !== "https:" ||
     url.username ||
     url.password ||
     url.search ||
     url.hash ||
-    url.origin === "null"
+    url.origin === "null" ||
+    !OFFICIAL_CODEX_VERIFICATION_URLS.includes(
+      url.href as (typeof OFFICIAL_CODEX_VERIFICATION_URLS)[number]
+    )
   ) {
-    throw new TypeError("officialVerificationUrl must be a clean HTTPS URL");
+    throw new TypeError(
+      "officialVerificationUrl must match the Codex verification allowlist"
+    );
   }
   return url.toString();
 }
@@ -740,7 +1258,13 @@ function validateOptions(options: CodexDeviceFlowOptions): void {
 }
 
 /** Validates opaque caller scope without reflecting which field failed. */
-function isValidScope(scope: CodexDeviceScope): boolean {
+function isValidScope(scope: unknown): scope is CodexDeviceScope {
+  if (
+    !isPlainObject(scope) ||
+    !hasExactKeys(scope, ["ownerId", "connectionId", "requestId"])
+  ) {
+    return false;
+  }
   return [scope.ownerId, scope.connectionId, scope.requestId].every(
     (value) =>
       typeof value === "string" &&
@@ -750,8 +1274,23 @@ function isValidScope(scope: CodexDeviceScope): boolean {
 }
 
 /** Recognizes the fixed entropy and alphabet of server-generated IDs. */
-function isValidCeremonyId(value: string): boolean {
-  return /^[A-Za-z0-9_-]{32}$/.test(value);
+function isValidCeremonyId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{32}$/.test(value);
+}
+
+/** Calls a server-owned identifier generator without reflecting its failure. */
+function safelyCreateOpaqueId(generator: () => string): string | null {
+  try {
+    const value = generator();
+    return isValidCeremonyId(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Recognizes finite nonnegative millisecond timestamps. */
+function isValidTimestamp(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
 /** Generates a 192-bit opaque identifier without caller-controlled material. */
@@ -774,13 +1313,33 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  } catch {
+    return false;
+  }
+}
+
+/** Requires an exact envelope key set at every injected runtime boundary. */
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[]
+): boolean {
+  try {
+    const keys = Object.keys(value);
+    return (
+      keys.length === expected.length &&
+      expected.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+    );
+  } catch {
+    return false;
+  }
 }
 
 export {
-  type ActivateCeremonyOutcome,
   type CancelCeremonyOutcome,
+  type ClaimCleanupOutcome,
   type CodexDeviceAccount,
   type CodexDeviceAccountType,
   type CodexDeviceCeremonyRecord,
@@ -795,8 +1354,10 @@ export {
   type CodexDeviceResult,
   type CodexDeviceScope,
   type CodexDeviceStatus,
+  type CompleteCleanupOutcome,
   type CompletePollOutcome,
   createCodexDeviceFlow,
   type PreparePollOutcome,
+  type RecordBeginOutcome,
   type ReserveCeremonyOutcome,
 };
