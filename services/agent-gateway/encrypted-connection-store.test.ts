@@ -280,6 +280,36 @@ function patchRecord(
   return Object.freeze({ ...record, ...patch });
 }
 
+/** Adds hostile own overrides while retaining a native view for zero checks. */
+function overrideBufferSurface(buffer: Buffer) {
+  const nativeView = new Uint8Array(
+    buffer.buffer,
+    buffer.byteOffset,
+    buffer.byteLength
+  );
+  let overrideCalls = 0;
+  for (const property of ["byteLength", "length"] as const) {
+    Object.defineProperty(buffer, property, {
+      configurable: true,
+      get: () => {
+        overrideCalls += 1;
+        throw new Error(`${property} override must not run`);
+      },
+    });
+  }
+  Object.defineProperty(buffer, "fill", {
+    configurable: true,
+    value: () => {
+      overrideCalls += 1;
+      throw new Error("fill override must not run");
+    },
+  });
+  return {
+    nativeView,
+    overrideCalls: () => overrideCalls,
+  };
+}
+
 describe("EncryptedConnectionStore envelope encryption", () => {
   it("encrypts every credential with a fresh DEK and wraps only that DEK", async () => {
     const first = createFixture({ seed: 10 });
@@ -875,6 +905,62 @@ describe("EncryptedConnectionStore idempotency, lineage, and concurrency", () =>
 });
 
 describe("EncryptedConnectionStore closed snapshots and errors", () => {
+  it("uses native Buffer length and clearing despite hostile own overrides", async () => {
+    const invalidMetadataPayload = Buffer.from(SECRET_CANARY);
+    const invalidMetadataObservation = overrideBufferSurface(
+      invalidMetadataPayload
+    );
+    const invalidStore = createFixture({ seed: 241 }).store;
+    await expect(
+      invalidStore.store(
+        {
+          ...CREATE_MUTATION,
+          token: SECRET_CANARY,
+        } as CredentialCreateMutation,
+        invalidMetadataPayload
+      )
+    ).rejects.toMatchObject({ code: "invalid_input" });
+    expect(Array.from(invalidMetadataObservation.nativeView)).toEqual(
+      Array(SECRET_CANARY.length).fill(0)
+    );
+    expect(invalidMetadataObservation.overrideCalls()).toBe(0);
+
+    const validPayload = Buffer.from(SECRET_CANARY);
+    const validObservation = overrideBufferSurface(validPayload);
+    const validStore = createFixture({ seed: 242 }).store;
+    await expect(
+      validStore.store(CREATE_MUTATION, validPayload)
+    ).resolves.toMatchObject({ status: "created" });
+    expect(Array.from(validObservation.nativeView)).toEqual(
+      Array(SECRET_CANARY.length).fill(0)
+    );
+    expect(validObservation.overrideCalls()).toBe(0);
+  });
+
+  it("clears rejected random Buffers without invoking hostile own overrides", async () => {
+    const hostileDataKey = Buffer.alloc(31, 7);
+    const observation = overrideBufferSurface(hostileDataKey);
+    const source: CredentialRandomSource = Object.freeze({
+      dataKey: () => hostileDataKey,
+      payloadNonce: () => Buffer.alloc(12, 2),
+      wrapNonce: () => Buffer.alloc(12, 3),
+      recordRevision: () => "revision_v1_00000000-0000-4000-8000-000000000001",
+    });
+    const store = new EncryptedConnectionStore(
+      new MemoryPersistence(),
+      { current: CURRENT_KEK },
+      source
+    );
+    const payload = Buffer.from(SECRET_CANARY);
+
+    await expect(store.store(CREATE_MUTATION, payload)).rejects.toMatchObject({
+      code: "internal_configuration_invalid",
+    });
+    expect(Array.from(observation.nativeView)).toEqual(Array(31).fill(0));
+    expect(observation.overrideCalls()).toBe(0);
+    expect(Array.from(payload)).toEqual(Array(SECRET_CANARY.length).fill(0));
+  });
+
   it("clears canaries before rejecting hostile or invalid metadata", async () => {
     let getterCalls = 0;
     const accessor = { ...CREATE_MUTATION } as Record<string, unknown>;

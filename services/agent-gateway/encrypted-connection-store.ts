@@ -32,6 +32,13 @@ const RECORD_REVISION_PATTERN = new RegExp(`^revision_v1_${UUID_V4_PATTERN}$`);
 const KEY_VERSION_PATTERN = /^encryption-v1-[0-9a-f]{8}$/;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype);
+const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  "byteLength"
+)?.get;
+const TYPED_ARRAY_FILL = Uint8Array.prototype.fill;
+
 type CredentialProvider = "codex";
 
 type CredentialIdentity = Readonly<{
@@ -817,7 +824,8 @@ function findDecryptionKey(
 
 /** Bounds a Buffer after ownership has entered an unconditional clearing scope. */
 function assertCredentialPayloadBounds(payload: Buffer): void {
-  if (payload.byteLength === 0 || payload.byteLength > MAX_CREDENTIAL_BYTES) {
+  const byteLength = nativeBufferByteLength(payload);
+  if (byteLength === 0 || byteLength > MAX_CREDENTIAL_BYTES) {
     throw new CredentialStoreError("invalid_input");
   }
 }
@@ -827,22 +835,36 @@ function takeRandomBytes(value: unknown, expectedBytes: number): Buffer {
   if (!Buffer.isBuffer(value)) {
     throw new Error("invalid random bytes");
   }
-  if (value.byteLength !== expectedBytes) {
-    clearBuffer(value);
+  const ownedBuffer = value;
+  try {
+    if (nativeBufferByteLength(ownedBuffer) !== expectedBytes) {
+      throw new Error("invalid random bytes");
+    }
+    return ownedBuffer;
+  } catch {
+    clearBuffer(ownedBuffer);
     throw new Error("invalid random bytes");
   }
-  return value;
 }
 
 /** Clears a Buffer through the native method even if an instance shadows it. */
 function clearBuffer(value: Buffer | undefined): void {
-  if (value !== undefined) Buffer.prototype.fill.call(value, 0);
+  if (value !== undefined) Reflect.apply(TYPED_ARRAY_FILL, value, [0]);
+}
+
+/** Reads the intrinsic byte length without invoking an own accessor override. */
+function nativeBufferByteLength(value: Buffer): number {
+  if (TYPED_ARRAY_BYTE_LENGTH_GETTER === undefined) {
+    throw new CredentialStoreError("internal_configuration_invalid");
+  }
+  return Reflect.apply(TYPED_ARRAY_BYTE_LENGTH_GETTER, value, []);
 }
 
 /** Checks an owned random buffer without allocating secret-derived text. */
 function isAllZero(value: Buffer): boolean {
   let combined = 0;
-  for (let index = 0; index < value.length; index += 1) {
+  const byteLength = nativeBufferByteLength(value);
+  for (let index = 0; index < byteLength; index += 1) {
     combined |= value[index];
   }
   return combined === 0;

@@ -51,6 +51,8 @@ failure, collision, encryption failure, adapter error, and success. Valid input
 is therefore cleared synchronously after encryption and before persistence is
 called. Buffers returned by the injected randomness source transfer ownership
 under the same rule and are cleared on wrong size, rejection, or later failure.
+Length checks and clearing use captured typed-array intrinsics, so hostile own
+`byteLength`, `length`, or `fill` overrides cannot bypass or intercept cleanup.
 Decryption is available only inside `use`'s callback lifetime and is cleared in
 `finally`; a callback must not retain an alias and must clear any copy it creates.
 
