@@ -3,9 +3,9 @@
 import { ConvexError } from "convex/values";
 
 import { AIConfigurationError } from "@/lib/ai/errors";
+import { generateRoutedAIStructured } from "@/lib/ai/executionRouter";
 import { generatedNodeSuggestionsSchema } from "@/lib/ai/generatedTree";
 import { flattenSuggestions } from "@/lib/ai/nodeSuggestions";
-import { generateAIStructured } from "@/lib/ai/providerRouter";
 import { AIMindmap } from "@/types/AI";
 
 const NODE_EDIT_INSTRUCTIONS = `You extend one selected branch of a mindmap.
@@ -36,8 +36,9 @@ async function editAIMindmap(
   }
 
   try {
-    const result = await generateAIStructured({
+    const result = await generateRoutedAIStructured({
       instructions: NODE_EDIT_INSTRUCTIONS,
+      operation: "node-editing",
       prompt: `${userPrompt}
 
 Selected nodeId: ${activeNodeId}

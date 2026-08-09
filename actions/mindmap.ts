@@ -21,11 +21,11 @@ import {
   getAIActionErrorCode,
 } from "@/lib/ai/actionErrors";
 import { AIConfigurationError } from "@/lib/ai/errors";
+import { generateRoutedAIStructured } from "@/lib/ai/executionRouter";
 import {
   generatedMindmapSchema,
   type GeneratedTreeNode,
 } from "@/lib/ai/generatedTree";
-import { generateAIStructured } from "@/lib/ai/providerRouter";
 import { getFreshConvexAuthToken } from "@/lib/convex-server";
 import { AIMindmap } from "@/types/AI";
 
@@ -83,8 +83,9 @@ async function generateAIMindmap(userPrompt: string) {
   }
 
   try {
-    const result = await generateAIStructured({
+    const result = await generateRoutedAIStructured({
       instructions: MINDMAP_GENERATION_INSTRUCTIONS,
+      operation: "mind-map-generation",
       prompt: userPrompt,
       schema: generatedMindmapSchema,
     });

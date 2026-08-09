@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "./route";
 
+vi.mock("server-only", () => ({}));
+
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   createAIChatStream: vi.fn(),
@@ -44,10 +46,10 @@ vi.mock("convex/nextjs", () => ({
 vi.mock("@/lib/convex-server", () => ({
   createConvexTokenSource: mocks.createConvexTokenSource,
 }));
-vi.mock("@/lib/ai/providerRouter", () => {
+vi.mock("@/lib/ai/executionRouter", () => {
   return {
-    createAIChatStream: mocks.createAIChatStream,
-    isAIConfigured: () => process.env.TEST_AI_CONFIGURED === "true",
+    createRoutedAIChatStream: mocks.createAIChatStream,
+    isRoutedAIConfigured: () => process.env.TEST_AI_CONFIGURED === "true",
   };
 });
 
