@@ -98,8 +98,11 @@ TypeScript-AST repository guard parses non-test `.js`, `.jsx`, `.ts`, `.tsx`,
 `.cjs`, `.cts`, `.mjs`, and `.mts` files under `services`, `app`, and `lib`. It
 rejects test/spec files and directories referenced by static imports/exports,
 dynamic `import()`, import-equals/`require`, `require()`, or `require.resolve`,
-including case and path-separator variants. Comments and inert string data are
-not treated as module loads.
+plus `module.require` and their computed CommonJS forms. Dynamic/CommonJS loads
+with nonliteral targets fail closed. Test/spec tokens followed by dot, path
+boundary, hyphen, underscore, or end are rejected after case and separator
+normalization; ordinary words such as `contest-support` and `specialist` remain
+valid. Comments and inert string data are not treated as module loads.
 
 The test-local harness preserves lifecycle race and filesystem attack coverage,
 but it cannot be imported as application authority or produce a value accepted

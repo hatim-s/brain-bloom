@@ -733,7 +733,7 @@ function findForbiddenTestModuleLoads(
   );
   const forbidden: string[] = [];
 
-  /** Records one literal module specifier when it resolves to a test path. */
+  /** Records one static literal when it resolves to a test-only path. */
   const recordLiteral = (node: ts.Node | undefined): void => {
     if (
       node &&
@@ -742,6 +742,20 @@ function findForbiddenTestModuleLoads(
     ) {
       forbidden.push(node.text);
     }
+  };
+
+  /** Records loader calls and fails closed when their target is nonliteral. */
+  const recordLoaderArgument = (node: ts.Node | undefined): void => {
+    if (
+      node &&
+      (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))
+    ) {
+      if (isTestModuleSpecifier(node.text)) {
+        forbidden.push(node.text);
+      }
+      return;
+    }
+    forbidden.push("<nonliteral-module-load>");
   };
 
   /** Visits only syntax nodes that can load or re-export a module. */
@@ -763,8 +777,30 @@ function findForbiddenTestModuleLoads(
         ts.isIdentifier(expression.expression) &&
         expression.expression.text === "require" &&
         expression.name.text === "resolve";
-      if (isDynamicImport || isRequire || isRequireResolve) {
-        recordLiteral(node.arguments[0]);
+      const isModuleRequire =
+        ts.isPropertyAccessExpression(expression) &&
+        ts.isIdentifier(expression.expression) &&
+        expression.expression.text === "module" &&
+        expression.name.text === "require";
+      const isComputedRequireResolve =
+        ts.isElementAccessExpression(expression) &&
+        ts.isIdentifier(expression.expression) &&
+        expression.expression.text === "require" &&
+        isLiteralProperty(expression.argumentExpression, "resolve");
+      const isComputedModuleRequire =
+        ts.isElementAccessExpression(expression) &&
+        ts.isIdentifier(expression.expression) &&
+        expression.expression.text === "module" &&
+        isLiteralProperty(expression.argumentExpression, "require");
+      if (
+        isDynamicImport ||
+        isRequire ||
+        isRequireResolve ||
+        isModuleRequire ||
+        isComputedRequireResolve ||
+        isComputedModuleRequire
+      ) {
+        recordLoaderArgument(node.arguments[0]);
       }
     }
     ts.forEachChild(node, visit);
@@ -772,6 +808,18 @@ function findForbiddenTestModuleLoads(
 
   visit(sourceFile);
   return forbidden;
+}
+
+/** Matches one computed CommonJS loader property without evaluating code. */
+function isLiteralProperty(
+  node: ts.Expression | undefined,
+  expected: string
+): boolean {
+  return (
+    node !== undefined &&
+    (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
+    node.text === expected
+  );
 }
 
 /** Maps every truthfully scanned JS/TS extension to its TypeScript parser mode. */
@@ -800,7 +848,7 @@ function isTestModuleSpecifier(specifier: string): boolean {
     .split("/")
     .some(
       (segment) =>
-        segment === "__tests__" || /(?:\.test|\.spec)(?:\.|$)/.test(segment)
+        segment === "__tests__" || /\.(?:test|spec)(?:[._-]|$)/.test(segment)
     );
 }
 
@@ -896,8 +944,8 @@ describe("production Codex credential-home authority", () => {
       "fixture.ts",
     ],
     [
-      "nonliteral dynamic import",
-      "const value = import(moduleName);",
+      "ordinary inert variable",
+      'const moduleName = "./feature.test.ts";',
       "fixture.mts",
     ],
     [
@@ -907,6 +955,85 @@ describe("production Codex credential-home authority", () => {
     ],
   ])("allows %s without false positives", (_label, source, fileName) => {
     expect(findForbiddenTestModuleLoads(source, fileName)).toEqual([]);
+  });
+
+  it.each([
+    [
+      "former static test-support import",
+      'import value from "./codex-credential-homes.test-support.ts";',
+      "fixture.ts",
+    ],
+    [
+      "dynamic spec-helper import",
+      'const value = import("./feature.spec-helper.ts");',
+      "fixture.mts",
+    ],
+    [
+      "underscore require path",
+      'require("./feature.test_helper.cjs");',
+      "fixture.cjs",
+    ],
+    [
+      "Windows directory require path",
+      String.raw`require(".\\feature.SpEc-helper\\entry.js");`,
+      "fixture.js",
+    ],
+  ])("rejects exact delimiter canary: %s", (_label, source, fileName) => {
+    expect(findForbiddenTestModuleLoads(source, fileName)).toHaveLength(1);
+  });
+
+  it.each([
+    ["nonliteral dynamic import", "import(moduleName);", "fixture.mts"],
+    ["nonliteral require", "require(moduleName);", "fixture.cjs"],
+    [
+      "nonliteral require.resolve",
+      "require.resolve(moduleName);",
+      "fixture.js",
+    ],
+    ["nonliteral module.require", "module.require(moduleName);", "fixture.cjs"],
+    [
+      "computed require.resolve",
+      'require["resolve"](moduleName);',
+      "fixture.cts",
+    ],
+    [
+      "computed module.require",
+      'module["require"](moduleName);',
+      "fixture.cjs",
+    ],
+    [
+      "literal module.require test path",
+      'module.require("./feature.test-helper.js");',
+      "fixture.cjs",
+    ],
+    [
+      "literal computed require.resolve test path",
+      'require["resolve"]("./feature.spec_helper.ts");',
+      "fixture.ts",
+    ],
+  ])("fails closed for loader canary: %s", (_label, source, fileName) => {
+    expect(findForbiddenTestModuleLoads(source, fileName)).toHaveLength(1);
+  });
+
+  it.each([
+    "codex-credential-homes.test-support.ts",
+    "feature.spec-helper.ts",
+    "feature.test_helper.cts",
+    "nested/feature.spec/entry.tsx",
+    String.raw`nested\feature.TEST-support\entry.mts`,
+    "nested/__TeStS__/entry.jsx",
+  ])("classifies test production-source candidate %s", (entry) => {
+    expect(isProductionSourceEntry(entry)).toBe(false);
+  });
+
+  it.each([
+    "contest-support.ts",
+    "specialist.ts",
+    "nested/contest-support/entry.ts",
+    "feature.testing.ts",
+    "feature.specialist.mjs",
+  ])("keeps ordinary production-source candidate %s", (entry) => {
+    expect(isProductionSourceEntry(entry)).toBe(true);
   });
 
   it("fails closed because no production provisioner exists", async () => {
