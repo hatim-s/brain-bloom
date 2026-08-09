@@ -51,6 +51,7 @@ function createFixture() {
     connectionId: "connection_a",
     provider: "codex",
     operation: "chat",
+    requestId: "request_1",
   };
   const verificationKeys: VerificationKeys = {
     current: current.verification,
@@ -122,7 +123,16 @@ function resignToken(
   mutate(claims);
 
   const nextClaims = Buffer.from(JSON.stringify(claims)).toString("base64url");
-  const signingInput = `${encodedHeader}.${nextClaims}`;
+  return signEncodedAssertion(encodedHeader, nextClaims, signingKey);
+}
+
+/** Signs pre-encoded JSON segments so tests can authenticate noncanonical forms. */
+function signEncodedAssertion(
+  encodedHeader: string,
+  encodedClaims: string,
+  signingKey: SigningKey
+): string {
+  const signingInput = `${encodedHeader}.${encodedClaims}`;
   const signature = signBytes(
     null,
     Buffer.from(signingInput),
@@ -173,7 +183,11 @@ describe("internal gateway assertions", () => {
 
     const token = issueToken(fixture);
     const [header, claims, signature] = token.split(".");
-    const tamperedSignature = `${signature.slice(0, -1)}${signature.endsWith("A") ? "B" : "A"}`;
+    const tamperedSignatureBytes = Buffer.from(signature, "base64url");
+    // Flipping a decoded signature bit always changes the Ed25519 signature,
+    // unlike replacing a possibly unused base64 padding bit.
+    tamperedSignatureBytes[0] ^= 0x01;
+    const tamperedSignature = tamperedSignatureBytes.toString("base64url");
     expectCode(
       () => verifyToken(fixture, `${header}.${claims}.${tamperedSignature}`),
       "invalid_signature"
@@ -238,6 +252,55 @@ describe("internal gateway assertions", () => {
     );
   });
 
+  it("rejects authenticated noncanonical header and payload JSON", () => {
+    const canonicalToken = issueToken(createFixture());
+    const [encodedHeader, encodedClaims] = canonicalToken.split(".");
+    const header = JSON.parse(
+      Buffer.from(encodedHeader, "base64url").toString("utf8")
+    ) as Record<string, unknown>;
+    const claims = JSON.parse(
+      Buffer.from(encodedClaims, "base64url").toString("utf8")
+    ) as Record<string, unknown>;
+    const canonicalHeaderJson = JSON.stringify(header);
+    const canonicalClaimsJson = JSON.stringify(claims);
+    const encode = (value: string) => Buffer.from(value).toString("base64url");
+
+    const variants: ReadonlyArray<readonly [string, string]> = [
+      [encode(JSON.stringify({ kid: header.kid, ...header })), encodedClaims],
+      [encodedHeader, encode(JSON.stringify({ kid: claims.kid, ...claims }))],
+      [encode(JSON.stringify(header, null, 2)), encodedClaims],
+      [
+        encode(
+          canonicalHeaderJson.replace(
+            '"algorithm":"EdDSA"',
+            '"algorithm":"EdDSA","algorithm":"EdDSA"'
+          )
+        ),
+        encodedClaims,
+      ],
+      [
+        encodedHeader,
+        encode(
+          canonicalClaimsJson.replace(
+            '"requestId":"request_1"',
+            '"requestId":"request_shadow","requestId":"request_1"'
+          )
+        ),
+      ],
+      [`${encodedHeader}=`, encodedClaims],
+    ];
+
+    for (const [noncanonicalHeader, noncanonicalClaims] of variants) {
+      const fixture = createFixture();
+      const token = signEncodedAssertion(
+        noncanonicalHeader,
+        noncanonicalClaims,
+        fixture.current.signing
+      );
+      expectCode(() => verifyToken(fixture, token), "noncanonical_assertion");
+    }
+  });
+
   it.each([
     ["issuer", "issuer_mismatch", { issuer: "unexpected-issuer" }],
     ["audience", "audience_mismatch", { audience: "unexpected-audience" }],
@@ -284,6 +347,25 @@ describe("internal gateway assertions", () => {
     expectCode(
       () => verifyToken(fixture, token, { replayDefense }),
       "provider_mismatch"
+    );
+    expectCode(
+      () => verifyToken(fixture, token, { replayDefense }),
+      "replay_detected"
+    );
+  });
+
+  it("rejects a signed request identifier mismatch and keeps it consumed", () => {
+    const fixture = createFixture();
+    const replayDefense = new BoundedReplayCache(4);
+    const token = issueToken(fixture);
+
+    expectCode(
+      () =>
+        verifyToken(fixture, token, {
+          expected: { ...fixture.expected, requestId: "request_2" },
+          replayDefense,
+        }),
+      "request_id_mismatch"
     );
     expectCode(
       () => verifyToken(fixture, token, { replayDefense }),
@@ -354,7 +436,10 @@ describe("internal gateway assertions", () => {
           requestId: "request_4",
           nonce: "nonce_4",
         }),
-        { replayDefense }
+        {
+          expected: { ...fixture.expected, requestId: "request_4" },
+          replayDefense,
+        }
       ).requestId
     ).toBe("request_4");
   });
@@ -438,8 +523,11 @@ describe("internal gateway assertions", () => {
       requestId: "request_unrelated",
       nonce: "nonce_unrelated",
     });
-    expect(verifyToken(fixture, unrelated, { replayDefense }).subject).toBe(
-      "user_owner_a"
-    );
+    expect(
+      verifyToken(fixture, unrelated, {
+        expected: { ...fixture.expected, requestId: "request_unrelated" },
+        replayDefense,
+      }).subject
+    ).toBe("user_owner_a");
   });
 });

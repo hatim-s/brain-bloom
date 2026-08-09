@@ -30,10 +30,12 @@ type AssertionErrorCode =
   | "invalid_signature"
   | "issuer_mismatch"
   | "missing_assertion"
+  | "noncanonical_assertion"
   | "operation_mismatch"
   | "provider_mismatch"
   | "replay_defense_unavailable"
   | "replay_detected"
+  | "request_id_mismatch"
   | "subject_mismatch"
   | "unsupported_assertion_version";
 
@@ -96,6 +98,7 @@ type ExpectedAssertionContext = Readonly<{
   connectionId: string;
   provider: "codex";
   operation: GatewayOperation;
+  requestId: string;
 }>;
 
 type VerifyAssertionOptions = Readonly<{
@@ -286,23 +289,19 @@ function verifyInternalAssertion(
   }
 
   const [encodedHeader, encodedClaims, encodedSignature] = segments;
-  // Only the key identifier is read before authentication; all header semantics
-  // are enforced after the signature succeeds.
-  const routingKeyId = parseRoutingKeyId(encodedHeader);
-  const key = selectVerificationKey(routingKeyId, options.verificationKeys);
   const signature = decodeBase64Url(encodedSignature);
   const signingInput = `${encodedHeader}.${encodedClaims}`;
-
-  if (!verifyBytes(null, Buffer.from(signingInput), key.publicKey, signature)) {
-    throw new InternalAssertionError(
-      "invalid_signature",
-      "Internal assertion signature is invalid"
-    );
-  }
+  const authenticatedKeyIds = authenticateSignature(
+    signingInput,
+    signature,
+    options.verificationKeys
+  );
 
   const header = parseHeader(encodedHeader);
   const claims = parseClaims(encodedClaims);
-  if (claims.kid !== header.kid) {
+  assertCanonicalSegment(encodedHeader, header);
+  assertCanonicalSegment(encodedClaims, claims);
+  if (claims.kid !== header.kid || !authenticatedKeyIds.includes(header.kid)) {
     throw new InternalAssertionError(
       "invalid_signature",
       "Internal assertion key identifiers do not match"
@@ -341,12 +340,6 @@ function verifyInternalAssertion(
   return claims;
 }
 
-/** Extracts only the bounded key identifier needed to route verification. */
-function parseRoutingKeyId(segment: string): string {
-  const value = parseJsonObject(segment);
-  return assertClaimString(value.kid, "kid");
-}
-
 /** Validates exact expected context without revealing any alternate owner state. */
 function assertExpectedContext(
   claims: InternalAssertionClaims,
@@ -368,6 +361,11 @@ function assertExpectedContext(
       claims.operation === expected.operation,
       "operation_mismatch",
       "operation",
+    ],
+    [
+      claims.requestId === expected.requestId,
+      "request_id_mismatch",
+      "request identifier",
     ],
   ];
 
@@ -407,11 +405,12 @@ function assertTemporalValidity(
   }
 }
 
-/** Chooses only the explicit current or previous key without widening time. */
-function selectVerificationKey(
-  keyId: string,
+/** Authenticates against only the explicit current/previous verification keys. */
+function authenticateSignature(
+  signingInput: string,
+  signature: Buffer,
   keys: VerificationKeys
-): VerificationKey {
+): readonly string[] {
   assertKeyObject(keys.current.publicKey, "public", "current verification key");
   if (keys.previous) {
     assertKeyObject(
@@ -427,20 +426,21 @@ function selectVerificationKey(
     }
   }
 
-  const selected =
-    keys.current.keyId === keyId
-      ? keys.current
-      : keys.previous?.keyId === keyId
-        ? keys.previous
-        : undefined;
-  if (!selected) {
-    // Treat an unrecognized key as a signature failure to avoid a key oracle.
+  const candidates = keys.previous
+    ? [keys.current, keys.previous]
+    : [keys.current];
+  const authenticatedKeyIds = candidates
+    .filter((key) =>
+      verifyBytes(null, Buffer.from(signingInput), key.publicKey, signature)
+    )
+    .map((key) => key.keyId);
+  if (authenticatedKeyIds.length === 0) {
     throw new InternalAssertionError(
       "invalid_signature",
       "Internal assertion signature is invalid"
     );
   }
-  return selected;
+  return authenticatedKeyIds;
 }
 
 /** Parses and strictly validates the signed assertion header. */
@@ -564,6 +564,16 @@ function encodeJson(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }
 
+/** Rejects any authenticated JSON representation except the fixed v1 order. */
+function assertCanonicalSegment(segment: string, value: object): void {
+  if (segment !== encodeJson(value)) {
+    throw new InternalAssertionError(
+      "noncanonical_assertion",
+      "Internal assertion encoding is not canonical"
+    );
+  }
+}
+
 /** Decodes only canonical, unpadded base64url text. */
 function decodeBase64Url(segment: string): Buffer {
   if (!/^[A-Za-z0-9_-]+$/.test(segment)) {
@@ -579,8 +589,14 @@ function decodeBase64Url(segment: string): Buffer {
 /** Decodes a base64url JSON object without accepting arrays or null. */
 function parseJsonObject(segment: string): Record<string, unknown> {
   try {
+    if (!/^[A-Za-z0-9_-]+={0,2}$/.test(segment)) {
+      throw invalidAssertion();
+    }
+    // JSON segments are decoded after signature authentication. Padding and
+    // other equivalent encodings are parsed here, then rejected by the exact
+    // canonical-segment comparison.
     const parsed: unknown = JSON.parse(
-      decodeBase64Url(segment).toString("utf8")
+      Buffer.from(segment, "base64url").toString("utf8")
     );
     if (
       typeof parsed !== "object" ||
