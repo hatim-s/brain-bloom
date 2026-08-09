@@ -4,9 +4,10 @@ import {
   createFetchGatewayTransport,
   createGatewayServerClient,
   type GatewayAssertionSigner,
+  type GatewayAuthorityResolver,
   type GatewayClientError,
   type GatewayClientRequest,
-  type GatewayConnectionResolver,
+  type GatewayResponseBody,
   type GatewayServerClientOptions,
   type GatewayTransport,
   type GatewayTransportRequest,
@@ -20,23 +21,49 @@ const RESPONSE_URL = `${ORIGIN}/internal/v1/operations/chat`;
 const SECRET = "secret-canary-never-reflect";
 
 type Fixture = Readonly<{
-  resolver: GatewayConnectionResolver;
+  authorityResolver: GatewayAuthorityResolver;
   signer: GatewayAssertionSigner;
   transport: GatewayTransport;
-  resolverCalls: ReturnType<typeof vi.fn>;
+  authorizeCalls: ReturnType<typeof vi.fn>;
   signerCalls: ReturnType<typeof vi.fn>;
   transportCalls: ReturnType<typeof vi.fn>;
 }>;
+
+/** Builds one authority result that only the injected server dependency returns. */
+function authorizedResolution(
+  overrides: Readonly<{
+    ownerId?: string;
+    resource?: Record<string, unknown>;
+    connection?: Record<string, unknown>;
+    operation?: GatewayClientRequest["operation"];
+  }> = {}
+) {
+  return {
+    ownerId: overrides.ownerId ?? "owner-1",
+    resource: {
+      type: "mindmap" as const,
+      requestedId: "map-1",
+      canonicalId: "canonical-map-1",
+      ...overrides.resource,
+    },
+    connection: {
+      requestedId: "connection-1",
+      canonicalId: "canonical-connection-1",
+      provider: "codex" as const,
+      status: "connected" as const,
+      isDefault: true,
+      ...overrides.connection,
+    },
+    operation: overrides.operation ?? ("chat" as const),
+  };
+}
 
 /** Builds a valid server-derived request with explicit narrow overrides. */
 function request(
   overrides: Partial<GatewayClientRequest> = {}
 ): GatewayClientRequest {
   return {
-    context: {
-      ownerId: "owner-1",
-      resource: { type: "mindmap", id: "map-1" },
-    },
+    resource: { type: "mindmap", id: "map-1" },
     connectionId: "connection-1",
     operation: "chat",
     requestId: "request-1",
@@ -71,6 +98,42 @@ function jsonResponse(
   };
 }
 
+/** Builds a response whose body disposal can be asserted independently. */
+function trackedJsonResponse(
+  value: unknown,
+  overrides: Partial<GatewayTransportResponse> = {},
+  cancelImplementation?: () => void | PromiseLike<void>
+): Readonly<{
+  response: GatewayTransportResponse;
+  cancel: ReturnType<typeof vi.fn>;
+}> {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+  const cancel = vi.fn(
+    cancelImplementation ?? (() => stream.cancel().then(() => undefined))
+  );
+  const body: GatewayResponseBody = {
+    getReader: () => stream.getReader(),
+    cancel,
+  };
+  return {
+    response: {
+      status: 200,
+      redirected: false,
+      url: RESPONSE_URL,
+      headers: new Headers({ "content-type": "application/json" }),
+      body,
+      ...overrides,
+    },
+    cancel,
+  };
+}
+
 /** Creates injected dependencies whose calls can be inspected without I/O. */
 function fixture(
   response: GatewayTransportResponse = jsonResponse({
@@ -78,20 +141,14 @@ function fixture(
     data: { answer: "done" },
   })
 ): Fixture {
-  const resolverCalls = vi.fn(async () => ({
-    ownerId: "owner-1",
-    connectionId: "connection-1",
-    provider: "codex" as const,
-    status: "connected" as const,
-    isDefault: true,
-  }));
+  const authorizeCalls = vi.fn(async () => authorizedResolution());
   const signerCalls = vi.fn(async () => "signed-assertion");
   const transportCalls = vi.fn(async () => response);
   return {
-    resolver: { resolve: resolverCalls },
+    authorityResolver: { authorize: authorizeCalls },
     signer: { sign: signerCalls },
     transport: { send: transportCalls },
-    resolverCalls,
+    authorizeCalls,
     signerCalls,
     transportCalls,
   };
@@ -104,13 +161,14 @@ function client(
 ) {
   return createGatewayServerClient({
     gatewayOrigin: ORIGIN,
+    gatewayOriginAllowlist: [ORIGIN],
     issuer: "sprig-next-server",
     audience: "sprig-agent-gateway",
-    connectionResolver: current.resolver,
+    authorityResolver: current.authorityResolver,
     assertionSigner: current.signer,
     transport: current.transport,
     requestTimeoutMs: 1_000,
-    resolverTimeoutMs: 100,
+    authorizationTimeoutMs: 100,
     signerTimeoutMs: 100,
     maxResponseBytes: 4_096,
     maxResponseChunks: 32,
@@ -141,14 +199,15 @@ describe("gateway server client", () => {
     const result = await client(current).execute(request());
 
     expect(result).toEqual({ answer: "done" });
-    expect(current.resolverCalls).toHaveBeenCalledTimes(1);
-    expect(current.resolverCalls.mock.calls[0]?.[0]).toEqual({
-      ownerId: "owner-1",
+    expect(current.authorizeCalls).toHaveBeenCalledTimes(1);
+    expect(current.authorizeCalls.mock.calls[0]?.[0]).toEqual({
+      resource: { type: "mindmap", id: "map-1" },
       connectionId: "connection-1",
       provider: "codex",
+      operation: "chat",
       requireDefault: true,
     });
-    expect(current.resolverCalls.mock.calls[0]?.[1]).toMatchObject({
+    expect(current.authorizeCalls.mock.calls[0]?.[1]).toMatchObject({
       signal: expect.any(AbortSignal),
       deadlineAtMilliseconds: expect.any(Number),
     });
@@ -156,7 +215,7 @@ describe("gateway server client", () => {
       issuer: "sprig-next-server",
       audience: "sprig-agent-gateway",
       subject: "owner-1",
-      connectionId: "connection-1",
+      connectionId: "canonical-connection-1",
       provider: "codex",
       operation: "chat",
       requestId: "request-1",
@@ -173,7 +232,9 @@ describe("gateway server client", () => {
         "x-request-id": "request-1",
       },
       body: JSON.stringify({
-        input: { resource: { type: "mindmap", id: "map-1" } },
+        input: {
+          resource: { type: "mindmap", id: "canonical-map-1" },
+        },
       }),
       redirect: "error",
       signal: expect.any(AbortSignal),
@@ -186,92 +247,75 @@ describe("gateway server client", () => {
   it.each([
     [null, "missing"],
     [
-      {
-        ownerId: "owner-2",
-        connectionId: "connection-1",
-        provider: "codex",
-        status: "connected",
-        isDefault: true,
-      },
-      "cross-owner",
+      authorizedResolution({ resource: { requestedId: "other-map" } }),
+      "resource mismatch",
     ],
     [
-      {
-        ownerId: "owner-1",
-        connectionId: "connection-2",
-        provider: "codex",
-        status: "connected",
-        isDefault: true,
-      },
+      authorizedResolution({ connection: { requestedId: "other-connection" } }),
       "connection mismatch",
     ],
     [
-      {
-        ownerId: "owner-1",
-        connectionId: "connection-1",
-        provider: "claude",
-        status: "connected",
-        isDefault: true,
-      },
+      authorizedResolution({ connection: { provider: "claude" } }),
       "provider mismatch",
     ],
-    [
-      {
-        ownerId: "owner-1",
-        connectionId: "connection-1",
-        provider: "codex",
-        status: "revoked",
-        isDefault: true,
-      },
-      "revoked",
-    ],
-    [
-      {
-        ownerId: "owner-1",
-        connectionId: "connection-1",
-        provider: "codex",
-        status: "expired",
-        isDefault: true,
-      },
-      "expired",
-    ],
-    [
-      {
-        ownerId: "owner-1",
-        connectionId: "connection-1",
-        provider: "codex",
-        status: "connected",
-        isDefault: false,
-      },
-      "non-default",
-    ],
+    [authorizedResolution({ connection: { status: "revoked" } }), "revoked"],
+    [authorizedResolution({ connection: { status: "expired" } }), "expired"],
+    [authorizedResolution({ connection: { isDefault: false } }), "non-default"],
+    [authorizedResolution({ operation: "node-editing" }), "operation mismatch"],
+    [{ ownerId: SECRET }, "malformed"],
   ] as const)(
-    "fails closed on %s connection state",
+    "collapses %s authority state to the same oracle-resistant result",
     async (resolved, _description) => {
       const current = fixture();
-      current.resolverCalls.mockResolvedValueOnce(resolved);
+      current.authorizeCalls.mockResolvedValueOnce(resolved);
 
-      await expectCode(
-        () => client(current).execute(request()),
-        "connection_unavailable"
-      );
+      await expect(client(current).execute(request())).rejects.toMatchObject({
+        code: "authorization_unavailable",
+        status: 404,
+        message: "Gateway client request failed",
+      });
       expect(current.signerCalls).not.toHaveBeenCalled();
       expect(current.transportCalls).not.toHaveBeenCalled();
     }
   );
 
-  it("does not expose whether a probed connection belongs to another owner", async () => {
+  it.each([
+    "cross-owner resource",
+    "cross-owner connection",
+    "store unavailable",
+  ])("does not expose %s resolution failure", async () => {
     const current = fixture();
-    current.resolverCalls.mockRejectedValueOnce(
-      new Error(`database owner mismatch ${SECRET}`)
+    current.authorizeCalls.mockRejectedValueOnce(
+      new Error(`authority detail ${SECRET}`)
     );
 
-    await expectCode(
-      () => client(current).execute(request()),
-      "gateway_unavailable"
-    );
-    await expect(client(current).execute(request())).resolves.toBeDefined();
+    await expect(client(current).execute(request())).rejects.toMatchObject({
+      code: "authorization_unavailable",
+      status: 404,
+      message: "Gateway client request failed",
+    });
+    expect(current.signerCalls).not.toHaveBeenCalled();
+    expect(current.transportCalls).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { ownerId: "browser-owner-2" },
+    { context: { ownerId: "browser-owner-2" } },
+    { resourceOwnerId: "browser-owner-2" },
+  ])(
+    "rejects browser-forged authority fields before resolution",
+    async (forgery) => {
+      const current = fixture();
+      const forged = { ...request(), ...forgery } as GatewayClientRequest;
+
+      await expectCode(
+        () => client(current).execute(forged),
+        "gateway_client_configuration_invalid"
+      );
+      expect(current.authorizeCalls).not.toHaveBeenCalled();
+      expect(current.signerCalls).not.toHaveBeenCalled();
+    }
+  );
 
   it.each([
     "http://gateway.example.test",
@@ -281,15 +325,60 @@ describe("gateway server client", () => {
     "https://gateway.example.test#evil",
     "https://gateway.example.test@evil.test",
     "https://gateway.example.test/",
+    "https://gateway.example.test.",
+    "https://localhost",
+    "https://agent.localhost",
+    "https://agent.local",
+    "https://127.0.0.1",
+    "https://10.0.0.1",
+    "https://169.254.169.254",
+    "https://[::1]",
+    "https://xn--gteway-9za.example.test",
+    "https://gаteway.example.test",
+    "https://Gateway.example.test",
+    "https://gateway.example.test:443",
   ])(
     "rejects noncanonical or injectable gateway origin %s",
     (gatewayOrigin) => {
       const current = fixture();
-      expect(() => client(current, { gatewayOrigin })).toThrowError(
-        "Gateway client request failed"
-      );
+      expect(() =>
+        client(current, {
+          gatewayOrigin,
+          gatewayOriginAllowlist: [gatewayOrigin],
+        })
+      ).toThrowError("Gateway client request failed");
     }
   );
+
+  it("requires a nonempty exact allowlist and exact selected membership", () => {
+    const current = fixture();
+    expect(() => client(current, { gatewayOriginAllowlist: [] })).toThrowError(
+      "Gateway client request failed"
+    );
+    expect(() =>
+      client(current, {
+        gatewayOrigin: "https://other.example.test",
+        gatewayOriginAllowlist: [ORIGIN],
+      })
+    ).toThrowError("Gateway client request failed");
+  });
+
+  it("allows a non-default port only as an exact explicit member", async () => {
+    const current = fixture(
+      jsonResponse(
+        { ok: true, data: "ok" },
+        {
+          url: "https://gateway.example.test:8443/internal/v1/operations/chat",
+        }
+      )
+    );
+    await expect(
+      client(current, {
+        gatewayOrigin: "https://gateway.example.test:8443",
+        gatewayOriginAllowlist: ["https://gateway.example.test:8443"],
+      }).execute(request())
+    ).resolves.toBe("ok");
+  });
 
   it.each([
     {
@@ -312,6 +401,70 @@ describe("gateway server client", () => {
     }
   );
 
+  it.each([
+    "redirect",
+    "cross-route URL",
+    "invalid status",
+    "invalid content type",
+    "throwing metadata",
+    "invalid schema",
+  ] as const)("cancels the body on early %s rejection", async (scenario) => {
+    const overrides: {
+      status?: number;
+      redirected?: boolean;
+      url?: string;
+      headers?: GatewayTransportResponse["headers"];
+    } = {};
+    let value: unknown = { ok: true, data: null };
+    if (scenario === "redirect") overrides.redirected = true;
+    if (scenario === "cross-route URL") {
+      overrides.url = "https://evil.example.test/internal/v1/operations/chat";
+    }
+    if (scenario === "invalid status") overrides.status = 201;
+    if (scenario === "invalid content type") {
+      overrides.headers = new Headers({ "content-type": "text/plain" });
+    }
+    if (scenario === "throwing metadata") {
+      overrides.headers = {
+        get() {
+          throw new Error(SECRET);
+        },
+      };
+    }
+    if (scenario === "invalid schema") {
+      value = { ok: true, data: null, extra: true };
+    }
+    const tracked = trackedJsonResponse(value, overrides);
+    const current = fixture(tracked.response);
+
+    await expectCode(
+      () => client(current).execute(request()),
+      "gateway_response_invalid"
+    );
+    expect(tracked.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["rejecting cleanup", "stalled cleanup"] as const)(
+    "bounds and observes %s without replacing the response failure",
+    async (scenario) => {
+      const tracked = trackedJsonResponse(
+        { ok: true, data: null },
+        { redirected: true },
+        () =>
+          scenario === "rejecting cleanup"
+            ? Promise.reject(new Error(SECRET))
+            : new Promise<void>(() => undefined)
+      );
+      const current = fixture(tracked.response);
+
+      await expectCode(
+        () => client(current, { cleanupTimeoutMs: 10 }).execute(request()),
+        "gateway_response_invalid"
+      );
+      expect(tracked.cancel).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it("rejects runtime attempts to choose an arbitrary operation", async () => {
     const current = fixture();
     await expectCode(
@@ -321,7 +474,7 @@ describe("gateway server client", () => {
         ),
       "gateway_client_configuration_invalid"
     );
-    expect(current.resolverCalls).not.toHaveBeenCalled();
+    expect(current.authorizeCalls).not.toHaveBeenCalled();
   });
 
   it("enforces byte and chunk limits before parsing a response", async () => {
@@ -357,7 +510,7 @@ describe("gateway server client", () => {
       () =>
         client(current, {
           requestTimeoutMs: 20,
-          resolverTimeoutMs: 10,
+          authorizationTimeoutMs: 10,
           signerTimeoutMs: 10,
         }).execute(request()),
       "request_timeout"
@@ -392,23 +545,17 @@ describe("gateway server client", () => {
       () => client(current).execute(request({ signal: controller.signal })),
       "request_aborted"
     );
-    expect(current.resolverCalls).not.toHaveBeenCalled();
+    expect(current.authorizeCalls).not.toHaveBeenCalled();
     expect(current.signerCalls).not.toHaveBeenCalled();
     expect(current.transportCalls).not.toHaveBeenCalled();
   });
 
-  it("closes the abort race between resolver and signer handoff", async () => {
+  it("closes the abort race between authority and signer handoff", async () => {
     const controller = new AbortController();
     const current = fixture();
-    current.resolverCalls.mockImplementationOnce(async () => {
+    current.authorizeCalls.mockImplementationOnce(async () => {
       controller.abort(new Error(SECRET));
-      return {
-        ownerId: "owner-1",
-        connectionId: "connection-1",
-        provider: "codex",
-        status: "connected",
-        isDefault: true,
-      };
+      return authorizedResolution();
     });
 
     await expectCode(
@@ -421,7 +568,7 @@ describe("gateway server client", () => {
 
   it("normalizes hostile request getters without reflecting their messages", async () => {
     const current = fixture();
-    const hostile = Object.defineProperty({}, "context", {
+    const hostile = Object.defineProperty({}, "resource", {
       get() {
         throw new Error(SECRET);
       },
@@ -434,7 +581,7 @@ describe("gateway server client", () => {
     await expect(client(current).execute(hostile)).rejects.not.toThrow(SECRET);
   });
 
-  it.each(["resolver", "signer"] as const)(
+  it.each(["authority", "signer"] as const)(
     "bounds a stalled %s and observes its late rejection",
     async (stage) => {
       let rejectLate: ((error: Error) => void) | undefined;
@@ -442,20 +589,25 @@ describe("gateway server client", () => {
         rejectLate = reject;
       });
       const current = fixture();
-      if (stage === "resolver") {
-        current.resolverCalls.mockReturnValueOnce(stalled);
+      if (stage === "authority") {
+        current.authorizeCalls.mockReturnValueOnce(stalled);
       } else {
         current.signerCalls.mockReturnValueOnce(stalled);
       }
 
-      await expectCode(
-        () =>
-          client(current, {
-            resolverTimeoutMs: 10,
-            signerTimeoutMs: 10,
-          }).execute(request()),
-        "gateway_unavailable"
-      );
+      const pending = client(current, {
+        authorizationTimeoutMs: 10,
+        signerTimeoutMs: 10,
+      }).execute(request());
+      if (stage === "authority") {
+        await expect(pending).rejects.toMatchObject({
+          code: "authorization_unavailable",
+          status: 404,
+          message: "Gateway client request failed",
+        });
+      } else {
+        await expectCode(() => pending, "gateway_unavailable");
+      }
       rejectLate?.(new Error(SECRET));
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(current.transportCalls).not.toHaveBeenCalled();
@@ -475,7 +627,7 @@ describe("gateway server client", () => {
       () =>
         client(current, {
           requestTimeoutMs: 20,
-          resolverTimeoutMs: 10,
+          authorizationTimeoutMs: 10,
           signerTimeoutMs: 10,
         }).execute(request()),
       "request_timeout"
@@ -483,6 +635,45 @@ describe("gateway server client", () => {
     rejectLate?.(new Error(SECRET));
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
+
+  it.each(["timeout", "abort"] as const)(
+    "disposes a response that fulfills after transport %s",
+    async (outcome) => {
+      let resolveLate:
+        | ((response: GatewayTransportResponse) => void)
+        | undefined;
+      const current = fixture();
+      current.transportCalls.mockReturnValueOnce(
+        new Promise<GatewayTransportResponse>((resolve) => {
+          resolveLate = resolve;
+        })
+      );
+      const controller = new AbortController();
+      const pending = client(current, {
+        requestTimeoutMs: outcome === "abort" ? 1_000 : 20,
+        authorizationTimeoutMs: 10,
+        signerTimeoutMs: 10,
+      }).execute(
+        request(outcome === "abort" ? { signal: controller.signal } : {})
+      );
+      const observed = pending.then(
+        () => null,
+        (error: unknown) => error
+      );
+      await vi.waitFor(() =>
+        expect(current.transportCalls).toHaveBeenCalledTimes(1)
+      );
+      if (outcome === "abort") controller.abort();
+      await expect(observed).resolves.toMatchObject({
+        code: outcome === "abort" ? "request_aborted" : "request_timeout",
+        message: "Gateway client request failed",
+      });
+
+      const tracked = trackedJsonResponse({ ok: true, data: null });
+      resolveLate?.(tracked.response);
+      await vi.waitFor(() => expect(tracked.cancel).toHaveBeenCalledTimes(1));
+    }
+  );
 
   it.each([
     [201, { ok: true, data: null }, "application/json"],
@@ -512,22 +703,28 @@ describe("gateway server client", () => {
   );
 
   it("rejects malformed JSON and a missing body", async () => {
+    const malformedStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{not json"));
+        controller.close();
+      },
+    });
+    const cancelMalformed = vi.fn(() => malformedStream.cancel());
     const malformed = fixture({
       status: 200,
       redirected: false,
       url: RESPONSE_URL,
       headers: new Headers({ "content-type": "application/json" }),
-      body: new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode("{not json"));
-          controller.close();
-        },
-      }),
+      body: {
+        getReader: () => malformedStream.getReader(),
+        cancel: cancelMalformed,
+      },
     });
     await expectCode(
       () => client(malformed).execute(request()),
       "gateway_response_invalid"
     );
+    expect(cancelMalformed).toHaveBeenCalledTimes(1);
 
     const missing = fixture({
       status: 200,
@@ -593,22 +790,19 @@ describe("gateway server client", () => {
 
   it("has no API-key, operator-login, URL, path, issuer, audience, model, or command fallback", async () => {
     const current = fixture();
-    current.resolverCalls.mockResolvedValueOnce(null);
+    current.authorizeCalls.mockResolvedValueOnce(null);
     const invocation = request();
     expect(Object.keys(invocation).sort()).toEqual([
       "connectionId",
-      "context",
       "operation",
       "requestId",
-    ]);
-    expect(Object.keys(invocation.context).sort()).toEqual([
-      "ownerId",
       "resource",
     ]);
+    expect(Object.keys(invocation.resource).sort()).toEqual(["id", "type"]);
 
     await expectCode(
       () => client(current).execute(invocation),
-      "connection_unavailable"
+      "authorization_unavailable"
     );
     expect(current.signerCalls).not.toHaveBeenCalled();
     expect(current.transportCalls).not.toHaveBeenCalled();

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { isIP } from "node:net";
+
 import { z } from "zod";
 
 import type { ControlPlaneOperationContext } from "../../services/agent-gateway/control-plane.ts";
@@ -10,14 +12,16 @@ import {
 
 const GATEWAY_BASE_PATH = "/internal/v1";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
-const DEFAULT_RESOLVER_TIMEOUT_MS = 1_000;
+const DEFAULT_AUTHORIZATION_TIMEOUT_MS = 1_000;
 const DEFAULT_SIGNER_TIMEOUT_MS = 1_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1_024;
 const DEFAULT_MAX_RESPONSE_CHUNKS = 1_024;
+const DEFAULT_CLEANUP_TIMEOUT_MS = 100;
 const MAX_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const MAX_CONTROL_PLANE_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 4 * 1_024 * 1_024;
 const MAX_RESPONSE_CHUNKS = 4_096;
+const MAX_CLEANUP_TIMEOUT_MS = 1_000;
 const MAX_IDENTIFIER_LENGTH = 256;
 
 const OPERATION_PATHS: Readonly<Record<GatewayOperation, string>> =
@@ -71,7 +75,7 @@ const gatewayFailureSchema = z
 type GatewayRemoteErrorCode = z.infer<typeof gatewayErrorCodeSchema>;
 type GatewayClientErrorCode =
   | GatewayRemoteErrorCode
-  | "connection_unavailable"
+  | "authorization_unavailable"
   | "gateway_client_configuration_invalid"
   | "gateway_response_invalid"
   | "gateway_unavailable"
@@ -79,45 +83,55 @@ type GatewayClientErrorCode =
   | "request_timeout"
   | "response_too_large";
 
-type AuthenticatedGatewayContext = Readonly<{
-  ownerId: string;
-  resource: Readonly<{
-    type: "mindmap";
-    id: string;
-  }>;
+type GatewayResourceIntent = Readonly<{
+  type: "mindmap";
+  id: string;
 }>;
 
 type GatewayClientRequest = Readonly<{
-  context: AuthenticatedGatewayContext;
+  resource: GatewayResourceIntent;
   connectionId: string;
   operation: GatewayOperation;
   requestId: string;
   signal?: AbortSignal;
 }>;
 
-type ResolveConnectionInput = Readonly<{
-  ownerId: string;
+type AuthorizeGatewayIntentInput = Readonly<{
+  resource: GatewayResourceIntent;
   connectionId: string;
   provider: "codex";
+  operation: GatewayOperation;
   requireDefault: true;
 }>;
 
-type ResolvedGatewayConnection = Readonly<{
+// Deliberately not exported: execute callers can submit intent, but only the
+// construction-time server resolver can return derived authority.
+type AuthorizedGatewayResolution = Readonly<{
   ownerId: string;
-  connectionId: string;
-  provider: "codex";
-  status: "connected" | "expired" | "pending" | "revoked" | "error";
-  isDefault: boolean;
+  resource: Readonly<{
+    type: "mindmap";
+    requestedId: string;
+    canonicalId: string;
+  }>;
+  connection: Readonly<{
+    requestedId: string;
+    canonicalId: string;
+    provider: "codex";
+    status: "connected" | "expired" | "pending" | "revoked" | "error";
+    isDefault: boolean;
+  }>;
+  operation: GatewayOperation;
 }>;
 
-interface GatewayConnectionResolver {
-  resolve(
-    input: ResolveConnectionInput,
+interface GatewayAuthorityResolver {
+  /** Derives current owner authority and atomically validates the full intent. */
+  authorize(
+    input: AuthorizeGatewayIntentInput,
     context: ControlPlaneOperationContext
   ):
-    | ResolvedGatewayConnection
+    | AuthorizedGatewayResolution
     | null
-    | Promise<ResolvedGatewayConnection | null>;
+    | Promise<AuthorizedGatewayResolution | null>;
 }
 
 type SignAssertionInput = Readonly<{
@@ -146,12 +160,23 @@ type GatewayTransportRequest = Readonly<{
   signal: AbortSignal;
 }>;
 
+interface GatewayResponseBodyReader {
+  read(): Promise<ReadableStreamReadResult<Uint8Array>>;
+  cancel(): void | PromiseLike<void>;
+  releaseLock(): void;
+}
+
+interface GatewayResponseBody {
+  getReader(): GatewayResponseBodyReader;
+  cancel(): void | PromiseLike<void>;
+}
+
 type GatewayTransportResponse = Readonly<{
   status: number;
   redirected: boolean;
   url: string;
   headers: Pick<Headers, "get">;
-  body: ReadableStream<Uint8Array> | null;
+  body: GatewayResponseBody | null;
 }>;
 
 interface GatewayTransport {
@@ -165,16 +190,18 @@ type FetchImplementation = (
 
 type GatewayServerClientOptions = Readonly<{
   gatewayOrigin: string;
+  gatewayOriginAllowlist: readonly string[];
   issuer: string;
   audience: string;
-  connectionResolver: GatewayConnectionResolver;
+  authorityResolver: GatewayAuthorityResolver;
   assertionSigner: GatewayAssertionSigner;
   transport: GatewayTransport;
   requestTimeoutMs?: number;
-  resolverTimeoutMs?: number;
+  authorizationTimeoutMs?: number;
   signerTimeoutMs?: number;
   maxResponseBytes?: number;
   maxResponseChunks?: number;
+  cleanupTimeoutMs?: number;
 }>;
 
 type GatewayServerClient = Readonly<{
@@ -184,11 +211,13 @@ type GatewayServerClient = Readonly<{
 /** Stable, secret-free client failure suitable for a server route mapping. */
 class GatewayClientError extends Error {
   readonly code: GatewayClientErrorCode;
+  readonly status: number;
 
   constructor(code: GatewayClientErrorCode) {
     super("Gateway client request failed");
     this.name = "GatewayClientError";
     this.code = code;
+    this.status = statusForClientError(code);
   }
 }
 
@@ -254,22 +283,26 @@ function createGatewayServerClient(
       );
 
       try {
-        const connection = await runControlPlaneStage(
+        const resolution = await runAuthorityStage(
           (context) =>
-            configuration.connectionResolver.resolve(
+            configuration.authorityResolver.authorize(
               Object.freeze({
-                ownerId: parsedRequest.context.ownerId,
+                resource: parsedRequest.resource,
                 connectionId: parsedRequest.connectionId,
                 provider: "codex",
+                operation: parsedRequest.operation,
                 requireDefault: true,
               }),
               context
             ),
-          configuration.resolverTimeoutMs,
+          configuration.authorizationTimeoutMs,
           requestController.signal,
           parsedRequest.signal
         );
-        requireUsableConnection(connection, parsedRequest);
+        const authority = requireAuthorizedResolution(
+          resolution,
+          parsedRequest
+        );
 
         const assertion = await runControlPlaneStage(
           (context) =>
@@ -277,10 +310,10 @@ function createGatewayServerClient(
               Object.freeze({
                 issuer: configuration.issuer,
                 audience: configuration.audience,
-                subject: parsedRequest.context.ownerId,
-                connectionId: parsedRequest.connectionId,
+                subject: authority.ownerId,
+                connectionId: authority.connection.canonicalId,
                 provider: "codex",
-                operation: parsedRequest.operation,
+                operation: authority.operation,
                 requestId: parsedRequest.requestId,
               }),
               context
@@ -293,11 +326,14 @@ function createGatewayServerClient(
 
         const url = buildOperationUrl(
           configuration.gatewayOrigin,
-          parsedRequest.operation
+          authority.operation
         );
         const body = JSON.stringify({
           input: {
-            resource: parsedRequest.context.resource,
+            resource: {
+              type: authority.resource.type,
+              id: authority.resource.canonicalId,
+            },
           },
         });
         const transportPromise = Promise.resolve().then(() => {
@@ -326,13 +362,20 @@ function createGatewayServerClient(
         const response = await awaitObserved(
           transportPromise,
           requestController.signal,
-          parsedRequest.signal
+          parsedRequest.signal,
+          (lateResponse) => {
+            observeResponseDisposal(
+              lateResponse,
+              configuration.cleanupTimeoutMs
+            );
+          }
         );
         return await readGatewayResponse(
           response,
           url,
           configuration.maxResponseBytes,
           configuration.maxResponseChunks,
+          configuration.cleanupTimeoutMs,
           requestController.signal,
           parsedRequest.signal
         );
@@ -349,64 +392,69 @@ function createGatewayServerClient(
 }
 
 /** Snapshots and validates all construction-time policy. */
-function readConfiguration(
-  options: GatewayServerClientOptions
-): Required<
-  Omit<GatewayServerClientOptions, "gatewayOrigin" | "issuer" | "audience">
+function readConfiguration(options: GatewayServerClientOptions): Required<
+  Omit<
+    GatewayServerClientOptions,
+    "gatewayOrigin" | "gatewayOriginAllowlist" | "issuer" | "audience"
+  >
 > &
-  Readonly<{ gatewayOrigin: string; issuer: string; audience: string }> {
+  Readonly<{
+    gatewayOrigin: string;
+    gatewayOriginAllowlist: readonly string[];
+    issuer: string;
+    audience: string;
+  }> {
   const requestTimeoutMs =
     options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  const resolverTimeoutMs =
-    options.resolverTimeoutMs ?? DEFAULT_RESOLVER_TIMEOUT_MS;
+  const authorizationTimeoutMs =
+    options.authorizationTimeoutMs ?? DEFAULT_AUTHORIZATION_TIMEOUT_MS;
   const signerTimeoutMs = options.signerTimeoutMs ?? DEFAULT_SIGNER_TIMEOUT_MS;
   const maxResponseBytes =
     options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
   const maxResponseChunks =
     options.maxResponseChunks ?? DEFAULT_MAX_RESPONSE_CHUNKS;
-  let parsedOrigin: URL;
-  try {
-    parsedOrigin = new URL(options.gatewayOrigin);
-  } catch {
-    throw clientError("gateway_client_configuration_invalid");
-  }
+  const cleanupTimeoutMs =
+    options.cleanupTimeoutMs ?? DEFAULT_CLEANUP_TIMEOUT_MS;
+  const gatewayOriginAllowlist = readGatewayOriginAllowlist(
+    options.gatewayOriginAllowlist
+  );
+  const gatewayOrigin = readSelectedGatewayOrigin(
+    options.gatewayOrigin,
+    gatewayOriginAllowlist
+  );
 
   if (
-    parsedOrigin.protocol !== "https:" ||
-    parsedOrigin.username !== "" ||
-    parsedOrigin.password !== "" ||
-    parsedOrigin.pathname !== "/" ||
-    parsedOrigin.search !== "" ||
-    parsedOrigin.hash !== "" ||
-    parsedOrigin.origin !== options.gatewayOrigin ||
     !isIdentifier(options.issuer) ||
     !isIdentifier(options.audience) ||
-    typeof options.connectionResolver?.resolve !== "function" ||
+    typeof options.authorityResolver?.authorize !== "function" ||
     typeof options.assertionSigner?.sign !== "function" ||
     typeof options.transport?.send !== "function" ||
     !isBoundedInteger(requestTimeoutMs, MAX_REQUEST_TIMEOUT_MS) ||
-    !isBoundedInteger(resolverTimeoutMs, MAX_CONTROL_PLANE_TIMEOUT_MS) ||
-    resolverTimeoutMs > requestTimeoutMs ||
+    !isBoundedInteger(authorizationTimeoutMs, MAX_CONTROL_PLANE_TIMEOUT_MS) ||
+    authorizationTimeoutMs > requestTimeoutMs ||
     !isBoundedInteger(signerTimeoutMs, MAX_CONTROL_PLANE_TIMEOUT_MS) ||
     signerTimeoutMs > requestTimeoutMs ||
     !isBoundedInteger(maxResponseBytes, MAX_RESPONSE_BYTES) ||
-    !isBoundedInteger(maxResponseChunks, MAX_RESPONSE_CHUNKS)
+    !isBoundedInteger(maxResponseChunks, MAX_RESPONSE_CHUNKS) ||
+    !isBoundedInteger(cleanupTimeoutMs, MAX_CLEANUP_TIMEOUT_MS)
   ) {
     throw clientError("gateway_client_configuration_invalid");
   }
 
   return Object.freeze({
-    gatewayOrigin: parsedOrigin.origin,
+    gatewayOrigin,
+    gatewayOriginAllowlist,
     issuer: options.issuer,
     audience: options.audience,
-    connectionResolver: options.connectionResolver,
+    authorityResolver: options.authorityResolver,
     assertionSigner: options.assertionSigner,
     transport: options.transport,
     requestTimeoutMs,
-    resolverTimeoutMs,
+    authorizationTimeoutMs,
     signerTimeoutMs,
     maxResponseBytes,
     maxResponseChunks,
+    cleanupTimeoutMs,
   });
 }
 
@@ -415,9 +463,16 @@ function readRequest(request: GatewayClientRequest): GatewayClientRequest {
   if (
     typeof request !== "object" ||
     request === null ||
-    !isIdentifier(request.context?.ownerId) ||
-    request.context.resource?.type !== "mindmap" ||
-    !isIdentifier(request.context.resource.id) ||
+    !hasExactKeys(request, [
+      "connectionId",
+      "operation",
+      "requestId",
+      "resource",
+      ...(request.signal === undefined ? [] : ["signal"]),
+    ]) ||
+    request.resource?.type !== "mindmap" ||
+    !hasExactKeys(request.resource, ["id", "type"]) ||
+    !isIdentifier(request.resource.id) ||
     !isIdentifier(request.connectionId) ||
     !GATEWAY_OPERATIONS.includes(request.operation) ||
     !isIdentifier(request.requestId) ||
@@ -427,10 +482,7 @@ function readRequest(request: GatewayClientRequest): GatewayClientRequest {
   }
 
   return Object.freeze({
-    context: Object.freeze({
-      ownerId: request.context.ownerId,
-      resource: Object.freeze({ ...request.context.resource }),
-    }),
+    resource: Object.freeze({ ...request.resource }),
     connectionId: request.connectionId,
     operation: request.operation,
     requestId: request.requestId,
@@ -438,7 +490,7 @@ function readRequest(request: GatewayClientRequest): GatewayClientRequest {
   });
 }
 
-/** Executes a resolver or signer behind its own bound and the request deadline. */
+/** Executes an authority or signer dependency behind its request deadline. */
 async function runControlPlaneStage<T>(
   operation: (context: ControlPlaneOperationContext) => T | PromiseLike<T>,
   timeoutMs: number,
@@ -475,20 +527,59 @@ async function runControlPlaneStage<T>(
   }
 }
 
-/** Rejects all missing, mismatched, non-default, or unusable connection state alike. */
-function requireUsableConnection(
-  connection: ResolvedGatewayConnection | null,
+/**
+ * Executes the atomic authorization resolver without exposing whether its
+ * owner, resource, or connection checks failed, timed out, or were unavailable.
+ */
+async function runAuthorityStage<T>(
+  operation: (context: ControlPlaneOperationContext) => T | PromiseLike<T>,
+  timeoutMs: number,
+  requestSignal: AbortSignal,
+  callerSignal?: AbortSignal
+): Promise<T> {
+  try {
+    return await runControlPlaneStage(
+      operation,
+      timeoutMs,
+      requestSignal,
+      callerSignal
+    );
+  } catch {
+    if (callerSignal?.aborted) throw clientError("request_aborted");
+    throw clientError("authorization_unavailable");
+  }
+}
+
+/** Validates and snapshots authority returned only by the server dependency. */
+function requireAuthorizedResolution(
+  resolution: AuthorizedGatewayResolution | null,
   request: GatewayClientRequest
-): asserts connection is ResolvedGatewayConnection {
-  if (
-    connection === null ||
-    connection.ownerId !== request.context.ownerId ||
-    connection.connectionId !== request.connectionId ||
-    connection.provider !== "codex" ||
-    connection.status !== "connected" ||
-    connection.isDefault !== true
-  ) {
-    throw clientError("connection_unavailable");
+): AuthorizedGatewayResolution {
+  try {
+    if (
+      resolution === null ||
+      !isIdentifier(resolution.ownerId) ||
+      resolution.resource.type !== "mindmap" ||
+      resolution.resource.requestedId !== request.resource.id ||
+      !isIdentifier(resolution.resource.canonicalId) ||
+      resolution.connection.requestedId !== request.connectionId ||
+      !isIdentifier(resolution.connection.canonicalId) ||
+      resolution.connection.provider !== "codex" ||
+      resolution.connection.status !== "connected" ||
+      resolution.connection.isDefault !== true ||
+      resolution.operation !== request.operation
+    ) {
+      throw clientError("authorization_unavailable");
+    }
+
+    return Object.freeze({
+      ownerId: resolution.ownerId,
+      resource: Object.freeze({ ...resolution.resource }),
+      connection: Object.freeze({ ...resolution.connection }),
+      operation: resolution.operation,
+    });
+  } catch {
+    throw clientError("authorization_unavailable");
   }
 }
 
@@ -520,33 +611,52 @@ async function readGatewayResponse(
   expectedUrl: string,
   maxBytes: number,
   maxChunks: number,
+  cleanupTimeoutMs: number,
   requestSignal: AbortSignal,
   callerSignal?: AbortSignal
 ): Promise<unknown> {
-  if (
-    typeof response !== "object" ||
-    response === null ||
-    !Number.isInteger(response.status) ||
-    response.redirected !== false ||
-    response.url !== expectedUrl ||
-    typeof response.headers?.get !== "function" ||
-    !isJsonContentType(response.headers.get("content-type")) ||
-    response.body === null
-  ) {
+  const body = readResponseBody(response);
+  let metadataValid = false;
+  try {
+    metadataValid =
+      typeof response === "object" &&
+      response !== null &&
+      isGatewayStatus(response.status) &&
+      response.redirected === false &&
+      response.url === expectedUrl &&
+      typeof response.headers?.get === "function" &&
+      isJsonContentType(response.headers.get("content-type")) &&
+      body !== null &&
+      typeof body.getReader === "function";
+  } catch {
+    // All transport metadata ambiguity shares one response failure below.
+  }
+  if (!metadataValid || body === null) {
+    await disposeResponseBody(body, cleanupTimeoutMs);
     throw clientError("gateway_response_invalid");
   }
 
-  const body = await readBoundedBody(
-    response.body,
-    maxBytes,
-    maxChunks,
-    requestSignal,
-    callerSignal
-  );
+  let encodedBody: Uint8Array;
+  try {
+    encodedBody = await readBoundedBody(
+      body,
+      maxBytes,
+      maxChunks,
+      requestSignal,
+      callerSignal
+    );
+  } catch (error) {
+    await disposeResponseBody(body, cleanupTimeoutMs);
+    if (error instanceof GatewayClientError) throw error;
+    throw clientError("gateway_response_invalid");
+  }
   let value: unknown;
   try {
-    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+    value = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(encodedBody)
+    );
   } catch {
+    await disposeResponseBody(body, cleanupTimeoutMs);
     throw clientError("gateway_response_invalid");
   }
 
@@ -554,9 +664,13 @@ async function readGatewayResponse(
   if (response.status === 200 && success.success) return success.data.data;
 
   const failure = gatewayFailureSchema.safeParse(value);
-  if (!failure.success) throw clientError("gateway_response_invalid");
+  if (!failure.success) {
+    await disposeResponseBody(body, cleanupTimeoutMs);
+    throw clientError("gateway_response_invalid");
+  }
   const expectedStatus = GATEWAY_ERROR_STATUS[failure.data.error.code];
   if (response.status !== expectedStatus) {
+    await disposeResponseBody(body, cleanupTimeoutMs);
     throw clientError("gateway_response_invalid");
   }
   throw clientError(failure.data.error.code);
@@ -564,7 +678,7 @@ async function readGatewayResponse(
 
 /** Reads a response stream with hard byte/chunk limits and observed cancellation. */
 async function readBoundedBody(
-  body: ReadableStream<Uint8Array>,
+  body: GatewayResponseBody,
   maxBytes: number,
   maxChunks: number,
   requestSignal: AbortSignal,
@@ -573,7 +687,7 @@ async function readBoundedBody(
   if (requestSignal.aborted) {
     throw cancellationError(requestSignal, callerSignal);
   }
-  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  let reader: GatewayResponseBodyReader;
   try {
     reader = body.getReader();
   } catch {
@@ -631,11 +745,70 @@ async function readBoundedBody(
   return combined;
 }
 
+/** Reads a body reference without allowing hostile response getters to escape. */
+function readResponseBody(
+  response: GatewayTransportResponse
+): GatewayResponseBody | null {
+  try {
+    return typeof response === "object" && response !== null
+      ? response.body
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Disposes an unused body behind a finite bound and observes cleanup failures. */
+async function disposeResponseBody(
+  body: GatewayResponseBody | null,
+  timeoutMs: number
+): Promise<void> {
+  if (body === null || typeof body !== "object") return;
+
+  const cleanup = Promise.resolve().then(async () => {
+    if (typeof body.cancel === "function") {
+      await body.cancel();
+      return;
+    }
+    if (typeof body.getReader !== "function") return;
+    const reader = body.getReader();
+    try {
+      await reader.cancel();
+    } finally {
+      reader.releaseLock();
+    }
+  });
+  // Both branches resolve: cleanup failures and a stalled cancel are observed
+  // without replacing the original request outcome.
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    cleanup.then(finish, finish);
+  });
+}
+
+/** Disposes a body returned after request cancellation without awaiting it. */
+function observeResponseDisposal(
+  response: GatewayTransportResponse,
+  timeoutMs: number
+): void {
+  void Promise.resolve()
+    .then(() => disposeResponseBody(readResponseBody(response), timeoutMs))
+    .catch(() => undefined);
+}
+
 /** Awaits a promise while retaining both late fulfillment and rejection handlers. */
 function awaitObserved<T>(
   promise: PromiseLike<T>,
   signal: AbortSignal,
-  callerSignal?: AbortSignal
+  callerSignal?: AbortSignal,
+  onLateFulfilled?: (value: T) => void
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     let settled = false;
@@ -652,7 +825,17 @@ function awaitObserved<T>(
     if (signal.aborted) handleAbort();
 
     Promise.resolve(promise).then(
-      (value) => finish(() => resolve(value)),
+      (value) => {
+        if (settled) {
+          try {
+            onLateFulfilled?.(value);
+          } catch {
+            // Late cleanup hooks are best-effort and must remain observed.
+          }
+          return;
+        }
+        finish(() => resolve(value));
+      },
       () => finish(() => reject(clientError("gateway_unavailable")))
     );
   });
@@ -669,6 +852,112 @@ function cancellationError(
       : requestSignal.aborted
         ? "request_timeout"
         : "gateway_unavailable"
+  );
+}
+
+/** Validates and snapshots a nonempty exact HTTPS origin allowlist. */
+function readGatewayOriginAllowlist(
+  values: readonly string[]
+): readonly string[] {
+  if (!Array.isArray(values) || values.length === 0 || values.length > 32) {
+    throw clientError("gateway_client_configuration_invalid");
+  }
+  const origins = values.map(readCanonicalGatewayOrigin);
+  if (new Set(origins).size !== origins.length) {
+    throw clientError("gateway_client_configuration_invalid");
+  }
+  return Object.freeze(origins);
+}
+
+/** Requires the selected origin to be one exact allowlist member. */
+function readSelectedGatewayOrigin(
+  value: string,
+  allowlist: readonly string[]
+): string {
+  const origin = readCanonicalGatewayOrigin(value);
+  if (!allowlist.includes(origin)) {
+    throw clientError("gateway_client_configuration_invalid");
+  }
+  return origin;
+}
+
+/**
+ * Accepts one canonical HTTPS origin with a public-looking ASCII DNS host.
+ * A non-default port is accepted only when its exact origin is allowlisted.
+ */
+function readCanonicalGatewayOrigin(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw clientError("gateway_client_configuration_invalid");
+  }
+
+  const hostname = parsed.hostname;
+  const labels = hostname.split(".");
+  const addressCandidate = hostname.replace(/^\[|\]$/g, "");
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.pathname !== "/" ||
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    parsed.origin !== value ||
+    hostname.length === 0 ||
+    hostname.endsWith(".") ||
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname.endsWith(".local") ||
+    hostname.includes("xn--") ||
+    isIP(addressCandidate) !== 0 ||
+    !/^[a-z0-9.-]+$/.test(hostname) ||
+    labels.length < 2 ||
+    labels.some(
+      (label) =>
+        label.length === 0 ||
+        label.length > 63 ||
+        label.startsWith("-") ||
+        label.endsWith("-")
+    )
+  ) {
+    throw clientError("gateway_client_configuration_invalid");
+  }
+  return parsed.origin;
+}
+
+/** Recognizes statuses that have an exact local response-schema mapping. */
+function isGatewayStatus(value: unknown): value is number {
+  return (
+    value === 200 ||
+    Object.values(GATEWAY_ERROR_STATUS).some((status) => status === value)
+  );
+}
+
+/** Maps every stable client code to one non-secret HTTP boundary status. */
+function statusForClientError(code: GatewayClientErrorCode): number {
+  if (code in GATEWAY_ERROR_STATUS) {
+    return GATEWAY_ERROR_STATUS[code as GatewayRemoteErrorCode];
+  }
+  const localStatus: Readonly<
+    Record<Exclude<GatewayClientErrorCode, GatewayRemoteErrorCode>, number>
+  > = {
+    authorization_unavailable: 404,
+    gateway_client_configuration_invalid: 500,
+    gateway_response_invalid: 502,
+    gateway_unavailable: 503,
+    response_too_large: 502,
+  };
+  return localStatus[code as keyof typeof localStatus];
+}
+
+/** Requires an object to expose exactly the server client's narrow fields. */
+function hasExactKeys(value: object, expectedKeys: readonly string[]): boolean {
+  const actualKeys = Object.keys(value).sort();
+  const expected = [...expectedKeys].sort();
+  return (
+    actualKeys.length === expected.length &&
+    actualKeys.every((key, index) => key === expected[index])
   );
 }
 
@@ -705,22 +994,23 @@ function clientError(code: GatewayClientErrorCode): GatewayClientError {
 }
 
 export {
-  type AuthenticatedGatewayContext,
+  type AuthorizeGatewayIntentInput,
   createFetchGatewayTransport,
   createGatewayServerClient,
   type FetchImplementation,
   type GatewayAssertionSigner,
+  type GatewayAuthorityResolver,
   GatewayClientError,
   type GatewayClientErrorCode,
   type GatewayClientRequest,
-  type GatewayConnectionResolver,
   type GatewayRemoteErrorCode,
+  type GatewayResourceIntent,
+  type GatewayResponseBody,
+  type GatewayResponseBodyReader,
   type GatewayServerClient,
   type GatewayServerClientOptions,
   type GatewayTransport,
   type GatewayTransportRequest,
   type GatewayTransportResponse,
-  type ResolveConnectionInput,
-  type ResolvedGatewayConnection,
   type SignAssertionInput,
 };
