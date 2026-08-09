@@ -4,12 +4,19 @@ import {
   verify as verifyBytes,
 } from "node:crypto";
 
+import {
+  awaitControlPlaneOperation,
+  type ControlPlaneOperationContext,
+} from "./control-plane.ts";
+
 const ASSERTION_ALGORITHM = "EdDSA";
 const ASSERTION_TYPE = "sprig-internal-assertion";
 const ASSERTION_VERSION = 1;
 const MAX_ASSERTION_LIFETIME_SECONDS = 60;
 const MAX_ASSERTION_LENGTH = 8_192;
 const MAX_CLAIM_LENGTH = 256;
+const DEFAULT_REPLAY_DEFENSE_TIMEOUT_MS = 1_000;
+const MAX_REPLAY_DEFENSE_TIMEOUT_MS = 10_000;
 
 const GATEWAY_OPERATIONS = [
   "chat",
@@ -23,6 +30,7 @@ type AssertionErrorCode =
   | "assertion_expired"
   | "assertion_from_future"
   | "assertion_lifetime_invalid"
+  | "assertion_verification_aborted"
   | "audience_mismatch"
   | "connection_mismatch"
   | "internal_auth_configuration_invalid"
@@ -106,6 +114,8 @@ type VerifyAssertionOptions = Readonly<{
   expected: ExpectedAssertionContext;
   replayDefense: ReplayDefense;
   verificationKeys: VerificationKeys;
+  replayDefenseTimeoutMs?: number;
+  signal?: AbortSignal;
 }>;
 
 type VerifyAuthenticatedAssertionOptions = Omit<
@@ -130,7 +140,11 @@ type ReplayEntry = Readonly<{
 }>;
 
 interface ReplayDefense {
-  consume(entry: ReplayEntry, nowSeconds: number): void | Promise<void>;
+  consume(
+    entry: ReplayEntry,
+    nowSeconds: number,
+    context?: ControlPlaneOperationContext
+  ): void | Promise<void>;
 }
 
 type ReplayDefenseErrorCode = "replay_defense_unavailable" | "replay_detected";
@@ -370,21 +384,48 @@ async function verifyAuthenticatedInternalAssertion(
   const nowSeconds = readClock(options.clock);
   assertTemporalValidity(claims, nowSeconds);
 
+  const replayDefenseTimeoutMs =
+    options.replayDefenseTimeoutMs ?? DEFAULT_REPLAY_DEFENSE_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(replayDefenseTimeoutMs) ||
+    replayDefenseTimeoutMs <= 0 ||
+    replayDefenseTimeoutMs > MAX_REPLAY_DEFENSE_TIMEOUT_MS
+  ) {
+    throw new InternalAssertionError(
+      "internal_auth_configuration_invalid",
+      "Replay defense timeout is invalid"
+    );
+  }
+
   // State errors are normalized so unavailable custom stores cannot accidentally
   // degrade into accepting a request without replay protection.
-  try {
-    await options.replayDefense.consume(
-      {
-        requestId: claims.requestId,
-        nonce: claims.nonce,
-        expiresAt: claims.exp,
-      },
-      nowSeconds
+  const replayOutcome = await awaitControlPlaneOperation(
+    (context) =>
+      options.replayDefense.consume(
+        {
+          requestId: claims.requestId,
+          nonce: claims.nonce,
+          expiresAt: claims.exp,
+        },
+        nowSeconds,
+        context
+      ),
+    replayDefenseTimeoutMs,
+    options.signal
+  );
+  if (replayOutcome.status === "aborted") {
+    throw new InternalAssertionError(
+      "assertion_verification_aborted",
+      "Internal assertion verification was aborted"
     );
-  } catch (error) {
+  }
+  if (replayOutcome.status === "timed_out") {
+    throw replayEnforcementError("replay_defense_unavailable");
+  }
+  if (replayOutcome.status === "rejected") {
     const code =
-      error instanceof ReplayDefenseError
-        ? error.code
+      replayOutcome.error instanceof ReplayDefenseError
+        ? replayOutcome.error.code
         : "replay_defense_unavailable";
     throw replayEnforcementError(code);
   }
@@ -708,6 +749,7 @@ export {
   authenticateInternalAssertion,
   BoundedReplayCache,
   type Clock,
+  DEFAULT_REPLAY_DEFENSE_TIMEOUT_MS,
   type ExpectedAssertionContext,
   GATEWAY_OPERATIONS,
   type GatewayOperation,
@@ -716,6 +758,7 @@ export {
   type IssueAssertionInput,
   issueInternalAssertion,
   MAX_ASSERTION_LIFETIME_SECONDS,
+  MAX_REPLAY_DEFENSE_TIMEOUT_MS,
   type ReplayDefense,
   ReplayDefenseError,
   type ReplayDefenseErrorCode,

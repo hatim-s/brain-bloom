@@ -6,6 +6,7 @@ import {
 
 import { describe, expect, it, vi } from "vitest";
 
+import { type ControlPlaneOperationContext } from "./control-plane.ts";
 import {
   type CodexOperationDefinition,
   CodexOperationRegistry,
@@ -22,6 +23,7 @@ import {
   type ExpectedAssertionContext,
   type GatewayOperation,
   issueInternalAssertion,
+  type ReplayDefense,
   type SigningKey,
   type VerificationKeys,
 } from "./internal-auth.ts";
@@ -47,9 +49,19 @@ class TestRateBudget implements RateBudget {
   readonly attempts: RateBudgetAttempt[] = [];
   failure?: Error;
 
-  async consume(attempt: RateBudgetAttempt): Promise<void> {
+  constructor(
+    private readonly implementation?: (
+      context: ControlPlaneOperationContext | undefined
+    ) => void | Promise<void>
+  ) {}
+
+  async consume(
+    attempt: RateBudgetAttempt,
+    context?: ControlPlaneOperationContext
+  ): Promise<void> {
     this.attempts.push(attempt);
     if (this.failure) throw this.failure;
+    await this.implementation?.(context);
   }
 }
 
@@ -64,6 +76,12 @@ function createFixture(
     maxBodyBytes: number;
     maxBodyChunks: number;
     bodyReadTimeoutMs: number;
+    rateBudgetTimeoutMs: number;
+    replayDefenseTimeoutMs: number;
+    rateConsume: (
+      context: ControlPlaneOperationContext | undefined
+    ) => void | Promise<void>;
+    replayDefense: ReplayDefense;
   }> = {}
 ) {
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
@@ -84,7 +102,7 @@ function createFixture(
     operation: "chat",
     requestId: "request_1",
   };
-  const rateBudget = new TestRateBudget();
+  const rateBudget = new TestRateBudget(options.rateConsume);
   const execute =
     options.execute ??
     (async (input: unknown) => ({ echoed: input, source: "server-registry" }));
@@ -117,13 +135,15 @@ function createFixture(
     route,
     expected,
     clock,
-    replayDefense: new BoundedReplayCache(32),
+    replayDefense: options.replayDefense ?? new BoundedReplayCache(32),
     verificationKeys,
     rateBudget,
     operationRegistry: registry,
     maxBodyBytes: options.maxBodyBytes ?? 64,
     maxBodyChunks: options.maxBodyChunks ?? 32,
     bodyReadTimeoutMs: options.bodyReadTimeoutMs ?? 1_000,
+    rateBudgetTimeoutMs: options.rateBudgetTimeoutMs ?? 1_000,
+    replayDefenseTimeoutMs: options.replayDefenseTimeoutMs ?? 1_000,
     executionTimeoutMs: options.timeoutMs ?? 1_000,
   });
 
@@ -263,6 +283,40 @@ function createStalledBody(): Readonly<{
     },
     cleanupCalls: () => cleanupCount,
     started,
+  };
+}
+
+/** Creates a manually settled promise for late control-plane result tests. */
+function createDeferred(): Readonly<{
+  promise: Promise<void>;
+  reject: (error: unknown) => void;
+  resolve: () => void;
+}> {
+  let rejectPromise: ((error: unknown) => void) | undefined;
+  let resolvePromise: (() => void) | undefined;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  return {
+    promise,
+    reject: (error) => rejectPromise?.(error),
+    resolve: () => resolvePromise?.(),
+  };
+}
+
+/** Creates a valid body that records whether ingestion ever began. */
+function createObservedBody(): Readonly<{
+  body: AsyncIterable<Uint8Array>;
+  wasRead: () => boolean;
+}> {
+  let read = false;
+  return {
+    body: (async function* () {
+      read = true;
+      yield Buffer.from(JSON.stringify({ input: "hello" }));
+    })(),
+    wasRead: () => read,
   };
 }
 
@@ -535,6 +589,176 @@ describe("gateway dispatcher", () => {
       expect(JSON.stringify(response)).not.toContain(SECRET_CANARY);
     }
   );
+
+  it("times out a stalled rate store, cancels it, and observes a late rejection", async () => {
+    vi.useFakeTimers();
+    const deferred = createDeferred();
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    let storeContext: ControlPlaneOperationContext | undefined;
+    const execute = vi.fn();
+    const body = createObservedBody();
+    try {
+      const fixture = createFixture({
+        execute,
+        rateBudgetTimeoutMs: 25,
+        rateConsume: (context) => {
+          storeContext = context;
+          return deferred.promise;
+        },
+      });
+      const token = issueToken(fixture);
+      const pending = fixture.dispatch(
+        createRequest(fixture, { body: body.body, token })
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(storeContext?.deadlineAtMilliseconds).toBeGreaterThanOrEqual(
+        Date.now()
+      );
+
+      await vi.advanceTimersByTimeAsync(25);
+      const response = await pending;
+      expect([response.status, responseCode(response)]).toEqual([
+        503,
+        "rate_limit_unavailable",
+      ]);
+      expect(storeContext?.signal.aborted).toBe(true);
+      expect(body.wasRead()).toBe(false);
+      expect(execute).not.toHaveBeenCalled();
+
+      deferred.reject(new Error(SECRET_CANARY));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(unhandled).not.toHaveBeenCalled();
+
+      const retryBody = createObservedBody();
+      const retry = await fixture.dispatch(
+        createRequest(fixture, { body: retryBody.body, token })
+      );
+      expect([retry.status, responseCode(retry)]).toEqual([
+        401,
+        "unauthorized",
+      ]);
+      expect(retryBody.wasRead()).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      process.removeListener("unhandledRejection", unhandled);
+      vi.useRealTimers();
+    }
+  });
+
+  it("aborts a stalled rate store through its cooperative signal", async () => {
+    vi.useFakeTimers();
+    let storeContext: ControlPlaneOperationContext | undefined;
+    const execute = vi.fn();
+    const body = createObservedBody();
+    try {
+      const fixture = createFixture({
+        execute,
+        rateConsume: (context) => {
+          storeContext = context;
+          return new Promise<void>(() => undefined);
+        },
+      });
+      const controller = new AbortController();
+      const pending = fixture.dispatch(
+        createRequest(fixture, { body: body.body, signal: controller.signal })
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(storeContext).toBeDefined();
+      controller.abort(SECRET_CANARY);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const response = await pending;
+      expect([response.status, responseCode(response)]).toEqual([
+        499,
+        "request_aborted",
+      ]);
+      expect(storeContext?.signal.aborted).toBe(true);
+      expect(body.wasRead()).toBe(false);
+      expect(execute).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("times out a stalled replay store, cancels it, and observes a late resolve", async () => {
+    vi.useFakeTimers();
+    const deferred = createDeferred();
+    let replayContext: ControlPlaneOperationContext | undefined;
+    const replayDefense: ReplayDefense = {
+      consume(_entry, _nowSeconds, context) {
+        replayContext = context;
+        return deferred.promise;
+      },
+    };
+    const execute = vi.fn();
+    const body = createObservedBody();
+    try {
+      const fixture = createFixture({
+        execute,
+        replayDefense,
+        replayDefenseTimeoutMs: 25,
+      });
+      const pending = fixture.dispatch(
+        createRequest(fixture, { body: body.body })
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(replayContext).toBeDefined();
+
+      await vi.advanceTimersByTimeAsync(25);
+      const response = await pending;
+      expect([response.status, responseCode(response)]).toEqual([
+        503,
+        "replay_defense_unavailable",
+      ]);
+      expect(replayContext?.signal.aborted).toBe(true);
+      expect(body.wasRead()).toBe(false);
+      expect(execute).not.toHaveBeenCalled();
+
+      deferred.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("aborts a stalled replay store through its cooperative signal", async () => {
+    vi.useFakeTimers();
+    let replayContext: ControlPlaneOperationContext | undefined;
+    const replayDefense: ReplayDefense = {
+      consume(_entry, _nowSeconds, context) {
+        replayContext = context;
+        return new Promise<void>(() => undefined);
+      },
+    };
+    const execute = vi.fn();
+    const body = createObservedBody();
+    try {
+      const fixture = createFixture({ execute, replayDefense });
+      const controller = new AbortController();
+      const pending = fixture.dispatch(
+        createRequest(fixture, { body: body.body, signal: controller.signal })
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(replayContext).toBeDefined();
+      controller.abort(SECRET_CANARY);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const response = await pending;
+      expect([response.status, responseCode(response)]).toEqual([
+        499,
+        "request_aborted",
+      ]);
+      expect(replayContext?.signal.aborted).toBe(true);
+      expect(body.wasRead()).toBe(false);
+      expect(execute).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("charges valid owners before content, length, JSON, and operation validation", async () => {
     const scenarios: Array<(fixture: Fixture) => GatewayRequestEnvelope> = [
@@ -879,6 +1103,13 @@ describe("gateway dispatcher", () => {
   });
 
   it("rejects invalid or incomplete server registries during startup", () => {
+    expect(() => createFixture({ rateBudgetTimeoutMs: 0 })).toThrowError(
+      "Gateway request was rejected"
+    );
+    expect(() =>
+      createFixture({ replayDefenseTimeoutMs: 10_001 })
+    ).toThrowError("Gateway request was rejected");
+
     const fixture = createFixture();
     expect(
       () =>

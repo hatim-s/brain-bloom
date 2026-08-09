@@ -47,7 +47,23 @@ remains `unauthorized`, so budget state does not become an authentication oracle
 The rate-budget interface receives both the per-owner and global limits in one
 server-owned policy object. A live implementation must consume both dimensions
 atomically. Exhaustion maps to `rate_limited`; unavailable or unknown store
-failures map to `rate_limit_unavailable`. No store message is returned.
+failures and deadline expiry map to `rate_limit_unavailable`. Replay-store
+failure or deadline expiry maps to `replay_defense_unavailable`. Each store call
+has a finite server-owned deadline and receives a reason-free cancellation
+signal plus the absolute deadline for cooperative cancellation. Caller abort
+maps to `request_aborted`. No store message, abort reason, or deadline detail is
+returned.
+
+A deadline is an ambiguous control-plane outcome: the store may have committed
+before its response was lost. The dispatcher therefore fails closed, continues
+bounded replay verification after a rate-budget timeout, and never proceeds to
+body ingestion or execution. A retry with the same valid assertion is rejected
+by replay defense. Durable budget and replay implementations must use the
+request/nonce identifiers atomically and idempotently; they must never interpret
+timeout as proof that no write occurred. Late promise resolution or rejection is
+observed, while request listeners and timers are removed through one settlement
+path. Store methods are trusted adapters and must return without synchronously
+blocking the event loop; only their asynchronous result is deadline-preemptible.
 
 Only an exact `{ "input": ... }` body reaches the selected operation parser.
 Provider, operation, model, command, environment, path, and tool policy cannot
@@ -63,6 +79,13 @@ a finite cleanup grace period, so a hostile `return()` hook cannot hang the
 response. Execution uses a separate timeout and an idempotent terminal-state
 guard: an abort or timeout that wins before the queued handoff prevents the
 operation callback from starting.
+
+The future transport adapter is a trusted boundary and must provide an
+`AsyncIterable` whose iterator construction and `next()` implementation do not
+perform synchronous blocking work. JavaScript can race an asynchronous
+`next()` result against abort and deadline, but it cannot preempt code that
+blocks the event loop synchronously. Raw socket parsing remains the HTTP
+adapter's responsibility.
 
 ## Stable outcomes
 

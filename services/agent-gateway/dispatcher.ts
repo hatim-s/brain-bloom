@@ -1,12 +1,18 @@
 import {
+  awaitControlPlaneOperation,
+  type ControlPlaneOperationContext,
+} from "./control-plane.ts";
+import {
   type AuthenticatedInternalAssertion,
   authenticateInternalAssertion,
   type Clock,
+  DEFAULT_REPLAY_DEFENSE_TIMEOUT_MS,
   type ExpectedAssertionContext,
   GATEWAY_OPERATIONS,
   type GatewayOperation,
   type InternalAssertionClaims,
   InternalAssertionError,
+  MAX_REPLAY_DEFENSE_TIMEOUT_MS,
   type ReplayDefense,
   type VerificationKeys,
   verifyAuthenticatedInternalAssertion,
@@ -15,10 +21,12 @@ import {
 const DEFAULT_MAX_BODY_BYTES = 64 * 1_024;
 const DEFAULT_MAX_BODY_CHUNKS = 256;
 const DEFAULT_BODY_READ_TIMEOUT_MS = 5_000;
+const DEFAULT_RATE_BUDGET_TIMEOUT_MS = 1_000;
 const DEFAULT_EXECUTION_TIMEOUT_MS = 30_000;
 const MAX_BODY_BYTES = 1024 * 1_024;
 const MAX_BODY_CHUNKS = 4_096;
 const MAX_BODY_READ_TIMEOUT_MS = 30_000;
+const MAX_CONTROL_PLANE_TIMEOUT_MS = 10_000;
 const MAX_EXECUTION_TIMEOUT_MS = 5 * 60_000;
 const BODY_CLEANUP_GRACE_MS = 25;
 
@@ -41,6 +49,7 @@ type GatewayErrorCode =
   | "payload_too_large"
   | "rate_limit_unavailable"
   | "rate_limited"
+  | "replay_defense_unavailable"
   | "request_aborted"
   | "request_timeout"
   | "unauthorized"
@@ -77,7 +86,10 @@ type RateBudgetAttempt = Readonly<{
 }>;
 
 interface RateBudget {
-  consume(attempt: RateBudgetAttempt): void | Promise<void>;
+  consume(
+    attempt: RateBudgetAttempt,
+    context?: ControlPlaneOperationContext
+  ): void | Promise<void>;
 }
 
 type RateBudgetErrorCode = "exhausted" | "unavailable";
@@ -157,6 +169,8 @@ type GatewayDispatcherOptions = Readonly<{
   maxBodyChunks?: number;
   bodyReadTimeoutMs?: number;
   executionTimeoutMs?: number;
+  rateBudgetTimeoutMs?: number;
+  replayDefenseTimeoutMs?: number;
 }>;
 
 type GatewayDispatcher = (
@@ -185,6 +199,10 @@ function createGatewayDispatcher(
   const maxBodyChunks = options.maxBodyChunks ?? DEFAULT_MAX_BODY_CHUNKS;
   const bodyReadTimeoutMs =
     options.bodyReadTimeoutMs ?? DEFAULT_BODY_READ_TIMEOUT_MS;
+  const rateBudgetTimeoutMs =
+    options.rateBudgetTimeoutMs ?? DEFAULT_RATE_BUDGET_TIMEOUT_MS;
+  const replayDefenseTimeoutMs =
+    options.replayDefenseTimeoutMs ?? DEFAULT_REPLAY_DEFENSE_TIMEOUT_MS;
   const executionTimeoutMs =
     options.executionTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS;
   assertDispatcherConfiguration(
@@ -192,6 +210,8 @@ function createGatewayDispatcher(
     maxBodyBytes,
     maxBodyChunks,
     bodyReadTimeoutMs,
+    rateBudgetTimeoutMs,
+    replayDefenseTimeoutMs,
     executionTimeoutMs
   );
   const configuredOptions = snapshotDispatcherOptions(options);
@@ -224,7 +244,11 @@ function createGatewayDispatcher(
       return errorResponse("unauthorized");
     }
 
-    const rateFailure = await consumeRateBudget(configuredOptions);
+    const rateFailure = await consumeRateBudget(
+      configuredOptions,
+      rateBudgetTimeoutMs,
+      request.signal
+    );
 
     let claims: InternalAssertionClaims;
     try {
@@ -234,8 +258,22 @@ function createGatewayDispatcher(
         clock: configuredOptions.clock,
         expected: configuredOptions.expected,
         replayDefense: configuredOptions.replayDefense,
+        replayDefenseTimeoutMs,
+        signal: request.signal,
       });
     } catch (error) {
+      if (
+        error instanceof InternalAssertionError &&
+        error.code === "assertion_verification_aborted"
+      ) {
+        return errorResponse("request_aborted");
+      }
+      if (
+        error instanceof InternalAssertionError &&
+        error.code === "replay_defense_unavailable"
+      ) {
+        return errorResponse("replay_defense_unavailable");
+      }
       if (
         error instanceof InternalAssertionError &&
         error.code === "internal_auth_configuration_invalid"
@@ -311,6 +349,8 @@ function assertDispatcherConfiguration(
   maxBodyBytes: number,
   maxBodyChunks: number,
   bodyReadTimeoutMs: number,
+  rateBudgetTimeoutMs: number,
+  replayDefenseTimeoutMs: number,
   executionTimeoutMs: number
 ): void {
   if (
@@ -325,6 +365,10 @@ function assertDispatcherConfiguration(
     maxBodyChunks > MAX_BODY_CHUNKS ||
     !isPositiveSafeInteger(bodyReadTimeoutMs) ||
     bodyReadTimeoutMs > MAX_BODY_READ_TIMEOUT_MS ||
+    !isPositiveSafeInteger(rateBudgetTimeoutMs) ||
+    rateBudgetTimeoutMs > MAX_CONTROL_PLANE_TIMEOUT_MS ||
+    !isPositiveSafeInteger(replayDefenseTimeoutMs) ||
+    replayDefenseTimeoutMs > MAX_REPLAY_DEFENSE_TIMEOUT_MS ||
     !isPositiveSafeInteger(executionTimeoutMs) ||
     executionTimeoutMs > MAX_EXECUTION_TIMEOUT_MS
   ) {
@@ -561,16 +605,26 @@ function readOperationInput(body: unknown): unknown {
 
 /** Attempts the endpoint's atomic owner/global budget and fails closed. */
 async function consumeRateBudget(
-  options: GatewayDispatcherOptions
-): Promise<"rate_limited" | "rate_limit_unavailable" | undefined> {
-  try {
-    await options.rateBudget.consume(rateAttempt(options));
-    return undefined;
-  } catch (error) {
-    return error instanceof RateBudgetError && error.code === "exhausted"
+  options: GatewayDispatcherOptions,
+  timeoutMs: number,
+  requestSignal: AbortSignal | undefined
+): Promise<
+  "rate_limited" | "rate_limit_unavailable" | "request_aborted" | undefined
+> {
+  const outcome = await awaitControlPlaneOperation(
+    (context) => options.rateBudget.consume(rateAttempt(options), context),
+    timeoutMs,
+    requestSignal
+  );
+  if (outcome.status === "aborted") return "request_aborted";
+  if (outcome.status === "timed_out") return "rate_limit_unavailable";
+  if (outcome.status === "rejected") {
+    return outcome.error instanceof RateBudgetError &&
+      outcome.error.code === "exhausted"
       ? "rate_limited"
       : "rate_limit_unavailable";
   }
+  return undefined;
 }
 
 /** Builds the immutable budget key exclusively from server-authenticated data. */
@@ -655,6 +709,7 @@ function errorResponse(code: GatewayErrorCode): GatewayResponse {
     payload_too_large: 413,
     rate_limit_unavailable: 503,
     rate_limited: 429,
+    replay_defense_unavailable: 503,
     request_aborted: 499,
     request_timeout: 504,
     unauthorized: 401,
@@ -694,6 +749,8 @@ export {
   DEFAULT_EXECUTION_TIMEOUT_MS,
   DEFAULT_MAX_BODY_BYTES,
   DEFAULT_MAX_BODY_CHUNKS,
+  DEFAULT_RATE_BUDGET_TIMEOUT_MS,
+  DEFAULT_REPLAY_DEFENSE_TIMEOUT_MS,
   type GatewayDispatcher,
   type GatewayDispatcherOptions,
   type GatewayErrorBody,
@@ -707,6 +764,7 @@ export {
   MAX_BODY_BYTES,
   MAX_BODY_CHUNKS,
   MAX_BODY_READ_TIMEOUT_MS,
+  MAX_CONTROL_PLANE_TIMEOUT_MS,
   MAX_EXECUTION_TIMEOUT_MS,
   type OperationExecutionContext,
   type RateBudget,
