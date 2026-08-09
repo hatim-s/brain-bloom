@@ -406,6 +406,137 @@ describe("gateway lifecycle reconciliation", () => {
     );
   });
 
+  it.each([
+    {
+      label: "same owner",
+      firstOwner: "user_alice",
+      secondOwner: "user_alice",
+    },
+    {
+      label: "different owners",
+      firstOwner: "user_alice",
+      secondOwner: "user_bob",
+    },
+  ])(
+    "rejects a gateway handle already bound across $label",
+    async ({ firstOwner, secondOwner }) => {
+      const t = createHarness();
+      const firstConnection = await seedConnection(t, firstOwner);
+      const secondConnection = await seedConnection(t, secondOwner);
+
+      await t.mutation(reconcileGatewayLifecycle, {
+        snapshot: snapshot(
+          firstConnection,
+          1,
+          initialConnectedState("credential-shared"),
+          { ownerId: firstOwner }
+        ),
+      });
+      await expectErrorMessage(
+        t.mutation(reconcileGatewayLifecycle, {
+          snapshot: snapshot(
+            secondConnection,
+            1,
+            initialConnectedState("credential-shared"),
+            {
+              ownerId: secondOwner,
+              evidenceId: "evidence-second-binding",
+              requestId: "request-second-binding",
+            }
+          ),
+        }),
+        "Lifecycle snapshot rejected"
+      );
+
+      const [first, second, receipts] = await t.run(async (ctx) =>
+        Promise.all([
+          ctx.db.get(firstConnection),
+          ctx.db.get(secondConnection),
+          ctx.db.query("aiConnectionLifecycleReceipts").collect(),
+        ])
+      );
+      expect(first).toMatchObject({
+        status: "connected",
+        gatewayCredentialId: "credential-shared",
+        lifecycleRevision: 1,
+      });
+      expect(second).toMatchObject({ status: "pending" });
+      expect(second?.gatewayCredentialId).toBeUndefined();
+      expect(second?.lifecycleRevision).toBeUndefined();
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0].connectionId).toBe(firstConnection);
+    }
+  );
+
+  it("serializes concurrent different-row claims for one gateway handle", async () => {
+    const t = createHarness();
+    const firstConnection = await seedConnection(t, "user_alice");
+    const secondConnection = await seedConnection(t, "user_bob");
+    const outcomes = await Promise.allSettled([
+      t.mutation(reconcileGatewayLifecycle, {
+        snapshot: snapshot(
+          firstConnection,
+          1,
+          initialConnectedState("credential-race-shared"),
+          {
+            ownerId: "user_alice",
+            evidenceId: "evidence-race-first-row",
+            requestId: "request-race-first-row",
+          }
+        ),
+      }),
+      t.mutation(reconcileGatewayLifecycle, {
+        snapshot: snapshot(
+          secondConnection,
+          1,
+          initialConnectedState("credential-race-shared"),
+          {
+            ownerId: "user_bob",
+            evidenceId: "evidence-race-second-row",
+            requestId: "request-race-second-row",
+          }
+        ),
+      }),
+    ]);
+
+    const fulfilled = outcomes.filter(
+      (outcome) => outcome.status === "fulfilled"
+    );
+    const rejected = outcomes.filter(
+      (outcome) => outcome.status === "rejected"
+    );
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    if (rejected[0]?.status === "rejected") {
+      expect(rejected[0].reason).toBeInstanceOf(Error);
+      expect((rejected[0].reason as Error).message).toBe(
+        "Lifecycle snapshot rejected"
+      );
+    }
+
+    const [first, second, receipts] = await t.run(async (ctx) =>
+      Promise.all([
+        ctx.db.get(firstConnection),
+        ctx.db.get(secondConnection),
+        ctx.db.query("aiConnectionLifecycleReceipts").collect(),
+      ])
+    );
+    const connections = [first, second];
+    const winner = connections.find(
+      (connection) => connection?.status === "connected"
+    );
+    const loser = connections.find(
+      (connection) => connection?.status === "pending"
+    );
+
+    expect(winner?.gatewayCredentialId).toBe("credential-race-shared");
+    expect(winner?.lifecycleRevision).toBe(1);
+    expect(loser?.gatewayCredentialId).toBeUndefined();
+    expect(loser?.lifecycleRevision).toBeUndefined();
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].connectionId).toBe(winner?._id);
+  });
+
   it("retains one immutable handle through failure, recovery, and cleanup", async () => {
     const t = createHarness();
     const connectionId = await seedConnection(t);

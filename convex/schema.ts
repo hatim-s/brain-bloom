@@ -45,7 +45,8 @@ export default defineSchema({
     lifecycleRevision: v.optional(v.number()),
   })
     .index("by_owner", ["ownerId"])
-    .index("by_owner_provider_status", ["ownerId", "provider", "status"]),
+    .index("by_owner_provider_status", ["ownerId", "provider", "status"])
+    .index("by_gateway_credential", ["gatewayCredentialId"]),
 
   aiConnectionLifecycleReceipts: defineTable({
     connectionId: v.id("aiConnections"),

@@ -248,16 +248,31 @@ function requireConsistentStoredBinding(
   }
 }
 
-/** Allows the opaque handle to be established once and never rebound by evidence. */
-function requireCredentialBindingTransition(
+/** Allows one globally unique opaque handle to be established exactly once. */
+async function requireCredentialBindingTransition(
+  ctx: MutationCtx,
   connection: Doc<"aiConnections">,
   state: LifecycleState
-): void {
+): Promise<void> {
   requireConsistentStoredBinding(connection);
   if (state.status !== "connected") return;
 
   if (connection.status === "pending") {
-    if (state.initialBinding === undefined) {
+    const { initialBinding } = state;
+    if (initialBinding === undefined) {
+      throw new ConvexError(LIFECYCLE_SNAPSHOT_REJECTED);
+    }
+
+    // The indexed read participates in the mutation transaction. Concurrent
+    // claims on different rows therefore conflict on this shared range, and a
+    // retry observes the winner before either duplicate binding can commit.
+    const existingBinding = await ctx.db
+      .query("aiConnections")
+      .withIndex("by_gateway_credential", (query) =>
+        query.eq("gatewayCredentialId", initialBinding.gatewayCredentialId)
+      )
+      .first();
+    if (existingBinding !== null && existingBinding._id !== connection._id) {
       throw new ConvexError(LIFECYCLE_SNAPSHOT_REJECTED);
     }
     return;
@@ -401,7 +416,7 @@ const reconcileGatewayLifecycle = internalMutation({
     ) {
       throw new ConvexError(LIFECYCLE_TRANSITION_REJECTED);
     }
-    requireCredentialBindingTransition(connection, snapshot.state);
+    await requireCredentialBindingTransition(ctx, connection, snapshot.state);
 
     const appliedAt = Date.now();
     await ctx.db.insert("aiConnectionLifecycleReceipts", {
