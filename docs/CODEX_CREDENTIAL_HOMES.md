@@ -94,8 +94,12 @@ unbranded runtime-environment factories live inside
 `codex-credential-homes.test.ts`. None is exported from importable production
 source. A runtime export audit fixes the production module surface to the
 production manager, error, file-store flag, and runtime brand validator. A
-repository test also rejects imports of `.test` modules from non-test files
-under `services`, `app`, or `lib`.
+TypeScript-AST repository guard parses non-test `.js`, `.jsx`, `.ts`, `.tsx`,
+`.cjs`, `.cts`, `.mjs`, and `.mts` files under `services`, `app`, and `lib`. It
+rejects test/spec files and directories referenced by static imports/exports,
+dynamic `import()`, import-equals/`require`, `require()`, or `require.resolve`,
+including case and path-separator variants. Comments and inert string data are
+not treated as module loads.
 
 The test-local harness preserves lifecycle race and filesystem attack coverage,
 but it cannot be imported as application authority or produce a value accepted

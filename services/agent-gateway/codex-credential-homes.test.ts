@@ -23,6 +23,7 @@ import {
   relative,
 } from "node:path";
 
+import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 
 import * as credentialHomeModule from "./codex-credential-homes.ts";
@@ -53,6 +54,7 @@ const LOCAL_ROOT_NAMESPACE = "sprig/codex-root-pin/v1";
 const LOCAL_DOMAIN = "local-test-emulator-v1";
 const PRIVATE_MODE = 0o700;
 const NO_STATE_OVERRIDE = Symbol("no-test-state-override");
+const PRODUCTION_SOURCE_EXTENSION = /\.(?:js|jsx|ts|tsx|cjs|cts|mjs|mts)$/i;
 
 type TestOnlyRuntimeEnvironment = Readonly<{
   authority: "test-only";
@@ -717,6 +719,98 @@ function restoreEnvironment(name: string, value: string | undefined): void {
   }
 }
 
+/** Parses source and returns literal module loads that target test-only paths. */
+function findForbiddenTestModuleLoads(
+  sourceText: string,
+  fileName: string
+): string[] {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    false,
+    scriptKindForFile(fileName)
+  );
+  const forbidden: string[] = [];
+
+  /** Records one literal module specifier when it resolves to a test path. */
+  const recordLiteral = (node: ts.Node | undefined): void => {
+    if (
+      node &&
+      (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
+      isTestModuleSpecifier(node.text)
+    ) {
+      forbidden.push(node.text);
+    }
+  };
+
+  /** Visits only syntax nodes that can load or re-export a module. */
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      recordLiteral(node.moduleSpecifier);
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)
+    ) {
+      recordLiteral(node.moduleReference.expression);
+    } else if (ts.isCallExpression(node)) {
+      const expression = node.expression;
+      const isDynamicImport = expression.kind === ts.SyntaxKind.ImportKeyword;
+      const isRequire =
+        ts.isIdentifier(expression) && expression.text === "require";
+      const isRequireResolve =
+        ts.isPropertyAccessExpression(expression) &&
+        ts.isIdentifier(expression.expression) &&
+        expression.expression.text === "require" &&
+        expression.name.text === "resolve";
+      if (isDynamicImport || isRequire || isRequireResolve) {
+        recordLiteral(node.arguments[0]);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return forbidden;
+}
+
+/** Maps every truthfully scanned JS/TS extension to its TypeScript parser mode. */
+function scriptKindForFile(fileName: string): ts.ScriptKind {
+  const normalized = fileName.toLowerCase();
+  if (normalized.endsWith(".jsx")) {
+    return ts.ScriptKind.JSX;
+  }
+  if (normalized.endsWith(".tsx")) {
+    return ts.ScriptKind.TSX;
+  }
+  if (
+    normalized.endsWith(".js") ||
+    normalized.endsWith(".cjs") ||
+    normalized.endsWith(".mjs")
+  ) {
+    return ts.ScriptKind.JS;
+  }
+  return ts.ScriptKind.TS;
+}
+
+/** Normalizes separators/case and recognizes test files or directories. */
+function isTestModuleSpecifier(specifier: string): boolean {
+  const normalized = specifier.replace(/\\/g, "/").toLowerCase();
+  return normalized
+    .split("/")
+    .some(
+      (segment) =>
+        segment === "__tests__" || /(?:\.test|\.spec)(?:\.|$)/.test(segment)
+    );
+}
+
+/** Distinguishes production source entries from test files/directories. */
+function isProductionSourceEntry(entry: string): boolean {
+  return (
+    PRODUCTION_SOURCE_EXTENSION.test(entry) && !isTestModuleSpecifier(entry)
+  );
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories
@@ -735,35 +829,84 @@ describe("production Codex credential-home authority", () => {
     ]);
   });
 
-  it("forbids production source from importing test modules", async () => {
+  it("forbids AST module loads of test paths from production source", async () => {
     const productionRoots = ["services", "app", "lib"];
-    const violations: string[] = [];
+    const violations: Array<{ file: string; specifier: string }> = [];
     for (const root of productionRoots) {
       const entries = await readdir(join(process.cwd(), root), {
         recursive: true,
       });
       for (const entry of entries) {
-        if (
-          !/\.[cm]?[jt]sx?$/.test(entry) ||
-          /(?:^|\.)test\.[cm]?[jt]sx?$/.test(entry) ||
-          /(?:^|\.)spec\.[cm]?[jt]sx?$/.test(entry)
-        ) {
+        if (!isProductionSourceEntry(entry)) {
           continue;
         }
-        const content = await readFile(
-          join(process.cwd(), root, entry),
-          "utf8"
-        );
-        if (
-          /\b(?:from|import\s*)\s*\(?["'][^"']*\.test(?:[.-]|["'])/.test(
-            content
-          )
-        ) {
-          violations.push(join(root, entry));
+        const file = join(root, entry);
+        const content = await readFile(join(process.cwd(), file), "utf8");
+        for (const specifier of findForbiddenTestModuleLoads(content, file)) {
+          violations.push({ file, specifier });
         }
       }
     }
     expect(violations).toEqual([]);
+  });
+
+  it.each([
+    ["ESM import", 'import value from "./feature.test.ts";', "fixture.ts"],
+    ["ESM export", 'export * from "./feature.SPEC.mts";', "fixture.mts"],
+    [
+      "dynamic import",
+      'const value = import("./Feature.TEST/entry.mjs");',
+      "fixture.mjs",
+    ],
+    ["CJS require", 'require("./nested/value.spec.cjs");', "fixture.cjs"],
+    [
+      "require.resolve",
+      String.raw`require.resolve(".\\folder\\value.TEST.js");`,
+      "fixture.js",
+    ],
+    [
+      "import equals",
+      'import value = require("./feature.test/entry.cts");',
+      "fixture.cts",
+    ],
+    [
+      "test directory",
+      'import value from "./nested/__TeStS__/entry.tsx";',
+      "fixture.tsx",
+    ],
+    [
+      "spec directory",
+      'export { value } from "./nested/feature.SpEc/entry.jsx";',
+      "fixture.jsx",
+    ],
+  ])("detects %s test-module loads", (_label, source, fileName) => {
+    expect(findForbiddenTestModuleLoads(source, fileName)).toHaveLength(1);
+  });
+
+  it.each([
+    ["ordinary import", 'import value from "./feature.ts";', "fixture.ts"],
+    [
+      "comment text",
+      '// require("./feature.test.ts")\nexport const value = 1;',
+      "fixture.js",
+    ],
+    [
+      "string data",
+      "const value = 'import(\"./feature.spec.ts\")';",
+      "fixture.ts",
+    ],
+    [
+      "nonliteral dynamic import",
+      "const value = import(moduleName);",
+      "fixture.mts",
+    ],
+    [
+      "other object resolve",
+      'loader.resolve("./feature.test.ts");',
+      "fixture.cjs",
+    ],
+  ])("allows %s without false positives", (_label, source, fileName) => {
+    expect(findForbiddenTestModuleLoads(source, fileName)).toEqual([]);
   });
 
   it("fails closed because no production provisioner exists", async () => {
