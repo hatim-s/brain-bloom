@@ -1,6 +1,7 @@
 {
   "name": "sprig",
   "private": true,
+  "packageManager": "bun@1.4.0",
   "engines": {
     "node": ">=24.0.0"
   },
@@ -17,13 +18,13 @@
     "lint:fix": "eslint . --ext .ts,.tsx,.js,.jsx --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "fix:all": "pnpm lint:fix && pnpm format",
+    "fix:all": "bun run lint:fix && bun run format",
     "convex:dev": "convex dev",
     "convex:codegen": "convex codegen",
     "test:convex": "vitest run convex",
-    "migrate:supabase": "node --experimental-strip-types scripts/migrate-supabase-to-convex.ts",
-    "provider:spike": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/provider-spike/cli.ts",
-    "benchmark:embeddings": "node --experimental-strip-types benchmarks/local-embeddings/cli.ts"
+    "migrate:supabase": "bun scripts/migrate-supabase-to-convex.ts",
+    "provider:spike": "bun scripts/provider-spike/cli.ts",
+    "benchmark:embeddings": "bun benchmarks/local-embeddings/cli.ts"
   },
   "dependencies": {
     "@ai-sdk/react": "^4.0.43",
