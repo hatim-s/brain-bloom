@@ -13,41 +13,35 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          version: 10.8.1
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
+          bun-version: 1.4.0
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       # Next's generated route validators live in .next/types and only exist after
-      # typegen. Without this, `pnpm typecheck` runs against a program that excludes
+      # typegen. Without this, `bun run typecheck` runs against a program that excludes
       # them and silently skips page/layout/route-handler prop validation.
       - name: Generate route types
-        run: pnpm typegen
+        run: bun run typegen
 
       - name: Typecheck
-        run: pnpm typecheck
+        run: bun run typecheck
 
       - name: Lint
-        run: pnpm lint
+        run: bun run lint
 
       - name: Check formatting
-        run: pnpm format:check
+        run: bun run format:check
 
       - name: Test
-        run: pnpm test
+        run: bun run test
 
       # Prerendering /_not-found constructs a Supabase client, which throws without a
       # URL and key, so the build cannot complete on credentials alone being absent.
       # These are syntactically valid placeholders, never contacted: the build only
       # needs the client to construct. Replaced when Supabase is removed in P6.
       - name: Build
-        run: pnpm build
+        run: bun run build

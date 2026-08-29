@@ -5674,9 +5674,9 @@ function positionedChildEscapesClip(el, child, clipX, clipY) {
     (clipX &&
       (childRect.left < parentRect.left - threshold ||
         childRect.right > parentRect.right + threshold)) ||
-      (clipY &&
-        (childRect.top < parentRect.top - threshold ||
-          childRect.bottom > parentRect.bottom + threshold))
+    (clipY &&
+      (childRect.top < parentRect.top - threshold ||
+        childRect.bottom > parentRect.bottom + threshold))
   );
 }
 

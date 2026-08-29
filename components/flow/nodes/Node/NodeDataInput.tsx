@@ -15,9 +15,7 @@ type NodeFormData = {
 
 /** Every element the editor's own Tab cycle is allowed to land on. */
 type EditorFocusable =
-  | HTMLInputElement
-  | HTMLTextAreaElement
-  | HTMLButtonElement;
+  HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement;
 
 /**
  * The focus well each field sits in — title, description, and the link row.

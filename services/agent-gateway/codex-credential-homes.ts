@@ -71,15 +71,11 @@ type HostEnsureHomeResult =
   | Readonly<{ status: "unsafe" }>;
 
 type HostDeleteHomeResult =
-  | Readonly<{ status: "absent" | "removed" }>
-  | Readonly<{ status: "unsafe" }>;
+  Readonly<{ status: "absent" | "removed" }> | Readonly<{ status: "unsafe" }>;
 
 type RootPinResult = "mismatch" | "pinned" | "verified";
 type CredentialHomeLifecycleState =
-  | "active"
-  | "provisionable"
-  | "revoked"
-  | "revoking";
+  "active" | "provisionable" | "revoked" | "revoking";
 
 type CredentialHomeLifecycleLease = Readonly<{
   state: unknown;

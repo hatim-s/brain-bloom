@@ -13,8 +13,7 @@ import type {
 import type { CandidateBenchmarkResult } from "./types.ts";
 
 type ChildResponse =
-  | { ok: true; result: CandidateBenchmarkResult }
-  | { ok: false; error: string };
+  { ok: true; result: CandidateBenchmarkResult } | { ok: false; error: string };
 type ForkCandidate = (
   modulePath: string,
   args: string[],

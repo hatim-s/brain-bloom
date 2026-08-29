@@ -10,10 +10,7 @@ const PERSONAL_BETA_ACCESS_UNAVAILABLE = "Personal beta access unavailable";
 const INVALID_CONNECTION_REQUEST = "Invalid connection request";
 
 type ConnectionRateEndpoint =
-  | "createPendingCodex"
-  | "selectDefaultCodex"
-  | "list"
-  | "getStatus";
+  "createPendingCodex" | "selectDefaultCodex" | "list" | "getStatus";
 type SafeConnection = Omit<
   Doc<"aiConnections">,
   "ownerId" | "gatewayCredentialId" | "lifecycleRevision" | "lifecycleVersion"

@@ -789,12 +789,10 @@ function scanInsetStripeCss(rawContent, filePath, lineOffset = 0) {
         continue;
       const ax = Math.abs(x.n);
       const ay = Math.abs(y.n);
-      if (
-        !(
-          (ax >= 3 && ax <= 12 && ay === 0) ||
-          (ay >= 3 && ay <= 12 && ax === 0)
-        )
-      )
+      if (!(
+        (ax >= 3 && ax <= 12 && ay === 0) ||
+        (ay >= 3 && ay <= 12 && ax === 0)
+      ))
         continue;
       if (!insetStripeColorIsChromatic(colors[0])) continue;
       const edge =

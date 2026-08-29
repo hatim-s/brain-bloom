@@ -272,8 +272,8 @@ function packageHasSvelteKit(cwd) {
     };
     return Boolean(
       deps["@sveltejs/kit"] ||
-        deps["@sveltejs/vite-plugin-svelte"] ||
-        deps.svelte
+      deps["@sveltejs/vite-plugin-svelte"] ||
+      deps.svelte
     );
   } catch {
     return false;

@@ -16,10 +16,10 @@ import { sanitizeForOutput } from "./security.ts";
 const HELP = `Sprig provider seam spike (dry-run by default)
 
 Usage:
-  pnpm provider:spike -- help
-  pnpm provider:spike -- codex-device --codex-home <private-temp-dir> [--execute]
-  pnpm provider:spike -- codex-logout-restart --codex-home <private-temp-dir> [--execute]
-  pnpm provider:spike -- claude-token [--execute] < token-file
+  bun run provider:spike -- help
+  bun run provider:spike -- codex-device --codex-home <private-temp-dir> [--execute]
+  bun run provider:spike -- codex-logout-restart --codex-home <private-temp-dir> [--execute]
+  bun run provider:spike -- claude-token [--execute] < token-file
 
 Safety:
   Without --execute no provider process starts and stdin is not read.
@@ -28,10 +28,7 @@ Safety:
 `;
 
 type ProviderSpikeCommand =
-  | "help"
-  | "codex-device"
-  | "codex-logout-restart"
-  | "claude-token";
+  "help" | "codex-device" | "codex-logout-restart" | "claude-token";
 
 type CliOptions = {
   command: ProviderSpikeCommand;

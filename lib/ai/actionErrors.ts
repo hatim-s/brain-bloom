@@ -3,9 +3,7 @@ import { ConvexError } from "convex/values";
 import { AIConfigurationError } from "@/lib/ai/errors";
 
 type AIActionErrorCode =
-  | "not-configured"
-  | "too-many-nodes"
-  | "generation-failed";
+  "not-configured" | "too-many-nodes" | "generation-failed";
 
 /** Maps server-only error instances to the stable codes RSC can serialize. */
 function getAIActionErrorCode(error: unknown): AIActionErrorCode {

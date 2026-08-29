@@ -162,13 +162,14 @@ function createFakeCodexChild(
   return child;
 }
 
-/** Runs the exact strip-only Node entry command without recursively invoking pnpm. */
+/** Runs the exact strip-only Node entry command without recursively invoking a package script. */
 function runProviderSpikeEntry(command: string) {
   const credentialCanary = "entry-smoke-credential-canary-824d5f24";
   const result = spawnSync(
     process.execPath,
     [
       "--experimental-strip-types",
+      "--disable-warning=ExperimentalWarning",
       "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON",
       "scripts/provider-spike/cli.ts",
       "--",

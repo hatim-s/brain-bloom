@@ -10,7 +10,7 @@ explaning non trivial logic and code
 - Never write code inside index.js/index.ts - only use these as exports
 
 ### Incremental development
-Small increments; every commit compiles (`pnpm typecheck`) and passes owned
+Small increments; every commit compiles (`bun run typecheck`) and passes owned
 tests. Conventional commits. No massive dumps.
 
 ### Commands

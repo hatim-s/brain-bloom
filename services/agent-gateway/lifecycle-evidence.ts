@@ -65,10 +65,7 @@ type LifecycleErrorCode = (typeof LIFECYCLE_ERROR_CODES)[number];
 type LifecyclePlanLabel = (typeof LIFECYCLE_PLAN_LABELS)[number];
 
 type LifecycleMetadataPolicy =
-  | "establish_connection"
-  | "record_error"
-  | "record_expiry"
-  | "empty_terminal";
+  "establish_connection" | "record_error" | "record_expiry" | "empty_terminal";
 
 const LIFECYCLE_TRANSITION_METADATA_POLICIES = {
   pending_to_connected: "establish_connection",
@@ -223,8 +220,7 @@ type VerifyLifecycleEvidenceOptions = Readonly<{
 }>;
 
 type LifecycleReplayDefenseErrorCode =
-  | "replay_defense_unavailable"
-  | "replay_detected";
+  "replay_defense_unavailable" | "replay_detected";
 
 type ReplayConsumeOutcome =
   | Readonly<{ status: "fulfilled"; value: unknown }>

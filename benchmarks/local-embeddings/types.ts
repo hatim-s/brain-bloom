@@ -99,10 +99,7 @@ type CandidateConfiguration = {
 
 type SegmentFormat = "pdf" | "docx" | "pptx";
 type QuestionCategory =
-  | "headings"
-  | "definitions"
-  | "slide-bullets"
-  | "paraphrases";
+  "headings" | "definitions" | "slide-bullets" | "paraphrases";
 type IntegrityScenario =
   | "cross-owner"
   | "out-of-scope"
@@ -278,8 +275,7 @@ type CandidateBenchmarkResult = {
     residentMemoryPeakBytes: number;
     residentMemoryAfterBytes: number;
     residentMemoryMeasurement:
-      | "valid-isolated-process"
-      | "invalid-in-process-test";
+      "valid-isolated-process" | "invalid-in-process-test";
     cacheBytes: number;
   };
   budgets: {
