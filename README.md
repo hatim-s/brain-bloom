@@ -8,7 +8,7 @@ mindmap, supports AI-assisted branch editing, and stores mindmaps in Convex.
 ### Prerequisites
 
 - Node.js 24 or newer (Node.js 24 is selected by `.nvmrc`)
-- pnpm
+- Bun 1.4
 - A Convex deployment
 - A Clerk `convex` JWT template for authenticated Convex reads; see
   [`docs/ENV.md`](docs/ENV.md). Keyless Clerk instances cannot create this
@@ -23,8 +23,8 @@ mindmap, supports AI-assisted branch editing, and stores mindmaps in Convex.
    `CLAUDE_CODE_OAUTH_TOKEN`. For Codex, run `codex login` on the app server.
 4. Set `CONVEX_DEPLOYMENT` and
    `NEXT_PUBLIC_CONVEX_URL`.
-5. Install the existing dependencies with `pnpm install`.
-6. Start the development server with `pnpm dev`.
+5. Install the existing dependencies with `bun install`.
+6. Start the development server with `bun run dev`.
 
 The application is then available at
 [http://localhost:3000](http://localhost:3000).
@@ -33,18 +33,18 @@ The application is then available at
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm dev` | Start the Turbopack development server. |
-| `pnpm build` | Create a production build with Turbopack. |
-| `pnpm start` | Run the production server from a completed build. |
-| `pnpm typecheck` | Check TypeScript types without emitting files. |
-| `pnpm test` | Run the Vitest suite once. |
-| `pnpm test:watch` | Run Vitest in watch mode. |
-| `pnpm test:coverage` | Run the Vitest suite and generate text and HTML coverage reports. |
-| `pnpm lint` | Check JavaScript and TypeScript files with ESLint. |
-| `pnpm lint:fix` | Fix ESLint issues that can be corrected automatically. |
-| `pnpm format` | Format the repository with Prettier. |
-| `pnpm format:check` | Check repository formatting without changing files. |
-| `pnpm fix:all` | Apply ESLint fixes, then format the repository. |
+| `bun run dev` | Start the Turbopack development server. |
+| `bun run build` | Create a production build with Turbopack. |
+| `bun run start` | Run the production server from a completed build. |
+| `bun run typecheck` | Check TypeScript types without emitting files. |
+| `bun run test` | Run the Vitest suite once. |
+| `bun run test:watch` | Run Vitest in watch mode. |
+| `bun run test:coverage` | Run the Vitest suite and generate text and HTML coverage reports. |
+| `bun run lint` | Check JavaScript and TypeScript files with ESLint. |
+| `bun run lint:fix` | Fix ESLint issues that can be corrected automatically. |
+| `bun run format` | Format the repository with Prettier. |
+| `bun run format:check` | Check repository formatting without changing files. |
+| `bun run fix:all` | Apply ESLint fixes, then format the repository. |
 
 ## Environment
 

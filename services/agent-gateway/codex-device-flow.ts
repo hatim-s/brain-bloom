@@ -22,12 +22,7 @@ const OFFICIAL_CODEX_VERIFICATION_URLS = Object.freeze([
 
 type CodexDeviceAccountType = "chatgpt";
 type CodexDeviceStatus =
-  | "starting"
-  | "pending"
-  | "authorized"
-  | "cancelled"
-  | "expired"
-  | "denied";
+  "starting" | "pending" | "authorized" | "cancelled" | "expired" | "denied";
 
 type CodexDeviceScope = Readonly<{
   ownerId: string;

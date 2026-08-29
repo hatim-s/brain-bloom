@@ -10,10 +10,7 @@ const MAX_BUDGET_LIMIT = 10_000;
 const MAX_WINDOW_MS = 86_400_000;
 
 type ConnectionRateEndpoint =
-  | "createPendingCodex"
-  | "selectDefaultCodex"
-  | "list"
-  | "getStatus";
+  "createPendingCodex" | "selectDefaultCodex" | "list" | "getStatus";
 
 type ConnectionRatePolicy = {
   windowMs: number;

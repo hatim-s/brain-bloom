@@ -77,12 +77,7 @@ const lifecycleSnapshot = v.object({
 });
 
 type SubscriptionPlan =
-  | "free"
-  | "plus"
-  | "pro"
-  | "business"
-  | "enterprise"
-  | "edu";
+  "free" | "plus" | "pro" | "business" | "enterprise" | "edu";
 type ProviderErrorCode =
   | "PROVIDER_UNAVAILABLE"
   | "SESSION_EXPIRED"

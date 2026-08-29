@@ -1,7 +1,7 @@
 {
   "version": 2,
   "buildCommand": "next build",
-  "installCommand": "pnpm install",
+  "installCommand": "bun install --frozen-lockfile",
   "devCommand": "next",
   "framework": "nextjs",
   "git": {

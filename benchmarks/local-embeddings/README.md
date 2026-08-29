@@ -6,7 +6,7 @@ code path that selects, activates, or imports one into the application.
 
 ## Safety model
 
-`pnpm benchmark:embeddings` is a dry run. It validates both candidate pins and
+`bun run benchmark:embeddings` is a dry run. It validates both candidate pins and
 the committed fixtures and uses `lstat`-style metadata to report whether each
 cache entry exists. It never opens, enumerates, or hashes cache contents and
 does not import adapter code, load a model, access the network, or write a
@@ -15,7 +15,7 @@ report.
 An actual evaluation requires a human to provide an adapter and opt in:
 
 ```sh
-pnpm benchmark:embeddings -- --run --adapter-module sprig-local-embedding-adapter-1.0.0/adapter.mjs
+bun run benchmark:embeddings -- --run --adapter-module sprig-local-embedding-adapter-1.0.0/adapter.mjs
 ```
 
 If a declared offline cache is absent, execution fails before adapter creation.

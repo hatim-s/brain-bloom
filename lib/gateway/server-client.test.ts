@@ -640,8 +640,7 @@ describe("gateway server client", () => {
     "disposes a response that fulfills after transport %s",
     async (outcome) => {
       let resolveLate:
-        | ((response: GatewayTransportResponse) => void)
-        | undefined;
+        ((response: GatewayTransportResponse) => void) | undefined;
       const current = fixture();
       current.transportCalls.mockReturnValueOnce(
         new Promise<GatewayTransportResponse>((resolve) => {

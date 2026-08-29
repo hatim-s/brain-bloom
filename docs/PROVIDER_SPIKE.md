@@ -15,8 +15,8 @@ to group or other users.
 
 ```sh
 CODEX_SPIKE_HOME="$(mktemp -d)"
-pnpm provider:spike -- codex-device --codex-home "$CODEX_SPIKE_HOME"
-pnpm provider:spike -- codex-device --codex-home "$CODEX_SPIKE_HOME" --execute
+bun run provider:spike -- codex-device --codex-home "$CODEX_SPIKE_HOME"
+bun run provider:spike -- codex-device --codex-home "$CODEX_SPIKE_HOME" --execute
 ```
 
 The executing form starts `codex app-server` with the official
@@ -34,8 +34,8 @@ flags; plan, auth-mode, email, and credential-source values are never emitted.
 To prove logout survives an app-server restart in that same isolated home:
 
 ```sh
-pnpm provider:spike -- codex-logout-restart --codex-home "$CODEX_SPIKE_HOME"
-pnpm provider:spike -- codex-logout-restart --codex-home "$CODEX_SPIKE_HOME" --execute
+bun run provider:spike -- codex-logout-restart --codex-home "$CODEX_SPIKE_HOME"
+bun run provider:spike -- codex-logout-restart --codex-home "$CODEX_SPIKE_HOME" --execute
 ```
 
 This intentionally logs out the temporary file store. It never targets the
@@ -49,8 +49,8 @@ stdin; it has no token argument and does not read a token from the parent
 environment.
 
 ```sh
-pnpm provider:spike -- claude-token
-pnpm provider:spike -- claude-token --execute < /path/to/private-token-file
+bun run provider:spike -- claude-token
+bun run provider:spike -- claude-token --execute < /path/to/private-token-file
 ```
 
 The executing form creates a throwaway home, passes the token only to the

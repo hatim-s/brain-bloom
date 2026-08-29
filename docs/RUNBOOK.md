@@ -12,7 +12,7 @@ for the provider selected by `SPRIG_AI_PROVIDER`.
 
 - Convex: anonymous local deployment (`CONVEX_DEPLOYMENT=anonymous:…`,
   backend on 127.0.0.1:3211). Schema, functions, and codegen are committed.
-- Clerk: keyless dev instance. Claim URL is printed on every `pnpm dev`
+- Clerk: keyless dev instance. Claim URL is printed on every `bun run dev`
   start. Custom sign-in/up flows work; OAuth buttons are flag-gated off;
   the Convex JWT bridge is written but deliberately rejects data access until
   an issuer is configured.
@@ -20,7 +20,7 @@ for the provider selected by `SPRIG_AI_PROVIDER`.
   the app server's saved `codex login` session. Both are dev and
   single-operator only.
 - Data: legacy Supabase project still holds pre-overhaul mindmaps;
-  `pnpm migrate:supabase` (dry-run default) is ready.
+  `bun run migrate:supabase` (dry-run default) is ready.
 
 ## 1. Claim the Clerk instance
 
@@ -40,7 +40,7 @@ data once step 2's issuer is configured in Convex — step 2 below).
 
 ## 2. Promote Convex to cloud
 
-1. `pnpm exec convex login`, then `pnpm exec convex deploy` from the repo —
+1. `bunx convex login`, then `bunx convex deploy` from the repo —
    this creates the cloud deployment from the committed schema/functions.
 2. In the Convex dashboard, set the environment variable
    `CLERK_FRONTEND_API_URL=<issuer from step 1.2>` — `convex/auth.config.ts`
@@ -49,7 +49,7 @@ data once step 2's issuer is configured in Convex — step 2 below).
    `NEXT_PUBLIC_CONVEX_URL` (`https://<slug>.convex.cloud`) and
    `NEXT_PUBLIC_CONVEX_SITE_URL` (`https://<slug>.convex.site`).
 
-Verify: `pnpm exec convex run mindmaps:listMine` fails with
+Verify: `bunx convex run mindmaps:listMine` fails with
 "Unauthenticated" (auth enforced), not with a config error.
 
 ## 3. AI in production — decision required
@@ -70,7 +70,7 @@ Options, pick one before launch:
 1. Ensure `.env.local` (or the shell) has the legacy
    `SUPABASE_URL` / `SUPABASE_API_KEY` (operator-only inputs read explicitly
    by the migration script).
-2. Dry run against prod Convex: `CONVEX_DEPLOYMENT=<prod> pnpm
+2. Dry run against prod Convex: `CONVEX_DEPLOYMENT=<prod> bun run
    migrate:supabase` — review the per-map diff report (adds/changes/
    removes, rejected maps with reasons).
 3. Execute: append `--execute --owner <your Clerk subject>` (find the
