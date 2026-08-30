@@ -10,7 +10,10 @@ import { z } from "zod";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { createAIChatStream, isAIConfigured } from "@/lib/ai/providerRouter";
+import {
+  createRoutedAIChatStream,
+  isRoutedAIConfigured,
+} from "@/lib/ai/executionRouter";
 import { serializeMindmap } from "@/lib/ai/serializeMindmap";
 import {
   type AppliedOperation,
@@ -179,7 +182,7 @@ async function POST(request: Request): Promise<Response> {
     return jsonError("Unauthenticated", 401);
   }
 
-  if (!isAIConfigured()) {
+  if (!isRoutedAIConfigured()) {
     return jsonError("AI is not configured", 503);
   }
 
@@ -276,7 +279,7 @@ async function POST(request: Request): Promise<Response> {
         }
       },
     });
-    const stream = createAIChatStream({
+    const stream = await createRoutedAIChatStream({
       abortSignal: request.signal,
       instructions: createInstructions(
         serializeMindmap(currentMindmap),
