@@ -8,6 +8,10 @@ import { Geist, Geist_Mono } from "next/font/google";
 
 import { ThemeSwitcher } from "@/components/theme-switcher";
 
+const AppThemeProvider = ThemeProvider as React.ComponentType<
+  React.PropsWithChildren<React.ComponentProps<typeof ThemeProvider>>
+>;
+
 const defaultUrl = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
   : "http://localhost:3000";
@@ -122,7 +126,7 @@ export default function RootLayout({
           appearance={clerkAppearance}
           localization={clerkLocalization}
         >
-          <ThemeProvider
+          <AppThemeProvider
             attribute="class"
             defaultTheme="dark"
             enableSystem
@@ -130,7 +134,7 @@ export default function RootLayout({
           >
             {children}
             <ThemeSwitcher />
-          </ThemeProvider>
+          </AppThemeProvider>
         </ClerkProvider>
       </body>
     </html>
