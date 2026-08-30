@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  GATEWAY_CHAT_STREAM_CONTENT_TYPE,
+  serializeGatewayChatStreamFrame,
+} from "../../services/agent-gateway/operation-protocol.ts";
+import {
   createFetchGatewayTransport,
   createGatewayServerClient,
   type GatewayAssertionSigner,
   type GatewayAuthorityResolver,
+  type GatewayChatClientRequest,
   type GatewayClientError,
   type GatewayClientRequest,
   type GatewayResponseBody,
@@ -19,6 +24,24 @@ vi.mock("server-only", () => ({}));
 const ORIGIN = "https://gateway.example.test";
 const RESPONSE_URL = `${ORIGIN}/internal/v1/operations/chat`;
 const SECRET = "secret-canary-never-reflect";
+
+/** Creates one closed chat request with an owned mindmap intent. */
+function chatRequest(
+  overrides: Partial<GatewayChatClientRequest> = {}
+): GatewayChatClientRequest {
+  return {
+    resource: { type: "mindmap", id: "map-1" },
+    connectionId: "connection-1",
+    operation: "chat",
+    requestId: "request-chat-1",
+    input: {
+      instructions: "Help with this map",
+      conversation: "user: explain the root",
+      toolManifest: "[]",
+    },
+    ...overrides,
+  };
+}
 
 type Fixture = Readonly<{
   authorityResolver: GatewayAuthorityResolver;
@@ -805,6 +828,306 @@ describe("gateway server client", () => {
     );
     expect(current.signerCalls).not.toHaveBeenCalled();
     expect(current.transportCalls).not.toHaveBeenCalled();
+  });
+
+  it("sends and validates a closed first-map action with owner bootstrap authority", async () => {
+    const actionUrl = `${ORIGIN}/internal/v1/operations/mind-map-generation`;
+    const current = fixture(
+      jsonResponse(
+        {
+          ok: true,
+          data: {
+            version: 1,
+            operation: "mind-map-generation",
+            rawOutput: '{"name":"Systems"}',
+            output: {
+              name: "Systems",
+              nodes: [{ title: "Distributed", children: [] }],
+            },
+          },
+        },
+        { url: actionUrl }
+      )
+    );
+    current.authorizeCalls.mockResolvedValueOnce({
+      ownerId: "owner-1",
+      resource: {
+        type: "owner-bootstrap",
+        intent: "create-first-mindmap",
+      },
+      connection: {
+        requestedId: "connection-1",
+        canonicalId: "canonical-connection-1",
+        provider: "codex",
+        status: "connected",
+        isDefault: true,
+      },
+      operation: "mind-map-generation",
+    });
+
+    await expect(
+      client(current).executeAction({
+        resource: {
+          type: "owner-bootstrap",
+          intent: "create-first-mindmap",
+        },
+        connectionId: "connection-1",
+        operation: "mind-map-generation",
+        requestId: "request-create-1",
+        input: { instructions: "Generate a map", prompt: "Systems" },
+      })
+    ).resolves.toMatchObject({ operation: "mind-map-generation" });
+
+    expect(current.authorizeCalls.mock.calls[0]?.[0]).toMatchObject({
+      resource: {
+        type: "owner-bootstrap",
+        intent: "create-first-mindmap",
+      },
+      operation: "mind-map-generation",
+    });
+    const sent = current.transportCalls.mock
+      .calls[0]?.[0] as GatewayTransportRequest;
+    expect(sent.url).toBe(actionUrl);
+    expect(JSON.parse(sent.body)).toEqual({
+      input: {
+        version: 1,
+        operation: "mind-map-generation",
+        resource: {
+          type: "owner-bootstrap",
+          intent: "create-first-mindmap",
+        },
+        input: { instructions: "Generate a map", prompt: "Systems" },
+      },
+    });
+  });
+
+  it("decodes chat events without pre-draining and retains stream lifecycle bounds", async () => {
+    const event = {
+      type: "text-delta",
+      id: "text-1",
+      delta: "chat-data",
+    } as const;
+    const encoded = serializeGatewayChatStreamFrame(event);
+    const read = vi
+      .fn<() => Promise<ReadableStreamReadResult<Uint8Array>>>()
+      .mockResolvedValueOnce({ done: false, value: encoded })
+      .mockResolvedValueOnce({ done: true, value: undefined });
+    const cancel = vi.fn();
+    const releaseLock = vi.fn();
+    const current = fixture({
+      status: 200,
+      redirected: false,
+      url: RESPONSE_URL,
+      headers: new Headers({
+        "content-type": GATEWAY_CHAT_STREAM_CONTENT_TYPE,
+        "content-length": String(encoded.byteLength),
+      }),
+      body: { getReader: () => ({ read, cancel, releaseLock }), cancel },
+    });
+
+    const stream = await client(current).streamChat(chatRequest());
+    expect(read).not.toHaveBeenCalled();
+    const reader = stream.getReader();
+    await expect(reader.read()).resolves.toEqual({
+      done: false,
+      value: event,
+    });
+    await expect(reader.read()).resolves.toEqual({
+      done: true,
+      value: undefined,
+    });
+    expect(releaseLock).toHaveBeenCalledTimes(1);
+    expect(cancel).not.toHaveBeenCalled();
+
+    const sent = current.transportCalls.mock
+      .calls[0]?.[0] as GatewayTransportRequest;
+    expect(JSON.parse(sent.body)).toMatchObject({
+      input: {
+        version: 1,
+        operation: "chat",
+        resource: { type: "owned-mindmap", id: "canonical-map-1" },
+        input: chatRequest().input,
+      },
+    });
+  });
+
+  it("cancels a chat body when its demand-driven chunk bound is exceeded", async () => {
+    const encoded = serializeGatewayChatStreamFrame({ type: "start" });
+    const read = vi
+      .fn<() => Promise<ReadableStreamReadResult<Uint8Array>>>()
+      .mockResolvedValue({ done: false, value: encoded });
+    const cancel = vi.fn();
+    const current = fixture({
+      status: 200,
+      redirected: false,
+      url: RESPONSE_URL,
+      headers: new Headers({
+        "content-type": GATEWAY_CHAT_STREAM_CONTENT_TYPE,
+      }),
+      body: {
+        getReader: () => ({ read, cancel, releaseLock: vi.fn() }),
+        cancel,
+      },
+    });
+    const stream = await client(current, { maxResponseChunks: 1 }).streamChat(
+      chatRequest()
+    );
+    const reader = stream.getReader();
+    await expect(reader.read()).resolves.toMatchObject({ done: false });
+    await expect(reader.read()).rejects.toMatchObject({
+      code: "response_too_large",
+      message: "Gateway client request failed",
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects declared-length overrun before emitting any chat event", async () => {
+    const encoded = serializeGatewayChatStreamFrame({ type: "start" });
+    const cancel = vi.fn();
+    const current = fixture({
+      status: 200,
+      redirected: false,
+      url: RESPONSE_URL,
+      headers: new Headers({
+        "content-type": GATEWAY_CHAT_STREAM_CONTENT_TYPE,
+        "content-length": "1",
+      }),
+      body: {
+        getReader: () => ({
+          read: vi
+            .fn<() => Promise<ReadableStreamReadResult<Uint8Array>>>()
+            .mockResolvedValueOnce({ done: false, value: encoded }),
+          cancel,
+          releaseLock: vi.fn(),
+        }),
+        cancel,
+      },
+    });
+    const stream = await client(current).streamChat(chatRequest());
+
+    await expect(stream.getReader().read()).rejects.toMatchObject({
+      code: "gateway_response_invalid",
+      message: "Gateway client request failed",
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("decodes a UTF-8 chat frame split across individual bytes", async () => {
+    const event = {
+      type: "text-delta",
+      id: "text-utf8",
+      delta: "mind map 🧠 漢字",
+    } as const;
+    const encoded = serializeGatewayChatStreamFrame(event);
+    const byteResults = Array.from(encoded, (byte) => ({
+      done: false as const,
+      value: new Uint8Array([byte]),
+    }));
+    const read = vi
+      .fn<() => Promise<ReadableStreamReadResult<Uint8Array>>>()
+      .mockResolvedValueOnce(byteResults[0]);
+    for (const result of byteResults.slice(1))
+      read.mockResolvedValueOnce(result);
+    read.mockResolvedValueOnce({ done: true, value: undefined });
+    const current = fixture({
+      status: 200,
+      redirected: false,
+      url: RESPONSE_URL,
+      headers: new Headers({
+        "content-type": GATEWAY_CHAT_STREAM_CONTENT_TYPE,
+      }),
+      body: {
+        getReader: () => ({ read, cancel: vi.fn(), releaseLock: vi.fn() }),
+        cancel: vi.fn(),
+      },
+    });
+    const stream = await client(current, {
+      maxResponseChunks: encoded.byteLength + 1,
+    }).streamChat(chatRequest());
+    const reader = stream.getReader();
+
+    await expect(reader.read()).resolves.toEqual({ done: false, value: event });
+    await expect(reader.read()).resolves.toEqual({
+      done: true,
+      value: undefined,
+    });
+  });
+
+  it("keeps caller abort active after returning a chat stream", async () => {
+    const cancel = vi.fn();
+    const current = fixture({
+      status: 200,
+      redirected: false,
+      url: RESPONSE_URL,
+      headers: new Headers({
+        "content-type": GATEWAY_CHAT_STREAM_CONTENT_TYPE,
+      }),
+      body: {
+        getReader: () => ({
+          read: () => new Promise(() => undefined),
+          cancel,
+          releaseLock: vi.fn(),
+        }),
+        cancel,
+      },
+    });
+    const controller = new AbortController();
+    const stream = await client(current).streamChat(
+      chatRequest({ signal: controller.signal })
+    );
+    controller.abort(new Error(SECRET));
+
+    await expect(stream.getReader().read()).rejects.toMatchObject({
+      code: "request_aborted",
+      message: "Gateway client request failed",
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects unbounded streaming response headers and disposes the body", async () => {
+    const cancel = vi.fn();
+    const current = fixture({
+      status: 200,
+      redirected: false,
+      url: RESPONSE_URL,
+      headers: new Headers({
+        "content-type": GATEWAY_CHAT_STREAM_CONTENT_TYPE,
+        "x-oversized": "x".repeat(1_025),
+      }),
+      body: {
+        getReader: () => ({
+          read: vi.fn(),
+          cancel,
+          releaseLock: vi.fn(),
+        }),
+        cancel,
+      },
+    });
+
+    await expectCode(
+      () => client(current).streamChat(chatRequest()),
+      "gateway_response_invalid"
+    );
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects malformed protocol payloads before authority or signing", async () => {
+    const current = fixture();
+    await expectCode(
+      () =>
+        client(current).streamChat(
+          chatRequest({
+            input: {
+              instructions: "Help",
+              conversation: "x".repeat(32_001),
+              toolManifest: "[]",
+            },
+          })
+        ),
+      "gateway_client_configuration_invalid"
+    );
+    expect(current.authorizeCalls).not.toHaveBeenCalled();
+    expect(current.signerCalls).not.toHaveBeenCalled();
   });
 });
 

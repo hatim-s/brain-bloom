@@ -13,6 +13,7 @@ import {
   createGatewayDispatcher,
   type GatewayDispatcher,
   type GatewayRequestEnvelope,
+  type GatewayRoute,
   type RateBudget,
   type RateBudgetAttempt,
   RateBudgetError,
@@ -28,6 +29,10 @@ import {
   type SigningKey,
   type VerificationKeys,
 } from "./internal-auth.ts";
+import {
+  GATEWAY_CHAT_STREAM_CONTENT_TYPE,
+  GATEWAY_OPERATION_PROTOCOL_VERSION,
+} from "./operation-protocol.ts";
 
 const BASE_TIME = 1_800_000_000;
 const SECRET_CANARY = "sk-secret-do-not-reflect";
@@ -72,7 +77,9 @@ type Fixture = ReturnType<typeof createFixture>;
 function createFixture(
   options: Partial<{
     execute: CodexOperationDefinition["execute"];
+    operation: GatewayOperation;
     parseInput: CodexOperationDefinition["parseInput"];
+    protocolVersion: typeof GATEWAY_OPERATION_PROTOCOL_VERSION;
     timeoutMs: number;
     maxBodyBytes: number;
     maxBodyChunks: number;
@@ -85,6 +92,7 @@ function createFixture(
     replayDefense: ReplayDefense;
   }> = {}
 ) {
+  const operation = options.operation ?? "chat";
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const clock = new TestClock();
   const signingKey: SigningKey = {
@@ -100,7 +108,7 @@ function createFixture(
     subject: "owner_a",
     connectionId: "connection_a",
     provider: "codex",
-    operation: "chat",
+    operation,
     requestId: "request_1",
   };
   const rateBudget = new TestRateBudget(options.rateConsume);
@@ -109,7 +117,8 @@ function createFixture(
     (async (input: unknown) => ({ echoed: input, source: "server-registry" }));
   const registry = new CodexOperationRegistry([
     {
-      operation: "chat",
+      operation,
+      protocolVersion: options.protocolVersion,
       parseInput:
         options.parseInput ??
         ((input) => {
@@ -121,12 +130,27 @@ function createFixture(
       execute,
     },
   ]);
-  const route = {
+  const route: GatewayRoute = {
     method: "POST" as const,
-    path: "/internal/v1/codex/chat" as const,
-    operation: "chat" as const,
+    path: `/internal/v1/codex/${operation}` as const,
+    operation,
+    ...(options.protocolVersion === undefined
+      ? {}
+      : {
+          resourceAuthority: {
+            ...(operation === "mind-map-generation"
+              ? {
+                  type: "owner-bootstrap" as const,
+                  intent: "create-first-mindmap" as const,
+                }
+              : {
+                  type: "owned-mindmap" as const,
+                  id: "canonical-map-1",
+                }),
+          },
+        }),
     rateBudget: {
-      endpoint: "codex.chat",
+      endpoint: `codex.${operation}`,
       ownerLimit: 4,
       globalLimit: 40,
       windowSeconds: 60,
@@ -239,7 +263,7 @@ function createRequest(
   const token = options.token ?? issueToken(fixture);
   return {
     method: options.method ?? "POST",
-    path: options.path ?? "/internal/v1/codex/chat",
+    path: options.path ?? `/internal/v1/codex/${fixture.expected.operation}`,
     headers: options.headers ?? {
       authorization: `Bearer ${token}`,
       "content-type": options.contentType ?? "application/json",
@@ -255,6 +279,30 @@ function createRequest(
 /** Converts text chunks into a transport-neutral async byte stream. */
 async function* chunks(...values: string[]): AsyncIterable<Uint8Array> {
   for (const value of values) yield Buffer.from(value);
+}
+
+/** Creates one valid versioned chat request for stream lifecycle tests. */
+function createProtocolChatRequest(
+  fixture: Fixture,
+  signal?: AbortSignal
+): GatewayRequestEnvelope {
+  return createRequest(fixture, {
+    body: chunks(
+      JSON.stringify({
+        input: {
+          version: 1,
+          operation: "chat",
+          resource: { type: "owned-mindmap", id: "canonical-map-1" },
+          input: {
+            instructions: "Help",
+            conversation: "user: hello",
+            toolManifest: "[]",
+          },
+        },
+      })
+    ),
+    signal,
+  });
 }
 
 /** Creates a body whose first read stalls until dispatcher cancellation. */
@@ -325,7 +373,9 @@ function createObservedBody(): Readonly<{
 function responseCode(
   response: Awaited<ReturnType<GatewayDispatcher>>
 ): string | undefined {
-  return response.body.ok ? undefined : response.body.error.code;
+  return "ok" in response.body && !response.body.ok
+    ? response.body.error.code
+    : undefined;
 }
 
 describe("gateway dispatcher", () => {
@@ -354,6 +404,338 @@ describe("gateway dispatcher", () => {
         },
       },
     ]);
+  });
+
+  it("binds a versioned chat envelope to route authority and returns a byte stream", async () => {
+    const output = (async function* () {
+      yield { type: "start" };
+      yield { type: "text-delta", id: "text-1", delta: "answer" };
+    })();
+    const execute = vi.fn(async () => output);
+    const fixture = createFixture({
+      protocolVersion: 1,
+      maxBodyBytes: 4_096,
+      execute,
+      parseInput: (input) => input,
+    });
+    const envelope = {
+      version: 1,
+      operation: "chat",
+      resource: { type: "owned-mindmap", id: "canonical-map-1" },
+      input: {
+        instructions: "Help with the map",
+        conversation: "user: hello",
+        toolManifest: "[]",
+      },
+    };
+
+    const response = await fixture.dispatch(
+      createRequest(fixture, {
+        body: chunks(JSON.stringify({ input: envelope })),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers).toEqual({
+      "content-type": GATEWAY_CHAT_STREAM_CONTENT_TYPE,
+    });
+    expect(Symbol.asyncIterator in response.body).toBe(true);
+    if (!(Symbol.asyncIterator in response.body))
+      throw new Error("expected stream");
+    const frames: string[] = [];
+    for await (const frame of response.body) {
+      frames.push(new TextDecoder().decode(frame));
+    }
+    expect(frames).toEqual([
+      '{"version":1,"event":{"type":"start"}}\n',
+      '{"version":1,"event":{"type":"text-delta","id":"text-1","delta":"answer"}}\n',
+    ]);
+    expect(execute).toHaveBeenCalledWith(
+      envelope.input,
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
+  it("rejects a canonical resource mismatch before operation execution", async () => {
+    const execute = vi.fn();
+    const fixture = createFixture({
+      protocolVersion: 1,
+      maxBodyBytes: 4_096,
+      execute,
+      parseInput: (input) => input,
+    });
+    const response = await fixture.dispatch(
+      createRequest(fixture, {
+        body: chunks(
+          JSON.stringify({
+            input: {
+              version: 1,
+              operation: "chat",
+              resource: { type: "owned-mindmap", id: "other-map" },
+              input: {
+                instructions: "Help",
+                conversation: "user: hello",
+                toolManifest: "[]",
+              },
+            },
+          })
+        ),
+      })
+    );
+
+    expect(responseCode(response)).toBe("invalid_request");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("rejects a chat-to-action response swap with a stable gateway failure", async () => {
+    const fixture = createFixture({
+      protocolVersion: 1,
+      maxBodyBytes: 4_096,
+      parseInput: (input) => input,
+      execute: async () => ({ secret: SECRET_CANARY }),
+    });
+    const response = await fixture.dispatch(
+      createRequest(fixture, {
+        body: chunks(
+          JSON.stringify({
+            input: {
+              version: 1,
+              operation: "chat",
+              resource: { type: "owned-mindmap", id: "canonical-map-1" },
+              input: {
+                instructions: "Help",
+                conversation: "user: hello",
+                toolManifest: "[]",
+              },
+            },
+          })
+        ),
+      })
+    );
+
+    expect(responseCode(response)).toBe("operation_failed");
+  });
+
+  it("derives mandatory v1 response contracts from each operation", () => {
+    const registry = new CodexOperationRegistry([
+      {
+        operation: "chat",
+        protocolVersion: 1,
+        parseInput: (input) => input,
+        execute: async () => (async function* () {})(),
+        responseKind: "json",
+      } as CodexOperationDefinition,
+      {
+        operation: "mind-map-generation",
+        protocolVersion: 1,
+        parseInput: (input) => input,
+        execute: async () => null,
+        responseKind: "stream",
+        parseOutput: (output: unknown) => output,
+      } as CodexOperationDefinition,
+      {
+        operation: "node-editing",
+        protocolVersion: 1,
+        parseInput: (input) => input,
+        execute: async () => null,
+      },
+    ]);
+
+    expect(registry.get("chat")?.responseKind).toBe("stream");
+    expect(registry.get("chat")?.parseOutput).toBeUndefined();
+    expect(registry.get("mind-map-generation")?.responseKind).toBe("json");
+    expect(() =>
+      registry.get("mind-map-generation")?.parseOutput?.({ arbitrary: true })
+    ).toThrow();
+    expect(() =>
+      registry.get("node-editing")?.parseOutput?.({
+        version: 1,
+        operation: "mind-map-generation",
+        rawOutput: "wrong operation",
+        output: { name: "Map", nodes: [{ title: "Node", children: [] }] },
+      })
+    ).toThrow();
+  });
+
+  it("always validates action output and rejects an action-to-stream swap", async () => {
+    const bootstrapEnvelope = {
+      version: 1,
+      operation: "mind-map-generation",
+      resource: {
+        type: "owner-bootstrap",
+        intent: "create-first-mindmap",
+      },
+      input: { instructions: "Generate", prompt: "Systems" },
+    };
+    for (const invalidOutput of [
+      { arbitrary: true },
+      (async function* () {
+        yield { type: "start" };
+      })(),
+    ]) {
+      const fixture = createFixture({
+        operation: "mind-map-generation",
+        protocolVersion: 1,
+        maxBodyBytes: 4_096,
+        parseInput: (input) => input,
+        execute: async () => invalidOutput,
+      });
+      const response = await fixture.dispatch(
+        createRequest(fixture, {
+          body: chunks(JSON.stringify({ input: bootstrapEnvelope })),
+        })
+      );
+      expect(responseCode(response)).toBe("operation_failed");
+    }
+
+    const validFixture = createFixture({
+      operation: "mind-map-generation",
+      protocolVersion: 1,
+      maxBodyBytes: 4_096,
+      parseInput: (input) => input,
+      execute: async () => ({
+        version: 1,
+        operation: "mind-map-generation",
+        rawOutput: "raw",
+        output: { name: "Systems", nodes: [{ title: "Root", children: [] }] },
+      }),
+    });
+    const validResponse = await validFixture.dispatch(
+      createRequest(validFixture, {
+        body: chunks(JSON.stringify({ input: bootstrapEnvelope })),
+      })
+    );
+    expect(validResponse).toMatchObject({
+      status: 200,
+      body: { ok: true, data: { operation: "mind-map-generation" } },
+    });
+  });
+
+  it.each(["deadline", "request abort"] as const)(
+    "owns provider iteration through %s and closes it exactly once",
+    async (outcome) => {
+      let providerSignal: AbortSignal | undefined;
+      const returnIterator = vi.fn(async () => ({
+        done: true as const,
+        value: undefined,
+      }));
+      const execute = vi.fn(
+        async (_input: unknown, context: { signal: AbortSignal }) => {
+          providerSignal = context.signal;
+          return {
+            [Symbol.asyncIterator]() {
+              return {
+                next: () =>
+                  new Promise<IteratorResult<unknown>>(() => undefined),
+                return: returnIterator,
+              };
+            },
+          };
+        }
+      );
+      const fixture = createFixture({
+        protocolVersion: 1,
+        maxBodyBytes: 4_096,
+        timeoutMs: outcome === "deadline" ? 10 : 1_000,
+        execute,
+        parseInput: (input) => input,
+      });
+      const controller = new AbortController();
+      const response = await fixture.dispatch(
+        createProtocolChatRequest(
+          fixture,
+          outcome === "request abort" ? controller.signal : undefined
+        )
+      );
+      if (!(Symbol.asyncIterator in response.body)) {
+        throw new Error("expected stream");
+      }
+      const iterator = response.body[Symbol.asyncIterator]();
+      const pending = iterator.next();
+      if (outcome === "request abort")
+        controller.abort(new Error(SECRET_CANARY));
+
+      await expect(pending).rejects.toMatchObject({
+        code: outcome === "deadline" ? "request_timeout" : "request_aborted",
+        message: "Gateway request was rejected",
+      });
+      expect(providerSignal?.aborted).toBe(true);
+      await vi.waitFor(() => expect(returnIterator).toHaveBeenCalledTimes(1));
+    }
+  );
+
+  it("maps provider next and return rejection to stable secret-free errors", async () => {
+    const returnIterator = vi.fn(async () => {
+      throw new Error(SECRET_CANARY);
+    });
+    const fixture = createFixture({
+      protocolVersion: 1,
+      maxBodyBytes: 4_096,
+      parseInput: (input) => input,
+      execute: async () => ({
+        [Symbol.asyncIterator]() {
+          return {
+            next: async () => {
+              throw new Error(SECRET_CANARY);
+            },
+            return: returnIterator,
+          };
+        },
+      }),
+    });
+    const response = await fixture.dispatch(createProtocolChatRequest(fixture));
+    if (!(Symbol.asyncIterator in response.body)) {
+      throw new Error("expected stream");
+    }
+    const iterator = response.body[Symbol.asyncIterator]();
+
+    const nextError = await iterator.next().then(
+      () => null,
+      (error: unknown) => error
+    );
+    expect(nextError).toMatchObject({
+      code: "operation_failed",
+      message: "Gateway request was rejected",
+    });
+    expect(String(nextError)).not.toContain(SECRET_CANARY);
+    expect(returnIterator).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps an explicit provider return rejection without reflecting it", async () => {
+    const fixture = createFixture({
+      protocolVersion: 1,
+      maxBodyBytes: 4_096,
+      parseInput: (input) => input,
+      execute: async () => ({
+        [Symbol.asyncIterator]() {
+          return {
+            next: async () => ({
+              done: false as const,
+              value: { type: "start" },
+            }),
+            return: async () => {
+              throw new Error(SECRET_CANARY);
+            },
+          };
+        },
+      }),
+    });
+    const response = await fixture.dispatch(createProtocolChatRequest(fixture));
+    if (!(Symbol.asyncIterator in response.body)) {
+      throw new Error("expected stream");
+    }
+    const iterator = response.body[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({ done: false });
+
+    const returnError = await iterator.return?.().then(
+      () => null,
+      (error: unknown) => error
+    );
+    expect(returnError).toMatchObject({
+      code: "operation_failed",
+      message: "Gateway request was rejected",
+    });
+    expect(String(returnError)).not.toContain(SECRET_CANARY);
   });
 
   it("snapshots server route, context, and rate policy at creation", async () => {

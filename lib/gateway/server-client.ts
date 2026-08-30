@@ -9,6 +9,19 @@ import {
   GATEWAY_OPERATIONS,
   type GatewayOperation,
 } from "../../services/agent-gateway/internal-auth.ts";
+import {
+  createGatewayOperationEnvelope,
+  GATEWAY_CHAT_STREAM_CONTENT_TYPE,
+  type GatewayActionResult,
+  type GatewayChatChunk,
+  type GatewayChatInput,
+  type GatewayMindmapGenerationInput,
+  type GatewayNodeEditingInput,
+  type GatewayResourceAuthority,
+  parseGatewayActionResult,
+  parseGatewayChatStreamFrame,
+} from "../../services/agent-gateway/operation-protocol.ts";
+import { BoundedNdjsonFrameBuffer } from "./ndjson-frame-buffer.ts";
 
 const GATEWAY_BASE_PATH = "/internal/v1";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -23,6 +36,9 @@ const MAX_RESPONSE_BYTES = 4 * 1_024 * 1_024;
 const MAX_RESPONSE_CHUNKS = 4_096;
 const MAX_CLEANUP_TIMEOUT_MS = 1_000;
 const MAX_IDENTIFIER_LENGTH = 256;
+const MAX_RESPONSE_HEADER_COUNT = 64;
+const MAX_RESPONSE_HEADER_NAME_LENGTH = 128;
+const MAX_RESPONSE_HEADER_VALUE_LENGTH = 1_024;
 
 const OPERATION_PATHS: Readonly<Record<GatewayOperation, string>> =
   Object.freeze({
@@ -88,6 +104,15 @@ type GatewayResourceIntent = Readonly<{
   id: string;
 }>;
 
+type GatewayBootstrapResourceIntent = Readonly<{
+  type: "owner-bootstrap";
+  intent: "create-first-mindmap";
+}>;
+
+type GatewayProtocolResourceIntent =
+  | GatewayResourceIntent
+  | GatewayBootstrapResourceIntent;
+
 type GatewayClientRequest = Readonly<{
   resource: GatewayResourceIntent;
   connectionId: string;
@@ -96,8 +121,39 @@ type GatewayClientRequest = Readonly<{
   signal?: AbortSignal;
 }>;
 
-type AuthorizeGatewayIntentInput = Readonly<{
+type GatewayChatClientRequest = Readonly<{
   resource: GatewayResourceIntent;
+  connectionId: string;
+  operation: "chat";
+  requestId: string;
+  input: GatewayChatInput;
+  signal?: AbortSignal;
+}>;
+
+type GatewayActionClientRequest =
+  | Readonly<{
+      resource: GatewayBootstrapResourceIntent;
+      connectionId: string;
+      operation: "mind-map-generation";
+      requestId: string;
+      input: GatewayMindmapGenerationInput;
+      signal?: AbortSignal;
+    }>
+  | Readonly<{
+      resource: GatewayResourceIntent;
+      connectionId: string;
+      operation: "node-editing";
+      requestId: string;
+      input: GatewayNodeEditingInput;
+      signal?: AbortSignal;
+    }>;
+
+type GatewayProtocolClientRequest =
+  | GatewayChatClientRequest
+  | GatewayActionClientRequest;
+
+type AuthorizeGatewayIntentInput = Readonly<{
+  resource: GatewayProtocolResourceIntent;
   connectionId: string;
   provider: "codex";
   operation: GatewayOperation;
@@ -108,11 +164,16 @@ type AuthorizeGatewayIntentInput = Readonly<{
 // construction-time server resolver can return derived authority.
 type AuthorizedGatewayResolution = Readonly<{
   ownerId: string;
-  resource: Readonly<{
-    type: "mindmap";
-    requestedId: string;
-    canonicalId: string;
-  }>;
+  resource:
+    | Readonly<{
+        type: "mindmap";
+        requestedId: string;
+        canonicalId: string;
+      }>
+    | Readonly<{
+        type: "owner-bootstrap";
+        intent: "create-first-mindmap";
+      }>;
   connection: Readonly<{
     requestedId: string;
     canonicalId: string;
@@ -175,7 +236,7 @@ type GatewayTransportResponse = Readonly<{
   status: number;
   redirected: boolean;
   url: string;
-  headers: Pick<Headers, "get">;
+  headers: Pick<Headers, "get"> & Partial<Pick<Headers, "entries">>;
   body: GatewayResponseBody | null;
 }>;
 
@@ -206,6 +267,12 @@ type GatewayServerClientOptions = Readonly<{
 
 type GatewayServerClient = Readonly<{
   execute(request: GatewayClientRequest): Promise<unknown>;
+  executeAction(
+    request: GatewayActionClientRequest
+  ): Promise<GatewayActionResult>;
+  streamChat(
+    request: GatewayChatClientRequest
+  ): Promise<ReadableStream<GatewayChatChunk>>;
 }>;
 
 /** Stable, secret-free client failure suitable for a server route mapping. */
@@ -328,6 +395,9 @@ function createGatewayServerClient(
           configuration.gatewayOrigin,
           authority.operation
         );
+        if (authority.resource.type !== "mindmap") {
+          throw clientError("authorization_unavailable");
+        }
         const body = JSON.stringify({
           input: {
             resource: {
@@ -388,7 +458,174 @@ function createGatewayServerClient(
         requestController.abort();
       }
     },
+    async executeAction(
+      request: GatewayActionClientRequest
+    ): Promise<GatewayActionResult> {
+      const parsedRequest = readProtocolRequest(request, "action");
+      if (parsedRequest.operation === "chat") {
+        throw clientError("gateway_client_configuration_invalid");
+      }
+      const active = await startProtocolRequest(parsedRequest, configuration);
+      try {
+        const value = await readGatewayResponse(
+          active.response,
+          active.url,
+          configuration.maxResponseBytes,
+          configuration.maxResponseChunks,
+          configuration.cleanupTimeoutMs,
+          active.requestController.signal,
+          parsedRequest.signal,
+          true
+        );
+        try {
+          return parseGatewayActionResult(value, parsedRequest.operation);
+        } catch {
+          throw clientError("gateway_response_invalid");
+        }
+      } finally {
+        active.finish();
+      }
+    },
+    async streamChat(
+      request: GatewayChatClientRequest
+    ): Promise<ReadableStream<GatewayChatChunk>> {
+      const parsedRequest = readProtocolRequest(request, "chat");
+      const active = await startProtocolRequest(parsedRequest, configuration);
+      try {
+        return await createBoundedGatewayStream(
+          active.response,
+          active.url,
+          configuration.maxResponseBytes,
+          configuration.maxResponseChunks,
+          configuration.cleanupTimeoutMs,
+          active.requestController.signal,
+          parsedRequest.signal,
+          active.finish
+        );
+      } catch (error) {
+        active.finish();
+        if (error instanceof GatewayClientError) throw error;
+        throw clientError("gateway_response_invalid");
+      }
+    },
   });
+}
+
+type GatewayClientConfiguration = ReturnType<typeof readConfiguration>;
+type ActiveProtocolRequest = Readonly<{
+  response: GatewayTransportResponse;
+  url: string;
+  requestController: AbortController;
+  finish: () => void;
+}>;
+
+/** Authorizes, signs, and sends one versioned request exactly once. */
+async function startProtocolRequest(
+  parsedRequest: GatewayProtocolClientRequest,
+  configuration: GatewayClientConfiguration
+): Promise<ActiveProtocolRequest> {
+  if (parsedRequest.signal?.aborted) throw clientError("request_aborted");
+
+  const requestController = new AbortController();
+  const handleCallerAbort = (): void => requestController.abort();
+  parsedRequest.signal?.addEventListener("abort", handleCallerAbort, {
+    once: true,
+  });
+  if (parsedRequest.signal?.aborted) handleCallerAbort();
+  const requestTimer = setTimeout(
+    () => requestController.abort(),
+    configuration.requestTimeoutMs
+  );
+  let finished = false;
+  const finish = (): void => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(requestTimer);
+    parsedRequest.signal?.removeEventListener("abort", handleCallerAbort);
+    requestController.abort();
+  };
+
+  try {
+    const resolution = await runAuthorityStage(
+      (context) =>
+        configuration.authorityResolver.authorize(
+          Object.freeze({
+            resource: parsedRequest.resource,
+            connectionId: parsedRequest.connectionId,
+            provider: "codex",
+            operation: parsedRequest.operation,
+            requireDefault: true,
+          }),
+          context
+        ),
+      configuration.authorizationTimeoutMs,
+      requestController.signal,
+      parsedRequest.signal
+    );
+    const authority = requireAuthorizedResolution(resolution, parsedRequest);
+    const assertion = await runControlPlaneStage(
+      (context) =>
+        configuration.assertionSigner.sign(
+          Object.freeze({
+            issuer: configuration.issuer,
+            audience: configuration.audience,
+            subject: authority.ownerId,
+            connectionId: authority.connection.canonicalId,
+            provider: "codex",
+            operation: authority.operation,
+            requestId: parsedRequest.requestId,
+          }),
+          context
+        ),
+      configuration.signerTimeoutMs,
+      requestController.signal,
+      parsedRequest.signal
+    );
+    requireAssertion(assertion);
+
+    const url = buildOperationUrl(
+      configuration.gatewayOrigin,
+      authority.operation
+    );
+    const canonicalResource = canonicalProtocolAuthority(authority.resource);
+    const envelope = createGatewayOperationEnvelope(
+      authority.operation,
+      canonicalResource,
+      parsedRequest.input
+    );
+    const transportPromise = Promise.resolve().then(() => {
+      if (requestController.signal.aborted) {
+        throw cancellationError(requestController.signal, parsedRequest.signal);
+      }
+      return configuration.transport.send(
+        Object.freeze({
+          url,
+          method: "POST",
+          headers: Object.freeze({
+            authorization: `Bearer ${assertion}`,
+            "content-type": "application/json",
+            "x-request-id": parsedRequest.requestId,
+          }),
+          body: JSON.stringify({ input: envelope }),
+          redirect: "error",
+          signal: requestController.signal,
+        })
+      );
+    });
+    const response = await awaitObserved(
+      transportPromise,
+      requestController.signal,
+      parsedRequest.signal,
+      (lateResponse) => {
+        observeResponseDisposal(lateResponse, configuration.cleanupTimeoutMs);
+      }
+    );
+    return Object.freeze({ response, url, requestController, finish });
+  } catch (error) {
+    finish();
+    if (error instanceof GatewayClientError) throw error;
+    throw cancellationError(requestController.signal, parsedRequest.signal);
+  }
 }
 
 /** Snapshots and validates all construction-time policy. */
@@ -490,6 +727,88 @@ function readRequest(request: GatewayClientRequest): GatewayClientRequest {
   });
 }
 
+/** Validates and snapshots one operation-specific protocol invocation. */
+function readProtocolRequest(
+  request: GatewayProtocolClientRequest,
+  kind: "action" | "chat"
+): GatewayProtocolClientRequest {
+  try {
+    if (
+      typeof request !== "object" ||
+      request === null ||
+      !hasExactKeys(request, [
+        "connectionId",
+        "input",
+        "operation",
+        "requestId",
+        "resource",
+        ...(request.signal === undefined ? [] : ["signal"]),
+      ]) ||
+      !isIdentifier(request.connectionId) ||
+      !isIdentifier(request.requestId) ||
+      (request.signal !== undefined &&
+        !(request.signal instanceof AbortSignal)) ||
+      (kind === "chat"
+        ? request.operation !== "chat"
+        : request.operation !== "mind-map-generation" &&
+          request.operation !== "node-editing")
+    ) {
+      throw clientError("gateway_client_configuration_invalid");
+    }
+
+    const resource = readProtocolResourceIntent(request.resource);
+    // Creating the closed envelope here validates every payload field before
+    // authority lookup, while the canonical resource is substituted later.
+    const validationResource: GatewayResourceAuthority =
+      resource.type === "mindmap"
+        ? { type: "owned-mindmap", id: resource.id }
+        : { ...resource };
+    const validated = createGatewayOperationEnvelope(
+      request.operation,
+      validationResource,
+      request.input
+    );
+    return Object.freeze({
+      resource: Object.freeze({ ...resource }),
+      connectionId: request.connectionId,
+      operation: request.operation,
+      requestId: request.requestId,
+      input: deepFreezeJson(validated.input),
+      signal: request.signal,
+    }) as GatewayProtocolClientRequest;
+  } catch (error) {
+    if (error instanceof GatewayClientError) throw error;
+    throw clientError("gateway_client_configuration_invalid");
+  }
+}
+
+/** Recursively freezes the already-validated JSON payload snapshot. */
+function deepFreezeJson<T>(value: T): T {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value)) {
+    return value;
+  }
+  for (const child of Object.values(value)) deepFreezeJson(child);
+  return Object.freeze(value);
+}
+
+/** Accepts either an owned-map lookup or the exact first-map bootstrap intent. */
+function readProtocolResourceIntent(
+  resource: GatewayProtocolResourceIntent
+): GatewayProtocolResourceIntent {
+  if (
+    typeof resource !== "object" ||
+    resource === null ||
+    (resource.type === "mindmap"
+      ? !hasExactKeys(resource, ["id", "type"]) || !isIdentifier(resource.id)
+      : resource.type !== "owner-bootstrap" ||
+        !hasExactKeys(resource, ["intent", "type"]) ||
+        resource.intent !== "create-first-mindmap")
+  ) {
+    throw clientError("gateway_client_configuration_invalid");
+  }
+  return resource;
+}
+
 /** Executes an authority or signer dependency behind its request deadline. */
 async function runControlPlaneStage<T>(
   operation: (context: ControlPlaneOperationContext) => T | PromiseLike<T>,
@@ -553,15 +872,13 @@ async function runAuthorityStage<T>(
 /** Validates and snapshots authority returned only by the server dependency. */
 function requireAuthorizedResolution(
   resolution: AuthorizedGatewayResolution | null,
-  request: GatewayClientRequest
+  request: GatewayClientRequest | GatewayProtocolClientRequest
 ): AuthorizedGatewayResolution {
   try {
     if (
       resolution === null ||
       !isIdentifier(resolution.ownerId) ||
-      resolution.resource.type !== "mindmap" ||
-      resolution.resource.requestedId !== request.resource.id ||
-      !isIdentifier(resolution.resource.canonicalId) ||
+      !authorityResourceMatches(resolution.resource, request.resource) ||
       resolution.connection.requestedId !== request.connectionId ||
       !isIdentifier(resolution.connection.canonicalId) ||
       resolution.connection.provider !== "codex" ||
@@ -581,6 +898,37 @@ function requireAuthorizedResolution(
   } catch {
     throw clientError("authorization_unavailable");
   }
+}
+
+/** Matches the resolver's canonical authority to the exact caller intent. */
+function authorityResourceMatches(
+  authority: AuthorizedGatewayResolution["resource"],
+  intent: GatewayProtocolResourceIntent
+): boolean {
+  if (authority.type === "mindmap") {
+    return (
+      intent.type === "mindmap" &&
+      authority.requestedId === intent.id &&
+      isIdentifier(authority.canonicalId)
+    );
+  }
+  return (
+    intent.type === "owner-bootstrap" &&
+    authority.intent === "create-first-mindmap" &&
+    intent.intent === authority.intent
+  );
+}
+
+/** Converts resolver output into the authority carried by the v1 envelope. */
+function canonicalProtocolAuthority(
+  resource: AuthorizedGatewayResolution["resource"]
+): GatewayResourceAuthority {
+  return resource.type === "mindmap"
+    ? Object.freeze({ type: "owned-mindmap", id: resource.canonicalId })
+    : Object.freeze({
+        type: "owner-bootstrap",
+        intent: "create-first-mindmap",
+      });
 }
 
 /** Requires a bounded opaque assertion without parsing or reflecting it. */
@@ -613,11 +961,17 @@ async function readGatewayResponse(
   maxChunks: number,
   cleanupTimeoutMs: number,
   requestSignal: AbortSignal,
-  callerSignal?: AbortSignal
+  callerSignal?: AbortSignal,
+  requireHeaderEnumeration = false
 ): Promise<unknown> {
   const body = readResponseBody(response);
+  let declaredLength: number | undefined;
   let metadataValid = false;
+  let metadataError: GatewayClientError | undefined;
   try {
+    assertResponseHeaderBounds(response, requireHeaderEnumeration);
+    const contentType = readBoundedResponseHeader(response, "content-type");
+    declaredLength = readResponseContentLength(response, maxBytes);
     metadataValid =
       typeof response === "object" &&
       response !== null &&
@@ -625,11 +979,16 @@ async function readGatewayResponse(
       response.redirected === false &&
       response.url === expectedUrl &&
       typeof response.headers?.get === "function" &&
-      isJsonContentType(response.headers.get("content-type")) &&
+      isJsonContentType(contentType) &&
       body !== null &&
       typeof body.getReader === "function";
-  } catch {
+  } catch (error) {
     // All transport metadata ambiguity shares one response failure below.
+    if (error instanceof GatewayClientError) metadataError = error;
+  }
+  if (metadataError !== undefined) {
+    await disposeResponseBody(body, cleanupTimeoutMs);
+    throw metadataError;
   }
   if (!metadataValid || body === null) {
     await disposeResponseBody(body, cleanupTimeoutMs);
@@ -645,6 +1004,12 @@ async function readGatewayResponse(
       requestSignal,
       callerSignal
     );
+    if (
+      declaredLength !== undefined &&
+      declaredLength !== encodedBody.byteLength
+    ) {
+      throw clientError("gateway_response_invalid");
+    }
   } catch (error) {
     await disposeResponseBody(body, cleanupTimeoutMs);
     if (error instanceof GatewayClientError) throw error;
@@ -674,6 +1039,252 @@ async function readGatewayResponse(
     throw clientError("gateway_response_invalid");
   }
   throw clientError(failure.data.error.code);
+}
+
+/**
+ * Validates a chat response and returns a demand-driven bounded event stream.
+ * The request deadline and caller abort remain active until close or cancel.
+ */
+async function createBoundedGatewayStream(
+  response: GatewayTransportResponse,
+  expectedUrl: string,
+  maxBytes: number,
+  maxChunks: number,
+  cleanupTimeoutMs: number,
+  requestSignal: AbortSignal,
+  callerSignal: AbortSignal | undefined,
+  finishRequest: () => void
+): Promise<ReadableStream<GatewayChatChunk>> {
+  if (response.status !== 200) {
+    await readGatewayResponse(
+      response,
+      expectedUrl,
+      maxBytes,
+      maxChunks,
+      cleanupTimeoutMs,
+      requestSignal,
+      callerSignal,
+      true
+    );
+    throw clientError("gateway_response_invalid");
+  }
+
+  const body = readResponseBody(response);
+  let declaredLength: number | undefined;
+  let metadataValid = false;
+  let metadataError: GatewayClientError | undefined;
+  try {
+    assertResponseHeaderBounds(response, true);
+    const contentType = readBoundedResponseHeader(response, "content-type");
+    declaredLength = readResponseContentLength(response, maxBytes);
+    metadataValid =
+      response.redirected === false &&
+      response.url === expectedUrl &&
+      contentType === GATEWAY_CHAT_STREAM_CONTENT_TYPE &&
+      body !== null &&
+      typeof body.getReader === "function";
+  } catch (error) {
+    // All hostile or ambiguous metadata shares one stable response failure.
+    if (error instanceof GatewayClientError) metadataError = error;
+  }
+  if (metadataError !== undefined) {
+    await disposeResponseBody(body, cleanupTimeoutMs);
+    throw metadataError;
+  }
+  if (!metadataValid || body === null) {
+    await disposeResponseBody(body, cleanupTimeoutMs);
+    throw clientError("gateway_response_invalid");
+  }
+
+  let reader: GatewayResponseBodyReader;
+  try {
+    reader = body.getReader();
+  } catch {
+    await disposeResponseBody(body, cleanupTimeoutMs);
+    throw clientError("gateway_response_invalid");
+  }
+
+  let byteCount = 0;
+  let chunkCount = 0;
+  const frameBuffer = new BoundedNdjsonFrameBuffer(maxBytes);
+  let upstreamDone = false;
+  let terminal = false;
+  let reading = false;
+
+  /** Releases request and reader ownership once, observing hostile cleanup. */
+  const close = (cancelReader: boolean): void => {
+    if (terminal) return;
+    terminal = true;
+    requestSignal.removeEventListener("abort", handleAbort);
+    if (cancelReader) {
+      try {
+        void Promise.resolve(reader.cancel()).catch(() => undefined);
+      } catch {
+        // A non-conforming reader cannot replace the stable stream outcome.
+      }
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      // Reader cleanup is best-effort after the protocol outcome is fixed.
+    }
+    finishRequest();
+  };
+  let streamController:
+    | ReadableStreamDefaultController<GatewayChatChunk>
+    | undefined;
+  const handleAbort = (): void => {
+    const error = cancellationError(requestSignal, callerSignal);
+    close(true);
+    try {
+      streamController?.error(error);
+    } catch {
+      // A concurrent consumer cancellation may already own stream termination.
+    }
+  };
+
+  return new ReadableStream<GatewayChatChunk>(
+    {
+      start(controller) {
+        streamController = controller;
+        requestSignal.addEventListener("abort", handleAbort, { once: true });
+        if (requestSignal.aborted) handleAbort();
+      },
+      async pull(controller) {
+        if (terminal || reading) return;
+        reading = true;
+        try {
+          while (true) {
+            const line = frameBuffer.takeLine();
+            if (line !== null) {
+              if (line.byteLength === 0) {
+                throw clientError("gateway_response_invalid");
+              }
+              let value: unknown;
+              try {
+                value = JSON.parse(
+                  new TextDecoder("utf-8", { fatal: true }).decode(line)
+                );
+                controller.enqueue(parseGatewayChatStreamFrame(value));
+              } catch {
+                throw clientError("gateway_response_invalid");
+              }
+              return;
+            }
+
+            if (upstreamDone) {
+              if (
+                frameBuffer.pendingByteLength !== 0 ||
+                (declaredLength !== undefined && declaredLength !== byteCount)
+              ) {
+                throw clientError("gateway_response_invalid");
+              }
+              close(false);
+              controller.close();
+              return;
+            }
+
+            const result = await awaitObserved(
+              reader.read(),
+              requestSignal,
+              callerSignal
+            );
+            if (result.done) {
+              upstreamDone = true;
+              continue;
+            }
+            if (
+              !(result.value instanceof Uint8Array) ||
+              result.value.byteLength === 0
+            ) {
+              throw clientError("gateway_response_invalid");
+            }
+            chunkCount += 1;
+            byteCount += result.value.byteLength;
+            if (chunkCount > maxChunks || byteCount > maxBytes) {
+              throw clientError("response_too_large");
+            }
+            if (declaredLength !== undefined && byteCount > declaredLength) {
+              throw clientError("gateway_response_invalid");
+            }
+            frameBuffer.push(result.value);
+          }
+        } catch (error) {
+          close(true);
+          controller.error(
+            error instanceof GatewayClientError
+              ? error
+              : clientError("gateway_response_invalid")
+          );
+        } finally {
+          reading = false;
+        }
+      },
+      cancel() {
+        close(true);
+      },
+    },
+    // Zero buffering guarantees the server client never pre-drains chat data.
+    { highWaterMark: 0 }
+  );
+}
+
+/** Reads one bounded scalar response header without reflecting its contents. */
+function readBoundedResponseHeader(
+  response: GatewayTransportResponse,
+  name: string
+): string | null {
+  const value = response.headers.get(name);
+  if (value !== null && value.length > MAX_RESPONSE_HEADER_VALUE_LENGTH) {
+    throw clientError("gateway_response_invalid");
+  }
+  return value;
+}
+
+/** Bounds every enumerable response header for versioned protocol calls. */
+function assertResponseHeaderBounds(
+  response: GatewayTransportResponse,
+  requireEnumeration: boolean
+): void {
+  const entries = response.headers?.entries;
+  if (typeof entries !== "function") {
+    if (requireEnumeration) throw clientError("gateway_response_invalid");
+    return;
+  }
+  let count = 0;
+  const iterator = entries.call(response.headers);
+  while (true) {
+    const next = iterator.next();
+    if (next.done) break;
+    const [name, value] = next.value;
+    count += 1;
+    if (
+      count > MAX_RESPONSE_HEADER_COUNT ||
+      name.length === 0 ||
+      name.length > MAX_RESPONSE_HEADER_NAME_LENGTH ||
+      value.length > MAX_RESPONSE_HEADER_VALUE_LENGTH
+    ) {
+      throw clientError("gateway_response_invalid");
+    }
+  }
+}
+
+/** Validates an optional exact content length before reading any body bytes. */
+function readResponseContentLength(
+  response: GatewayTransportResponse,
+  maxBytes: number
+): number | undefined {
+  const value = readBoundedResponseHeader(response, "content-length");
+  if (value === null) return undefined;
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw clientError("gateway_response_invalid");
+  }
+  const length = Number(value);
+  if (!Number.isSafeInteger(length)) {
+    throw clientError("gateway_response_invalid");
+  }
+  if (length > maxBytes) throw clientError("response_too_large");
+  return length;
 }
 
 /** Reads a response stream with hard byte/chunk limits and observed cancellation. */
@@ -998,11 +1609,16 @@ export {
   createFetchGatewayTransport,
   createGatewayServerClient,
   type FetchImplementation,
+  type GatewayActionClientRequest,
   type GatewayAssertionSigner,
   type GatewayAuthorityResolver,
+  type GatewayBootstrapResourceIntent,
+  type GatewayChatClientRequest,
   GatewayClientError,
   type GatewayClientErrorCode,
   type GatewayClientRequest,
+  type GatewayProtocolClientRequest,
+  type GatewayProtocolResourceIntent,
   type GatewayRemoteErrorCode,
   type GatewayResourceIntent,
   type GatewayResponseBody,
